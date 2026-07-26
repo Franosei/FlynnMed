@@ -17,10 +17,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from backend.clinical_notes import generate_soap_note
 from backend.care_plan_agent import CarePlanAgent
 from backend.care_plan_store import CarePlanStore
+from backend.clinician_access import (
+    AccessWorkflowError,
+    access_overview,
+    authorized_patient_summary,
+    decide_access_request,
+    request_patient_access,
+    revoke_access,
+)
 from backend.clinical_context_guard import (
     adjudicate_patient_context,
     build_review_required_plan,
@@ -28,6 +37,7 @@ from backend.clinical_context_guard import (
     validate_generated_answer,
 )
 from backend.clinical_trials import build_trial_search_profile, find_matching_trials
+from backend.db import get_db
 from backend.email_service import send_clinical_note_email, send_urgent_care_alert
 from backend.feedback_store import save_feedback
 from backend.fhir.stub_client import fhir_integration_status
@@ -372,6 +382,17 @@ class EmailNotePayload(BaseModel):
 class UrgentAlertPayload(BaseModel):
     reason: str
     urgency_level: str = "high"
+
+
+class AccessRequestPayload(BaseModel):
+    patient_id: str
+    reason: str = ""
+    include_chat_history: bool = False
+
+
+class AccessDecisionPayload(BaseModel):
+    approve: bool
+    decision_note: str = ""
 
 
 @app.get("/api/health")
@@ -730,6 +751,91 @@ def me(username: str = Depends(current_user)) -> Dict:
 @app.get("/api/snapshot")
 def snapshot(username: str = Depends(current_user)) -> Dict:
     return _snapshot(username)
+
+
+# ---------------------------------------------------------------------------
+# Consent-based clinician access
+# ---------------------------------------------------------------------------
+
+
+def _access_error(db: Session, exc: AccessWorkflowError) -> HTTPException:
+    # Access denials are intentionally audit-logged by the service. Commit the
+    # denial record before FastAPI's database dependency rolls back on the
+    # HTTPException.
+    db.commit()
+    return HTTPException(status_code=403, detail=str(exc))
+
+
+@app.get("/api/access")
+def get_access_overview(
+    username: str = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Dict:
+    try:
+        return access_overview(db, username)
+    except AccessWorkflowError as exc:
+        raise _access_error(db, exc) from exc
+
+
+@app.post("/api/access/requests")
+def create_access_request(
+    payload: AccessRequestPayload,
+    username: str = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Dict:
+    try:
+        return request_patient_access(
+            db,
+            username,
+            payload.patient_id,
+            payload.reason,
+            payload.include_chat_history,
+        )
+    except AccessWorkflowError as exc:
+        raise _access_error(db, exc) from exc
+
+
+@app.post("/api/access/requests/{grant_id}/decision")
+def decide_access(
+    grant_id: str,
+    payload: AccessDecisionPayload,
+    username: str = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Dict:
+    try:
+        return decide_access_request(
+            db,
+            username,
+            grant_id,
+            payload.approve,
+            payload.decision_note,
+        )
+    except AccessWorkflowError as exc:
+        raise _access_error(db, exc) from exc
+
+
+@app.delete("/api/access/requests/{grant_id}")
+def delete_access(
+    grant_id: str,
+    username: str = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Dict:
+    try:
+        return revoke_access(db, username, grant_id)
+    except AccessWorkflowError as exc:
+        raise _access_error(db, exc) from exc
+
+
+@app.get("/api/clinician/patients/{patient_id}")
+def clinician_patient_summary(
+    patient_id: str,
+    username: str = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Dict:
+    try:
+        return authorized_patient_summary(db, username, patient_id)
+    except AccessWorkflowError as exc:
+        raise _access_error(db, exc) from exc
 
 
 @app.put("/api/profile")

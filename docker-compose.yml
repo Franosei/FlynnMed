@@ -22,6 +22,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://flynnmed:flynnmed_dev_only@db:5432/flynnmed
+      DATA_BACKEND: sql
     env_file:
       - .env
     ports:

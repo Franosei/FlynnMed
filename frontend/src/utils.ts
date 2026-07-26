@@ -5,6 +5,21 @@ export function clean(value: unknown, fallback = ""): string {
   return text || fallback;
 }
 
+export function isClinicianRole(role: string | undefined): boolean {
+  const normalized = (role ?? "").toLowerCase().trim();
+  return [
+    "doctor / physician",
+    "nurse",
+    "midwife",
+    "physiotherapist",
+    "other clinician"
+  ].includes(normalized);
+}
+
+export function isPatientRole(role: string | undefined): boolean {
+  return !isClinicianRole(role);
+}
+
 export function formatDate(value?: unknown): string {
   const text = clean(value);
   if (!text) {

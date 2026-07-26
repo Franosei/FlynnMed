@@ -9,6 +9,8 @@ import {
   firstNumber,
   formatDate,
   formatTimestamp,
+  isClinicianRole,
+  isPatientRole,
   parseBloodPressure,
   parseMemorySections,
   unique,
@@ -46,6 +48,22 @@ describe("clean", () => {
     expect(clean(undefined, "fallback")).toBe("fallback");
     expect(clean("", "fallback")).toBe("fallback");
     expect(clean(42)).toBe("42");
+  });
+});
+
+describe("role routing", () => {
+  it("recognizes every configured clinician role", () => {
+    expect(isClinicianRole("Doctor / Physician")).toBe(true);
+    expect(isClinicianRole("Nurse")).toBe(true);
+    expect(isClinicianRole("Midwife")).toBe(true);
+    expect(isClinicianRole("Physiotherapist")).toBe(true);
+    expect(isClinicianRole("Other Clinician")).toBe(true);
+  });
+
+  it("keeps patient and caregiver roles in the patient workspace", () => {
+    expect(isPatientRole("Patient / Individual")).toBe(true);
+    expect(isPatientRole("Caregiver")).toBe(true);
+    expect(isPatientRole(undefined)).toBe(true);
   });
 });
 

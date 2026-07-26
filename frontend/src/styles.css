@@ -657,6 +657,174 @@ label {
   line-height: 1.45;
 }
 
+.surface-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 1rem;
+  box-shadow: 0 8px 24px rgba(20, 40, 44, 0.05);
+}
+
+.surface-card h3 {
+  margin: 0 0 0.8rem;
+}
+
+.clinician-band {
+  border-left: 5px solid var(--primary);
+  background: linear-gradient(135deg, #ffffff 0%, #e7f4f2 100%);
+}
+
+.role-badge,
+.mrn-card {
+  align-self: center;
+  border: 1px solid #b8d8d3;
+  border-radius: 9px;
+  background: #fff;
+  padding: 0.8rem 1rem;
+}
+
+.role-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--primary-strong);
+  font-weight: 800;
+}
+
+.mrn-card {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.mrn-card span,
+.mrn-card small {
+  color: var(--muted);
+}
+
+.mrn-card strong {
+  font-size: 1.15rem;
+  letter-spacing: 0.04em;
+}
+
+.boundary-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+}
+
+.boundary-card svg {
+  flex: 0 0 auto;
+  color: var(--primary);
+}
+
+.boundary-card h3,
+.boundary-card p {
+  margin: 0;
+}
+
+.boundary-card p {
+  margin-top: 0.3rem;
+  color: var(--muted);
+}
+
+.access-list,
+.clinical-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.access-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.85rem;
+}
+
+.access-row > div:first-child {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.access-row span,
+.access-row small,
+.access-row p {
+  color: var(--muted);
+}
+
+.access-row p {
+  margin: 0.25rem 0;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.row-actions button,
+.danger-button {
+  border-radius: 7px;
+  padding: 0.6rem 0.8rem;
+}
+
+.danger-button {
+  color: var(--danger);
+  border-color: #e8b5ae;
+}
+
+.patient-grid,
+.chart-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.patient-card {
+  display: grid;
+  gap: 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f9fcfb;
+  color: var(--ink);
+  padding: 1rem;
+  text-align: left;
+}
+
+.patient-card:hover {
+  border-color: var(--primary);
+}
+
+.patient-card svg {
+  color: var(--primary);
+}
+
+.patient-card span,
+.patient-card small {
+  color: var(--muted);
+}
+
+.chart-section {
+  min-width: 0;
+}
+
+.clinical-list > div {
+  display: grid;
+  gap: 0.15rem;
+  border-bottom: 1px solid #edf1f0;
+  padding: 0.55rem 0;
+}
+
+.clinical-list > div:last-child {
+  border-bottom: 0;
+}
+
+.clinical-list span {
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
 .chat-layout {
   display: grid;
   gap: 1rem;
@@ -2397,6 +2565,20 @@ label {
   .action-grid,
   .summary-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .clinician-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .patient-grid,
+  .chart-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workspace-band {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
   }
 
   .starter-row {

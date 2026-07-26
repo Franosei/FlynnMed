@@ -117,6 +117,49 @@ export type AuthResponse = {
   snapshot: Snapshot;
 };
 
+export type AccessGrant = {
+  grant_id: string;
+  patient_id: string;
+  patient_name: string;
+  clinician_name: string;
+  clinician_role: string;
+  organization: string;
+  status: "pending" | "active" | "denied" | "revoked" | "expired";
+  scopes: string[];
+  request_reason: string;
+  requested_at: string;
+  decided_at: string;
+  expires_at: string;
+};
+
+export type AccessOverview = {
+  account_kind: "patient" | "clinician";
+  patient_id?: string;
+  requests: AccessGrant[];
+  active_count: number;
+  pending_count: number;
+};
+
+export type ClinicianPatientSummary = {
+  patient: {
+    patient_id: string;
+    display_name: string;
+    date_of_birth: string;
+    biological_sex: string;
+  };
+  grant: AccessGrant;
+  conditions: Dict<any>[];
+  medications: Dict<any>[];
+  allergies: Dict<any>[];
+  vitals: Dict<any>[];
+  symptoms: Dict<any>[];
+  triage: Dict<any>[];
+  care_plans: Dict<any>[];
+  clinical_notes: Dict<any>[];
+  chat_history: Dict<any>[];
+  chat_history_authorized: boolean;
+};
+
 export type TrialSearchResult = {
   searched_at?: string;
   trials: Dict<any>[];

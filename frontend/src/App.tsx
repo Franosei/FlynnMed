@@ -34,6 +34,8 @@ import {
   ThumbsUp,
   Trash2,
   Upload,
+  UserCheck,
+  Users,
   X
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -44,6 +46,8 @@ import {
   deleteNote,
   downloadProtectedFile,
   emailNote,
+  fetchAccessOverview,
+  fetchClinicianPatient,
   fetchSnapshot,
   generateCarePlan,
   generateGpPrep,
@@ -53,6 +57,8 @@ import {
   listCarePlans,
   login,
   rateResponse,
+  requestPatientAccess,
+  revokePatientAccess,
   sendUrgentAlert,
   setStoredToken,
   signup,
@@ -60,10 +66,11 @@ import {
   streamImageAnalysis,
   toggleCarePlanTask,
   transcribeAudio,
+  decidePatientAccess,
   updateNote,
   uploadDocuments
 } from "./api";
-import type { AuthResponse, CarePlan, CarePlanTask, ChatStreamEvent, ClinicalNote, Dict, EscalationThreshold, FeedbackRating, LabReminder, MedReminder, Message, MissedCareItem, ProductConfig, Snapshot, TrialSearchResult } from "./types";
+import type { AccessOverview, AuthResponse, CarePlan, CarePlanTask, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, Dict, EscalationThreshold, FeedbackRating, LabReminder, MedReminder, Message, MissedCareItem, ProductConfig, Snapshot, TrialSearchResult } from "./types";
 import type { ClarifyOption, UploadExtracted } from "./api";
 import {
   buildSeries,
@@ -73,12 +80,14 @@ import {
   clean,
   formatDate,
   formatTimestamp,
+  isClinicianRole,
+  isPatientRole,
   parseMemorySections,
   unique,
   vitalLabel
 } from "./utils";
 
-type View = "workspace" | "chat" | "timeline" | "trials" | "care-plans";
+type View = "workspace" | "chat" | "timeline" | "trials" | "care-plans" | "patients" | "access";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null };
@@ -96,12 +105,6 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
     }
     return this.props.children;
   }
-}
-
-function isPatientRole(role: string | undefined): boolean {
-  if (!role) return true;
-  const r = role.toLowerCase().trim();
-  return r === "patient" || r === "personal" || r === "";
 }
 
 const PATIENT_URGENCY: Record<string, { label: string; color: string; bg: string }> = {
@@ -221,14 +224,23 @@ function App() {
     return <AuthScreen config={config} onSuccess={handleAuth} />;
   }
 
+  const role = snapshot.profile.clinical_role || snapshot.profile.role;
+  const clinician = isClinicianRole(role);
+
   return (
     <ErrorBoundary>
       <Shell snapshot={snapshot} view={view} setView={setView} signOut={signOut} notice={notice}>
-        {view === "workspace" && <WorkspaceView snapshot={snapshot} setView={setView} setSnapshot={setSnapshot} />}
+        {view === "workspace" && (
+          clinician
+            ? <ClinicianWorkspace snapshot={snapshot} setView={setView} setNotice={setNotice} />
+            : <WorkspaceView snapshot={snapshot} setView={setView} setSnapshot={setSnapshot} />
+        )}
         {view === "chat" && <ChatView snapshot={snapshot} setSnapshot={setSnapshot} setNotice={setNotice} />}
-        {view === "timeline" && <TimelineView snapshot={snapshot} />}
-        {view === "trials" && <TrialsView snapshot={snapshot} setSnapshot={setSnapshot} setNotice={setNotice} />}
-        {view === "care-plans" && <CarePlanScreen snapshot={snapshot} />}
+        {!clinician && view === "timeline" && <TimelineView snapshot={snapshot} />}
+        {!clinician && view === "trials" && <TrialsView snapshot={snapshot} setSnapshot={setSnapshot} setNotice={setNotice} />}
+        {!clinician && view === "care-plans" && <CarePlanScreen snapshot={snapshot} />}
+        {!clinician && view === "access" && <PatientAccessView setNotice={setNotice} />}
+        {clinician && view === "patients" && <ClinicianPatientsView setNotice={setNotice} />}
       </Shell>
     </ErrorBoundary>
   );
@@ -504,13 +516,22 @@ function Shell({
   notice: string;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const nav = [
-    { id: "workspace" as const, label: "Home", short: "Home", icon: Home },
-    { id: "chat" as const, label: "Chat", short: "Chat", icon: MessageSquare },
-    { id: "care-plans" as const, label: "Care Plans", short: "Plans", icon: ListChecks },
-    { id: "timeline" as const, label: "Timeline", short: "Timeline", icon: CalendarClock },
-    { id: "trials" as const, label: "Trials", short: "Trials", icon: FlaskConical }
-  ];
+  const role = snapshot.profile.clinical_role || snapshot.profile.role;
+  const clinician = isClinicianRole(role);
+  const nav: Array<{ id: View; label: string; short: string; icon: LucideIcon }> = clinician
+    ? [
+        { id: "workspace", label: "Clinical Home", short: "Home", icon: Home },
+        { id: "patients", label: "My Patients", short: "Patients", icon: Users },
+        { id: "chat", label: "Evidence Review", short: "Evidence", icon: MessageSquare }
+      ]
+    : [
+        { id: "workspace", label: "Home", short: "Home", icon: Home },
+        { id: "chat", label: "Health Chat", short: "Chat", icon: MessageSquare },
+        { id: "care-plans", label: "My Care Plans", short: "Plans", icon: ListChecks },
+        { id: "timeline", label: "My Timeline", short: "Timeline", icon: CalendarClock },
+        { id: "trials", label: "Find Trials", short: "Trials", icon: FlaskConical },
+        { id: "access", label: "Clinician Access", short: "Access", icon: UserCheck }
+      ];
   const name = clean(snapshot.profile.display_name, snapshot.user);
 
   return (
@@ -648,6 +669,432 @@ function WorkspaceView({
 
       <RecordPanel snapshot={snapshot} setSnapshot={setSnapshot} compact />
     </div>
+  );
+}
+
+function ClinicianWorkspace({
+  snapshot,
+  setView,
+  setNotice
+}: {
+  snapshot: Snapshot;
+  setView: (view: View) => void;
+  setNotice: (notice: string) => void;
+}) {
+  const [access, setAccess] = useState<AccessOverview | null>(null);
+
+  useEffect(() => {
+    fetchAccessOverview()
+      .then(setAccess)
+      .catch((error) => setNotice(error instanceof Error ? error.message : "Could not load patient access."));
+  }, [setNotice]);
+
+  return (
+    <div className="view-stack clinician-dashboard">
+      <section className="workspace-band clinician-band">
+        <div>
+          <span className="eyebrow">Clinical workspace</span>
+          <h2>Welcome, {clean(snapshot.profile.display_name, "clinician")}</h2>
+          <p>
+            Review consented patient records and use evidence support within your professional scope.
+            Patient data is never opened without an active access grant.
+          </p>
+        </div>
+        <div className="role-badge">
+          <Stethoscope size={18} />
+          {clean(snapshot.profile.clinical_role || snapshot.profile.role, "Clinician")}
+        </div>
+      </section>
+
+      <section className="metric-grid">
+        <div className="metric-card">
+          <Users size={20} />
+          <strong>{access?.active_count ?? 0}</strong>
+          <span>Consented patients</span>
+        </div>
+        <div className="metric-card">
+          <UserCheck size={20} />
+          <strong>{access?.pending_count ?? 0}</strong>
+          <span>Pending requests</span>
+        </div>
+        <div className="metric-card">
+          <ShieldCheck size={20} />
+          <strong>Scoped</strong>
+          <span>Consent-controlled access</span>
+        </div>
+      </section>
+
+      <section className="action-grid clinician-actions">
+        <ActionButton
+          icon={<Users size={21} />}
+          title="Open patient list"
+          body="Request access by MRN or review records for patients who have approved access."
+          onClick={() => setView("patients")}
+        />
+        <ActionButton
+          icon={<MessageSquare size={21} />}
+          title="Clinical evidence review"
+          body="Ask a professional evidence question without treating your own clinician account as a patient record."
+          onClick={() => setView("chat")}
+        />
+      </section>
+
+      <section className="surface-card boundary-card">
+        <ShieldCheck size={22} />
+        <div>
+          <h3>Professional boundary</h3>
+          <p>
+            Personal care plans, personal timelines, and patient trial matching belong to patient
+            workspaces. In the clinician workspace, those records appear only inside an approved
+            patient chart.
+          </p>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PatientAccessView({ setNotice }: { setNotice: (notice: string) => void }) {
+  const [overview, setOverview] = useState<AccessOverview | null>(null);
+  const [busy, setBusy] = useState("");
+
+  async function refresh() {
+    try {
+      setOverview(await fetchAccessOverview());
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not load access requests.");
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  async function decide(grantId: string, approve: boolean) {
+    setBusy(grantId);
+    try {
+      await decidePatientAccess(grantId, approve);
+      setNotice(approve ? "Clinician access approved for 90 days." : "Access request denied.");
+      await refresh();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not update access.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function revoke(grantId: string) {
+    setBusy(grantId);
+    try {
+      await revokePatientAccess(grantId);
+      setNotice("Clinician access revoked.");
+      await refresh();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not revoke access.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return (
+    <div className="view-stack">
+      <section className="workspace-band">
+        <div>
+          <span className="eyebrow">Privacy and consent</span>
+          <h2>Clinician access</h2>
+          <p>Only approve a request from a clinician you recognise and expect to review your record.</p>
+        </div>
+        <div className="mrn-card">
+          <span>Your MRN</span>
+          <strong>{overview?.patient_id || "Unavailable"}</strong>
+          <small>Share this privately with your clinician.</small>
+        </div>
+      </section>
+
+      <section className="surface-card">
+        <h3>Pending requests</h3>
+        {!overview?.requests.some((item) => item.status === "pending") && (
+          <p className="muted">No clinician is waiting for access.</p>
+        )}
+        <div className="access-list">
+          {overview?.requests.filter((item) => item.status === "pending").map((item) => (
+            <article className="access-row" key={item.grant_id}>
+              <div>
+                <strong>{item.clinician_name}</strong>
+                <span>{item.clinician_role}{item.organization ? ` · ${item.organization}` : ""}</span>
+                <p>{item.request_reason || "No reason supplied."}</p>
+                <small>
+                  Requested: record summary
+                  {item.scopes.includes("chat_history") ? " and chat history" : ""}
+                </small>
+              </div>
+              <div className="row-actions">
+                <button className="primary" disabled={busy === item.grant_id} onClick={() => decide(item.grant_id, true)}>
+                  Approve
+                </button>
+                <button className="ghost" disabled={busy === item.grant_id} onClick={() => decide(item.grant_id, false)}>
+                  Deny
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="surface-card">
+        <h3>Active access</h3>
+        {!overview?.requests.some((item) => item.status === "active") && (
+          <p className="muted">No clinician currently has access.</p>
+        )}
+        <div className="access-list">
+          {overview?.requests.filter((item) => item.status === "active").map((item) => (
+            <article className="access-row" key={item.grant_id}>
+              <div>
+                <strong>{item.clinician_name}</strong>
+                <span>{item.clinician_role}{item.organization ? ` · ${item.organization}` : ""}</span>
+                <small>Expires {formatDate(item.expires_at)}</small>
+              </div>
+              <button className="ghost danger-button" disabled={busy === item.grant_id} onClick={() => revoke(item.grant_id)}>
+                Revoke
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ClinicianPatientsView({ setNotice }: { setNotice: (notice: string) => void }) {
+  const [overview, setOverview] = useState<AccessOverview | null>(null);
+  const [selected, setSelected] = useState<ClinicianPatientSummary | null>(null);
+  const [mrn, setMrn] = useState("");
+  const [reason, setReason] = useState("");
+  const [includeChat, setIncludeChat] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function refresh() {
+    try {
+      setOverview(await fetchAccessOverview());
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not load patient access.");
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  async function submitRequest(event: FormEvent) {
+    event.preventDefault();
+    if (!mrn.trim()) {
+      setNotice("Enter the patient MRN.");
+      return;
+    }
+    if (!reason.trim()) {
+      setNotice("Enter the clinical reason for requesting access.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await requestPatientAccess({
+        patient_id: mrn.trim(),
+        reason: reason.trim(),
+        include_chat_history: includeChat
+      });
+      setNotice("Access request sent. The patient must approve it before any record is shown.");
+      setMrn("");
+      setReason("");
+      setIncludeChat(false);
+      await refresh();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not request access.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openPatient(patientId: string) {
+    setBusy(true);
+    try {
+      setSelected(await fetchClinicianPatient(patientId));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not open patient record.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revoke(grantId: string) {
+    setBusy(true);
+    try {
+      await revokePatientAccess(grantId);
+      setSelected(null);
+      setNotice("Patient access released.");
+      await refresh();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not release access.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (selected) {
+    return (
+      <ClinicianPatientChart
+        summary={selected}
+        busy={busy}
+        onBack={() => setSelected(null)}
+        onRevoke={() => revoke(selected.grant.grant_id)}
+      />
+    );
+  }
+
+  const active = overview?.requests.filter((item) => item.status === "active") ?? [];
+  const pending = overview?.requests.filter((item) => item.status === "pending") ?? [];
+  return (
+    <div className="view-stack">
+      <section className="workspace-band clinician-band">
+        <div>
+          <span className="eyebrow">Consented care</span>
+          <h2>My patients</h2>
+          <p>Open approved records or request access using the MRN provided by the patient.</p>
+        </div>
+      </section>
+
+      <section className="surface-card">
+        <h3>Approved patients</h3>
+        {!active.length && <p className="muted">No patient has approved access yet.</p>}
+        <div className="patient-grid">
+          {active.map((item) => (
+            <button className="patient-card" key={item.grant_id} onClick={() => openPatient(item.patient_id)} disabled={busy}>
+              <UserCheck size={22} />
+              <strong>{item.patient_name}</strong>
+              <span>{item.patient_id}</span>
+              <small>Access until {formatDate(item.expires_at)}</small>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="surface-card access-request-card">
+        <h3>Request patient access</h3>
+        <form className="stack" onSubmit={submitRequest}>
+          <label>
+            Patient MRN
+            <input value={mrn} onChange={(event) => setMrn(event.target.value)} placeholder="FM-XXXX-XXXX" />
+          </label>
+          <label>
+            Clinical reason
+            <textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Reason for reviewing this record" rows={3} />
+          </label>
+          <label className="check-row">
+            <input type="checkbox" checked={includeChat} onChange={(event) => setIncludeChat(event.target.checked)} />
+            <span>Also request access to conversation history</span>
+          </label>
+          <button className="primary" type="submit" disabled={busy}>Send consent request</button>
+        </form>
+      </section>
+
+      {!!pending.length && (
+        <section className="surface-card">
+          <h3>Waiting for patient approval</h3>
+          <div className="access-list">
+            {pending.map((item) => (
+              <article className="access-row" key={item.grant_id}>
+                <div>
+                  <strong>{item.patient_name}</strong>
+                  <span>{item.patient_id}</span>
+                  <small>Requested {formatDate(item.requested_at)}</small>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function ClinicianPatientChart({
+  summary,
+  busy,
+  onBack,
+  onRevoke
+}: {
+  summary: ClinicianPatientSummary;
+  busy: boolean;
+  onBack: () => void;
+  onRevoke: () => void;
+}) {
+  return (
+    <div className="view-stack patient-chart">
+      <section className="workspace-band clinician-band">
+        <div>
+          <button className="link-btn" onClick={onBack}>← Back to patients</button>
+          <span className="eyebrow">Consented patient record</span>
+          <h2>{summary.patient.display_name}</h2>
+          <p>
+            {summary.patient.patient_id}
+            {summary.patient.date_of_birth ? ` · DOB ${formatDate(summary.patient.date_of_birth)}` : ""}
+            {summary.patient.biological_sex ? ` · ${summary.patient.biological_sex}` : ""}
+          </p>
+        </div>
+        <button className="ghost danger-button" onClick={onRevoke} disabled={busy}>Release access</button>
+      </section>
+
+      <section className="chart-grid">
+        <ClinicalDataList title="Active conditions" items={summary.conditions} primary="name" secondary="status" />
+        <ClinicalDataList title="Current medications" items={summary.medications} primary="name" secondary="dose" />
+        <ClinicalDataList title="Allergies" items={summary.allergies} primary="name" secondary="reaction" />
+        <ClinicalDataList title="Recent observations" items={summary.vitals} primary="type" secondary="value" suffix="unit" />
+        <ClinicalDataList title="Recent symptoms" items={summary.symptoms} primary="symptom" secondary="severity" />
+        <ClinicalDataList title="Triage and disposition" items={summary.triage} primary="urgency_level" secondary="next_step" />
+        <ClinicalDataList title="Patient care plans" items={summary.care_plans} primary="title" secondary="status" />
+        <ClinicalDataList title="Clinical notes" items={summary.clinical_notes} primary="assessment" secondary="plan" />
+      </section>
+
+      <section className="surface-card">
+        <h3>Conversation history</h3>
+        {!summary.chat_history_authorized ? (
+          <p className="muted">The patient did not grant access to conversation history.</p>
+        ) : (
+          <ClinicalDataList title="" items={summary.chat_history} primary="role" secondary="content" />
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ClinicalDataList({
+  title,
+  items,
+  primary,
+  secondary,
+  suffix
+}: {
+  title: string;
+  items: Dict<any>[];
+  primary: string;
+  secondary: string;
+  suffix?: string;
+}) {
+  return (
+    <section className="surface-card chart-section">
+      {title && <h3>{title}</h3>}
+      {!items.length && <p className="muted">None recorded.</p>}
+      <div className="clinical-list">
+        {items.map((item, index) => (
+          <div key={String(item.id ?? index)}>
+            <strong>{clean(item[primary], "Recorded item")}</strong>
+            <span>
+              {clean(item[secondary])}
+              {suffix && item[suffix] ? ` ${item[suffix]}` : ""}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

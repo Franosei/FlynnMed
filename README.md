@@ -156,8 +156,9 @@ SMTP_USER=your@gmail.com
 SMTP_PASSWORD=your-16-char-app-password
 EMAIL_FROM=FlynnMed <your@gmail.com>
 
-# Database (optional -- defaults to local users.json)
+# Relational database (required for clinician/patient consent)
 DATABASE_URL=
+DATA_BACKEND=sql
 
 # MCP API key (optional -- protects /mcp endpoint)
 MCP_API_KEY=
@@ -201,8 +202,8 @@ FlynnMed adapts its interface and responses to the signed-in user's role.
 
 | Role | What they see |
 |---|---|
-| Patient | Clean response text, no clinical metadata, simplified SOAP note view, urgent care strip only when action is needed |
-| Doctor | Full SOAP notes (Subjective / Objective / Assessment / Plan), sources, evidence basis, triage card, editable notes |
+| Patient | Personal health dashboard, clean response text, care plans, timeline, trial matching, consent request approval/revocation, simplified SOAP note view |
+| Doctor | Separate clinical dashboard, consented patient list, MRN-based access requests, read-only patient charts, evidence review, full sources and triage metadata |
 | Nurse | Role-adapted notes (Presenting concern / Observations / Nursing assessment / Care plan), editable |
 | Midwife | Maternal-focused notes (Maternal concern / Maternal and fetal assessment / Risk assessment / Maternity plan), editable |
 | Physiotherapist | MSK-focused notes (Presenting complaint / Physical assessment / Clinical impression / Treatment plan), editable |
@@ -392,6 +393,11 @@ All endpoints are served from `backend/api.py` and prefixed `/api` unless noted.
 | GET | `/api/health` | Liveness check |
 | GET | `/api/config` | Public product config (name, role options) |
 | POST | `/api/auth/signup` | Create an account (role, consent, password) |
+| GET | `/api/access` | List the signed-in account's consent requests and active grants |
+| POST | `/api/access/requests` | Clinician requests scoped patient access by MRN |
+| POST | `/api/access/requests/{grant_id}/decision` | Patient approves or denies a pending request |
+| DELETE | `/api/access/requests/{grant_id}` | Patient or clinician revokes/releases access |
+| GET | `/api/clinician/patients/{patient_id}` | Read an approved patient chart under an active consent grant |
 | POST | `/api/auth/login` | Exchange credentials for a JWT |
 | GET | `/api/me` | Current user profile |
 | GET | `/api/snapshot` | Full workspace snapshot (record, notes, trials, memory) on load |
@@ -518,7 +524,8 @@ Install the `mcp` package first: `pip install mcp`.
 | `OPENAI_MODEL` | Yes | Chat model name |
 | `OPENAI_VISION_MODEL` | No | Vision-capable model for medical image intake (default: OPENAI_MODEL or gpt-4o) |
 | `OPENAI_EMBEDDING_MODEL` | No | Embedding model (default: text-embedding-3-small) |
-| `DATABASE_URL` | No | PostgreSQL connection string; uses local JSON if unset |
+| `DATABASE_URL` | For clinician access | PostgreSQL connection string; legacy personal-only development can use local JSON |
+| `DATA_BACKEND` | For clinician access | Set to `sql` after migrations to enable relational accounts, consent grants, and clinician patient charts |
 | `SMTP_HOST` | No | SMTP host (e.g. smtp.gmail.com) |
 | `SMTP_PORT` | No | SMTP port (587 for STARTTLS, 465 for SSL) |
 | `SMTP_USER` | No | Sender email address |
@@ -580,11 +587,15 @@ docker run -p 8000:8000 --env-file .env flynnmed
 
 ## PostgreSQL
 
-For hosted or shared deployments, set `DATABASE_URL` so account data and feedback signals persist between deployments.
+For hosted or shared deployments, set `DATABASE_URL` and `DATA_BACKEND=sql` so account data,
+consent grants, and clinician patient access persist between deployments.
 
 1. Create a PostgreSQL database (Neon, Supabase or any provider).
 2. Add `DATABASE_URL` to the environment.
-3. Restart the server. The app migrates the schema automatically for both `user_store.py` and `feedback_store.py`.
+3. Run `alembic upgrade head`.
+4. If upgrading an existing JSON deployment, run `python -m backend.scripts.migrate_json_to_sql`
+   and verify it before cutover.
+5. Set `DATA_BACKEND=sql` and restart the server.
 
 ---
 

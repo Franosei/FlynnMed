@@ -1,4 +1,4 @@
-import type { AuthResponse, CarePlan, ChatStreamEvent, ClinicalNote, FeedbackRating, FeedbackResponse, ProductConfig, Snapshot } from "./types";
+import type { AccessGrant, AccessOverview, AuthResponse, CarePlan, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, FeedbackRating, FeedbackResponse, ProductConfig, Snapshot } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 const TOKEN_KEY = "flynnmed_token";
@@ -81,6 +81,44 @@ export function signup(payload: Record<string, unknown>): Promise<AuthResponse> 
 
 export function fetchSnapshot(): Promise<Snapshot> {
   return apiRequest<Snapshot>("/api/snapshot");
+}
+
+export function fetchAccessOverview(): Promise<AccessOverview> {
+  return apiRequest<AccessOverview>("/api/access");
+}
+
+export function requestPatientAccess(payload: {
+  patient_id: string;
+  reason: string;
+  include_chat_history: boolean;
+}): Promise<AccessGrant> {
+  return apiRequest<AccessGrant>("/api/access/requests", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function decidePatientAccess(
+  grantId: string,
+  approve: boolean,
+  decisionNote = ""
+): Promise<AccessGrant> {
+  return apiRequest<AccessGrant>(`/api/access/requests/${grantId}/decision`, {
+    method: "POST",
+    body: JSON.stringify({ approve, decision_note: decisionNote })
+  });
+}
+
+export function revokePatientAccess(grantId: string): Promise<AccessGrant> {
+  return apiRequest<AccessGrant>(`/api/access/requests/${grantId}`, {
+    method: "DELETE"
+  });
+}
+
+export function fetchClinicianPatient(patientId: string): Promise<ClinicianPatientSummary> {
+  return apiRequest<ClinicianPatientSummary>(
+    `/api/clinician/patients/${encodeURIComponent(patientId)}`
+  );
 }
 
 export async function streamChat(
