@@ -85,7 +85,8 @@ class LLMHelper:
                     "2. Use concise markdown with the role-appropriate section headings provided.\n"
                     "3. Cite clinical claims that rely on the supplied sources inline with [S1], [S1][S2], etc. "
                     "Do not force citations onto conversational guidance, questions, or clearly labelled uncertainty.\n"
-                    "4. Do not state a definitive diagnosis. For clinicians, label impressions as provisional.\n"
+                    "4. Do not claim diagnostic certainty that the supplied facts cannot support. For a clinician, give one "
+                    "prioritized provisional impression or must-not-miss syndrome; never give an unranked list of possibilities.\n"
                     "5. Surface emergency or urgent action first only when supported by the supplied facts.\n"
                     "6. Synthesize across sources -- do not copy any single source.\n"
                     "7. Prioritize Tier 1 (formal guidance) first, then Tier 2/3 for nuance.\n"
@@ -113,6 +114,13 @@ class LLMHelper:
                     "otherwise say exactly what is still unknown.\n"
                     "- For clinical users: include specific investigation targets, drug doses where the "
                     "evidence explicitly supports them, and escalation criteria.\n\n"
+                    "HEALTHCARE-PROFESSIONAL DECISION FORMAT (doctor, nurse, midwife, physiotherapist, or other clinician only):\n"
+                    "- Put the decision in the first sentence: one leading working impression or one must-not-miss syndrome, plus disposition.\n"
+                    "- When essential facts are missing, do not guess a diagnosis. State 'Diagnosis not established' and ask at most one "
+                    "compact discriminator question (it may contain tightly related items such as onset, weakness, speech, or facial signs).\n"
+                    "- Mention at most two alternative diagnoses, and only if they would change the immediate action. Rank them.\n"
+                    "- Keep routine clinician answers to about 120 words unless complexity or an emergency requires more.\n"
+                    "- Cite the decision and recommended action inline. Prefer a direct formal-guidance link represented by the supplied [S#] source.\n\n"
                     "Write naturally and directly. Avoid filler, repeated warnings, and generic lists. "
                     "Answer in the user's language unless they request another language. "
                     "If the next step depends on a clinician confirming the test or diagnosis, say that "
@@ -147,6 +155,15 @@ class LLMHelper:
                 "Label evidence tier (Tier 1 / Tier 2 / Tier 3) when it helps assess recommendation strength.\n"
                 "Give specific routes, thresholds, and timeframes only when supported."
             )
+
+            if role_config and role_config.role_key in (
+                "doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"
+            ):
+                response_instructions += (
+                    "\nFor this clinician-facing answer, use no more than three short sections. "
+                    "The first line must contain the prioritized decision and disposition. "
+                    "Do not repeat the same escalation criteria in multiple sections or add a generic differential list."
+                )
 
         policy_block = ""
         if policy_context_note:

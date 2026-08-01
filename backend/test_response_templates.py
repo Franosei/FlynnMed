@@ -17,6 +17,9 @@ def test_doctor_persona_pushes_management_without_senior_claim():
     assert "initial management" in persona
     assert "not a senior specialist" in persona
     assert "clear route" in persona
+    assert "one prioritized working impression" in persona
+    assert "do not produce an unranked differential list" in persona
+    assert "inline citation" in persona
 
 
 def test_clinician_headings_lead_with_management_sections():
@@ -34,6 +37,16 @@ def test_patient_headings_include_monitoring_and_urgent_route():
 
     assert "## What To Monitor" in headings
     assert "## Get Urgent Help If" in headings
+
+
+def test_other_clinician_has_scope_aware_decision_format():
+    persona = get_persona_block("healthcare_professional").lower()
+    headings = get_section_headings("healthcare_professional")
+
+    assert "exact regulated profession is not specified" in persona
+    assert "locally authorised scope" in persona
+    assert "cite the decision and action inline" in persona
+    assert headings[0] == "## Prioritized Decision"
 
 
 def test_crisis_response_is_role_appropriate():

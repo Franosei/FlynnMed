@@ -24,7 +24,7 @@ RISK_LEVEL_RANK = {
     "crisis": 4,
 }
 
-CLINICAL_ROLES = {"doctor", "nurse", "midwife", "physiotherapist"}
+CLINICAL_ROLES = {"doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"}
 
 
 @dataclass

@@ -11,7 +11,7 @@ from backend.response_templates import get_persona_block, get_section_headings
 
 @dataclass
 class RoleConfig:
-    role_key: str                           # canonical: patient, doctor, nurse, midwife, physiotherapist, caregiver
+    role_key: str                           # canonical role used by policy and presentation
     display_label: str
     terminology_level: str                  # "lay", "intermediate", "clinical"
     escalation_threshold: str               # "low" = escalate readily, "medium", "high"
@@ -82,6 +82,14 @@ _ROLE_CONFIGS: dict[str, RoleConfig] = {
         vulnerable_population_flags=[],
         preferred_evidence_tiers=[1, 2, 3],
     ),
+    "healthcare_professional": RoleConfig(
+        role_key="healthcare_professional",
+        display_label="Other Clinician",
+        terminology_level="clinical",
+        escalation_threshold="medium",
+        vulnerable_population_flags=[],
+        preferred_evidence_tiers=[1, 2, 3],
+    ),
 }
 
 # ── Alias map: landing-page role strings → canonical role_key ─────────────────
@@ -104,7 +112,7 @@ _ALIAS_MAP: dict[str, str] = {
     "midwife": "midwife",
     "physiotherapist": "physiotherapist",
     "physio": "physiotherapist",
-    "other clinician": "doctor",   # fallback for unknown clinicians
+    "other clinician": "healthcare_professional",
 }
 
 

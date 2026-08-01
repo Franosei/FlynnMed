@@ -150,7 +150,7 @@ class ModerationEnsemble:
         det_scores = self._detox_scores(text)
         rules = self._rule_hits(text)
         has_clinical_context = bool(self._CLINICAL_CONTEXT_PATTERN.search(text))
-        is_clinical_role = role_key in ("doctor", "nurse", "midwife", "physiotherapist")
+        is_clinical_role = role_key in ("doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional")
 
         if rules["sexual_minors"]:
             return True, "sexual_minors", SAFE_MESSAGES["sexual_minors"], self._pack(det_scores, rules)

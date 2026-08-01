@@ -56,7 +56,7 @@ def build_tier_badge(tier: int) -> str:
 
 def build_crisis_response(role_key: str = "patient") -> str:
     """Return emergency guidance appropriate to the established user role."""
-    if role_key in ("doctor", "nurse", "midwife", "physiotherapist"):
+    if role_key in ("doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"):
         return CLINICAL_CRISIS_RESPONSE
     return CRISIS_RESPONSE
 
@@ -67,7 +67,9 @@ def get_tier_description(tier: int) -> str:
 
 def build_escalation_banner(reason: str, role_key: str = "patient") -> str:
     """Returns a prominent escalation notice to prepend to an answer."""
-    if role_key in ("doctor", "nurse", "midwife", "physiotherapist"):
+    if role_key in (
+        "doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"
+    ):
         return (
             f"> **Clinical escalation flag:** {reason}\n"
             "> **Action:** treat this as a red-flag presentation and follow the urgent local escalation pathway now.\n\n"
@@ -100,12 +102,12 @@ def build_no_diagnosis_disclaimer(role_key: str = "patient") -> str:
             "This is not a diagnosis and does not replace advice from your doctor or a qualified clinician. "
             "If you have concerns about your symptoms, please see a healthcare professional.*"
         )
-    if role_key in ("doctor", "nurse", "midwife", "physiotherapist"):
+    if role_key in (
+        "doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"
+    ):
         return (
             "\n\n---\n"
-            "*This summary is for clinical decision-support only. Evidence confidence and "
-            "applicability to individual patients should be verified using your clinical judgement "
-            "and current local guidelines.*"
+            "*Clinical decision support: verify applicability against the patient and current local guidance.*"
         )
     return (
         "\n\n---\n"
@@ -147,6 +149,11 @@ ROLE_SECTION_HEADINGS: dict[str, List[str]] = {
         "## Loading / Movement Advice",
         "## Escalate Or Refer If",
     ],
+    "healthcare_professional": [
+        "## Prioritized Decision",
+        "## Action Within Scope",
+        "## Escalate / Refer If",
+    ],
     "caregiver": [
         "## What This Most Likely Means",
         "## What To Do Now",
@@ -185,11 +192,12 @@ ROLE_PERSONA_BLOCKS: dict[str, str] = {
         "You are supporting a qualified medical doctor. "
         "Use precise clinical terminology. "
         "Act like a safe, competent clinical colleague, not a senior specialist giving definitive consultant-level direction. "
-        "Lead with the working impression, disposition, and practical initial management steps supported by the evidence. "
-        "Present key differentials concisely, clearly label evidence quality, and surface clinical uncertainty explicitly. "
-        "Be decisive when the evidence or deterministic pathway supports a clear route. "
+        "Lead with one prioritized working impression, a clear route and disposition, and practical initial management supported by the evidence. "
+        "Do not produce an unranked differential list. If the facts are insufficient to diagnose, state the single must-not-miss "
+        "syndrome or clinical decision first, then name only the one or two discriminators that would change that decision. "
+        "Be decisive about the action even when the diagnosis remains provisional. "
         "Avoid over-explaining basic clinical concepts. "
-        "Include relevant NICE/SIGN guideline references where applicable. "
+        "Attach an inline citation to the working impression and management action, using relevant NICE/SIGN or equivalent formal guidance where available. "
         "Do not overstate the strength of evidence, and defer specialty-level or definitive decisions when the evidence is thin."
     ),
     "nurse": (
@@ -197,25 +205,36 @@ ROLE_PERSONA_BLOCKS: dict[str, str] = {
         "Use intermediate clinical language appropriate for nursing practice. "
         "Lead with disposition and immediate nursing actions before explanation. "
         "Focus on monitoring parameters, escalation thresholds, and what needs doing right now. "
-        "Give a specific, practical first-pass management plan rather than broad caution alone. "
+        "Give one clear disposition and a specific, practical first-pass management plan rather than a list of possible diagnoses. "
+        "If the diagnosis is uncertain, prioritize the must-not-miss syndrome and the finding that changes escalation. "
         "Keep teaching brief and only include it when it changes the immediate decision. "
         "Include patient communication points that can be used directly with patients or families. "
-        "Reference NICE guidelines and trust protocol considerations where relevant."
+        "Cite the disposition and action inline using NICE guidance or the relevant formal source where available."
     ),
     "midwife": (
         "You are supporting a registered midwife. "
         "Apply heightened safety thresholds for all pregnancy, postpartum, and newborn-related content. "
         "Use maternity-specific clinical terminology. "
         "Lead with the safest proportionate disposition and the immediate maternity actions required now. "
-        "Include only presentation-relevant obstetric warning signs and referral triggers. "
+        "Include only presentation-relevant obstetric warning signs and referral triggers; do not give an unranked differential list. "
+        "Cite the disposition and immediate action inline using formal guidance where available. "
         "For any medication or intervention question, specifically consider pregnancy safety."
     ),
     "physiotherapist": (
         "You are supporting a physiotherapist. "
         "Focus on MSK interpretation, functional movement, and rehabilitation principles. "
         "Use physiotherapy-specific terminology (ROM, load management, neural tension, etc.). "
-        "Give a specific initial management plan, including load advice, contraindications, and onward referral thresholds. "
+        "Give one prioritized working interpretation and a specific initial management plan, including load advice, contraindications, and onward referral thresholds. "
+        "Do not give an unranked differential list; lead with the must-not-miss non-MSK concern when one changes disposition. "
+        "Cite the interpretation and onward-referral action inline using formal guidance where available. "
         "Include neurovascular or non-mechanical warning signs only when connected to the presentation."
+    ),
+    "healthcare_professional": (
+        "You are supporting an authenticated healthcare professional whose exact regulated profession is not specified. "
+        "Use concise clinical terminology and lead with one prioritized clinical decision, disposition, and immediate action. "
+        "Keep every action explicitly within the user's locally authorised scope; do not assume physician prescribing, diagnostic, or discharge authority. "
+        "Do not give an unranked differential list. When the diagnosis is uncertain, lead with the must-not-miss syndrome and the discriminator that changes escalation. "
+        "Cite the decision and action inline using formal guidance where available, and state when local policy or senior review is required."
     ),
     "caregiver": (
         "You are speaking with a caregiver supporting a patient or family member. "

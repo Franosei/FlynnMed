@@ -1112,6 +1112,13 @@ class RAGEngine:
         ]
         raw_answer = remove_unknown_citations(raw_answer, source_ids)
 
+        role_config = bundle.get("role_config")
+        raw_answer = self._append_clinical_evidence_trail(
+            raw_answer,
+            bundle.get("combined_sources", []),
+            role_config.role_key if role_config else "patient",
+        )
+
         language_valid, language_violations = validate_user_facing_language(raw_answer)
         if not language_valid:
             raw_answer = remove_internal_language(raw_answer)
@@ -1148,7 +1155,6 @@ class RAGEngine:
             answer_markdown = policy_decision.vulnerability_notice + answer_markdown
 
         intent = bundle.get("intent")
-        role_config = bundle.get("role_config")
         risk_level = intent.risk_level if intent else "routine"
         combined_sources = bundle.get("combined_sources", [])
         medication_check = bundle.get("medication_check", {})
@@ -1171,7 +1177,20 @@ class RAGEngine:
         safety_net = self._build_safety_net_block(
             risk_level, triage_summary, role_config
         )
-        if safety_net and "**Return immediately if**" not in answer_markdown:
+        clinician_escalation_present = any(
+            marker in answer_markdown
+            for marker in (
+                "## Escalate Now If",
+                "## Escalate Immediately If",
+                "## Escalate Or Refer If",
+                "## Get Urgent Help If",
+            )
+        )
+        if (
+            safety_net
+            and "**Return immediately if**" not in answer_markdown
+            and not clinician_escalation_present
+        ):
             answer_markdown = answer_markdown + safety_net
 
         # Claim-source alignment check (post-generation audit; skipped in streaming path)
@@ -1987,6 +2006,7 @@ class RAGEngine:
             "nurse",
             "midwife",
             "physiotherapist",
+            "healthcare_professional",
         )
 
         # Use LLM-generated escalation triggers; fall back to what_to_monitor if absent
@@ -2184,6 +2204,46 @@ class RAGEngine:
 
         linked_answer = re.sub(r"\[(S\d+)\]", replace_match, answer_text)
         return linked_answer
+
+    @staticmethod
+    def _append_clinical_evidence_trail(
+        answer_text: str, sources: List[Dict], role_key: str
+    ) -> str:
+        """Map evidence cited in a professional answer to its source title."""
+        clinical_roles = {
+            "doctor",
+            "nurse",
+            "midwife",
+            "physiotherapist",
+            "healthcare_professional",
+        }
+        if role_key not in clinical_roles or "## Evidence Used" in answer_text:
+            return answer_text
+
+        cited_ids: List[str] = []
+        for source_id in re.findall(r"\[(S\d+)\]", answer_text):
+            if source_id not in cited_ids:
+                cited_ids.append(source_id)
+
+        by_id = {source.get("source_id"): source for source in sources}
+        evidence_lines = []
+        for source_id in cited_ids[:3]:
+            source = by_id.get(source_id)
+            if not source:
+                continue
+            title = str(source.get("title") or "Evidence source").strip()
+            authority = str(
+                source.get("authority")
+                or source.get("journal")
+                or source.get("provider")
+                or ""
+            ).strip()
+            label = f"{authority}: {title}" if authority else title
+            evidence_lines.append(f"- [{source_id}] {label}")
+
+        if not evidence_lines:
+            return answer_text
+        return answer_text.rstrip() + "\n\n## Evidence Used\n" + "\n".join(evidence_lines)
 
     @staticmethod
     def _build_limited_evidence_response(personal_context: List[Dict]) -> str:

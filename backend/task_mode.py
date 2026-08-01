@@ -34,7 +34,7 @@ _PROFESSIONAL_EVIDENCE = re.compile(
     r"periprocedural|protocols?|implementation\s+framework)\b",
     re.IGNORECASE,
 )
-_CLINICAL_ROLE_KEYS = {"doctor", "nurse", "midwife", "physiotherapist"}
+_CLINICAL_ROLE_KEYS = {"doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"}
 
 
 def _messages(

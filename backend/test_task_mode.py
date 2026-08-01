@@ -1,5 +1,6 @@
 from backend.summarizer import LLMHelper
 from backend.task_mode import decide_task_mode
+from backend.role_router import RoleRouter
 
 
 def test_detects_documentation_without_granting_clinical_authority():
@@ -174,3 +175,41 @@ def test_completion_guidance_is_present_even_when_sources_are_supplied():
     user_prompt = captured["messages"][1]["content"]
     assert "Controlled response requirements" in user_prompt
     assert "Identify only missing facts" in user_prompt
+
+
+def test_clinician_answer_prompt_requires_one_prioritized_cited_decision():
+    helper = object.__new__(LLMHelper)
+    captured = {}
+
+    def _capture(messages, model=None):
+        captured["messages"] = messages
+        return "answer"
+
+    helper._complete_response = _capture
+    helper.answer_question(
+        question="A 50-year-old woman has right-arm numbness and tingling.",
+        context="Clinical evidence context",
+        role_config=RoleRouter().resolve("doctor"),
+        source_briefings=[
+            {
+                "source_id": "S1",
+                "title": "Formal neurological guidance",
+                "snippet": "Assess acute focal neurological symptoms urgently.",
+                "url": "https://example.test/guidance",
+            }
+        ],
+    )
+
+    system_prompt = captured["messages"][0]["content"]
+    user_prompt = captured["messages"][1]["content"]
+    assert "one prioritized provisional impression or must-not-miss syndrome" in system_prompt
+    assert "Keep routine clinician answers to about 120 words" in system_prompt
+    assert "use no more than three short sections" in user_prompt
+    assert "prioritized decision and disposition" in user_prompt
+
+
+def test_other_clinician_is_not_routed_as_a_doctor():
+    role = RoleRouter().resolve("Other Clinician")
+
+    assert role.role_key == "healthcare_professional"
+    assert role.display_label == "Other Clinician"

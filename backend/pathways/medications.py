@@ -22,7 +22,7 @@ def get_pathway_context(
     intent: "IntentClassification",
     role_config: "RoleConfig",
 ) -> PathwayContext:
-    clinical_role = role_config.role_key in ("doctor", "nurse", "midwife", "physiotherapist")
+    clinical_role = role_config.role_key in ("doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional")
 
     search_terms = [
         "BNF drug interaction guideline",

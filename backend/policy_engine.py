@@ -256,7 +256,7 @@ class PolicyEngine:
             if not _MED_DOSAGE_PATIENT_PATTERN.search(question):
                 return
 
-        if role_config.role_key in ("doctor", "nurse", "midwife", "physiotherapist"):
+        if role_config.role_key in ("doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"):
             # Clinical roles get BNF context note
             gate = PolicyGateRecord(
                 gate_name="medication_clinical",
@@ -398,7 +398,7 @@ class PolicyEngine:
                       response covers the right red flags, recommends BP checks, lists
                       monitoring advice, etc. -- without us hardcoding what those flags are.
         """
-        is_clinical = role_config.role_key in ("doctor", "nurse", "midwife", "physiotherapist")
+        is_clinical = role_config.role_key in ("doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional")
 
         escalate_notes: List[str] = []
         context_notes: List[str] = []

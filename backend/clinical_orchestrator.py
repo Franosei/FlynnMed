@@ -1713,7 +1713,7 @@ class ClinicalOrchestrator:
             personal_note = "\n\n## Available Personal Context\n" + "\n".join(
                 f"- {item['title']}: {item['snippet']}" for item in personal_context
             )
-        if role_config.role_key in ("doctor", "nurse", "midwife", "physiotherapist"):
+        if role_config.role_key in ("doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"):
             return (
                 "## Evidence Retrieval\n"
                 "Insufficient live evidence was retrieved for this query. "

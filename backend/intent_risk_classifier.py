@@ -96,7 +96,7 @@ _ACTIVE_EMERGENCY_PATTERN = re.compile(
     r"we are (?:resuscitating|doing cpr)|i am (?:having|experiencing)|can't breathe now)\b",
     re.IGNORECASE,
 )
-_CLINICAL_ROLES = {"doctor", "nurse", "midwife", "physiotherapist"}
+_CLINICAL_ROLES = {"doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"}
 _PERSONAL_PNEUMONIA_TREATMENT_PATTERN = re.compile(
     r"\b(i (?:have|was diagnosed with)|i've got|estou com|tenho|tengo|"
     r"me diagnosticaron|j['’]ai|diagnosed? with)\b.{0,80}"
