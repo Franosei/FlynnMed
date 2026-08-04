@@ -403,8 +403,8 @@ def migrate_user(session: Session, username: str, record: Dict, dry_run: bool) -
     return "migrated"
 
 
-def run_migration(dry_run: bool) -> Dict[str, int]:
-    legacy_users = UserStore.list_all_users_for_migration()
+def run_migration(dry_run: bool, source: str = "json") -> Dict[str, int]:
+    legacy_users = UserStore.list_all_users_for_migration(source=source)
     session_factory = get_session_factory()
     counts = {"migrated": 0, "skipped": 0}
 
@@ -423,8 +423,8 @@ def run_migration(dry_run: bool) -> Dict[str, int]:
     return counts
 
 
-def verify_migration() -> bool:
-    legacy_users = UserStore.list_all_users_for_migration()
+def verify_migration(source: str = "json") -> bool:
+    legacy_users = UserStore.list_all_users_for_migration(source=source)
     session_factory = get_session_factory()
     ok = True
 
@@ -478,12 +478,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="Run without committing changes.")
     parser.add_argument("--verify", action="store_true", help="Verify a prior migration instead of running one.")
+    parser.add_argument(
+        "--source",
+        choices=("json", "legacy-postgres"),
+        default="json",
+        help="Legacy account source. Railway's former blob store uses legacy-postgres.",
+    )
     args = parser.parse_args()
 
     if args.verify:
-        return 0 if verify_migration() else 1
+        return 0 if verify_migration(source=args.source) else 1
 
-    counts = run_migration(dry_run=args.dry_run)
+    counts = run_migration(dry_run=args.dry_run, source=args.source)
     print(f"Done. migrated={counts['migrated']} skipped={counts['skipped']}")
     return 0
 

@@ -1,0 +1,5 @@
+# Optional local ML moderation. This installs Torch and is intentionally kept
+# out of the production web image because FlynnMed safely falls back to its
+# deterministic moderation rules when Detoxify is unavailable.
+-r requirements.txt
+detoxify

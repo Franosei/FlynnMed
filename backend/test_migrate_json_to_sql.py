@@ -1,6 +1,9 @@
 import uuid
 from datetime import date
 
+import pytest
+
+import backend.user_store as user_store_module
 from backend.models.account import AccountKind
 from backend.models.patient import Patient
 from backend.scripts.migrate_json_to_sql import (
@@ -19,6 +22,42 @@ from backend.scripts.migrate_json_to_sql import (
     _parse_date,
     _parse_dt,
 )
+from backend.user_store import UserStore
+
+
+def test_migration_source_defaults_to_local_json(monkeypatch):
+    expected = {"local-user": {"profile": {}}}
+
+    class FakeLocalBackend:
+        def list_all_users(self):
+            return expected
+
+    monkeypatch.setattr(user_store_module, "_LocalJSONUserBackend", FakeLocalBackend)
+
+    assert UserStore.list_all_users_for_migration() == expected
+
+
+def test_migration_source_can_read_legacy_postgres(monkeypatch):
+    expected = {"railway-user": {"profile": {}}}
+    received_urls = []
+
+    class FakePostgresBackend:
+        def __init__(self, database_url):
+            received_urls.append(database_url)
+
+        def list_all_users(self):
+            return expected
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example.invalid/flynnmed")
+    monkeypatch.setattr(user_store_module, "_PostgresUserBackend", FakePostgresBackend)
+
+    assert UserStore.list_all_users_for_migration("legacy-postgres") == expected
+    assert received_urls == ["postgresql://example.invalid/flynnmed"]
+
+
+def test_migration_source_rejects_unknown_value():
+    with pytest.raises(ValueError, match="Migration source"):
+        UserStore.list_all_users_for_migration("unknown")
 
 
 def test_parse_dt_handles_iso_and_z_suffix():

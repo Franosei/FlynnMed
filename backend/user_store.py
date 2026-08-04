@@ -1519,11 +1519,16 @@ class UserStore:
     # to carry the legacy PBKDF2 hash forward unchanged. Never expose over HTTP.
 
     @staticmethod
-    def list_all_users_for_migration() -> Dict[str, Dict]:
-        # The target DATABASE_URL must be set for the SQL session in the same
-        # migration process. Read the source explicitly from users.json so it
-        # is not accidentally switched to the target Postgres JSON backend.
-        return _LocalJSONUserBackend().list_all_users()
+    def list_all_users_for_migration(source: str = "json") -> Dict[str, Dict]:
+        """Read a legacy store without changing the application's backend."""
+        if source == "json":
+            return _LocalJSONUserBackend().list_all_users()
+        if source == "legacy-postgres":
+            database_url = _get_setting("DATABASE_URL")
+            if not database_url:
+                raise RuntimeError("DATABASE_URL is required for the legacy Postgres source.")
+            return _PostgresUserBackend(database_url).list_all_users()
+        raise ValueError("Migration source must be 'json' or 'legacy-postgres'.")
 
     # ── Export ──────────────────────────────────────────────────────────────────
 

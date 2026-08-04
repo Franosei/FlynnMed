@@ -1,27 +1,25 @@
-FROM python:3.13-slim
+FROM node:20-slim AS frontend-builder
 
-# Install Node.js 20 for the React frontend build
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates && \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+WORKDIR /build/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+
+FROM python:3.13-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
-# Install frontend dependencies and build
-COPY frontend/package.json frontend/package-lock.json ./frontend/
-RUN npm --prefix frontend ci
-
-COPY frontend/ ./frontend/
-RUN npm --prefix frontend run build
-
-# Install Python dependencies
-COPY requirements.txt .
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the app
 COPY . .
+COPY --from=frontend-builder /build/frontend/dist ./frontend/dist
 
 EXPOSE 8000
-CMD uvicorn backend.api:app --host 0.0.0.0 --port ${PORT:-8000}
+CMD ["sh", "/app/scripts/start.sh"]

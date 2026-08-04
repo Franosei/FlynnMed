@@ -24,8 +24,8 @@ argon2-cffi
 # MCP server (Model Context Protocol -- expose clinical tools to  agents)
 mcp
 
-# Safety / moderation
-detoxify
+# Safety / moderation uses deterministic rules in the core deployment.
+# Install requirements-ml.txt separately when local Detoxify scoring is needed.
 
 # Optional:
 # spaCy-based NER anonymization was removed from the required install because it

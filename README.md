@@ -343,7 +343,8 @@ Evidence is retrieved and ranked across three tiers:
 ### Safety and Moderation
 - Crisis pre-screen on every message before the main pipeline
 - Eight hard policy gates: crisis, pregnancy, paediatric, medication, diagnosis, elderly, mental health, urgent
-- Role-adaptive moderation using Detoxify (RoBERTa) and regex rules
+- Deterministic role-adaptive moderation rules in the core deployment
+- Optional Detoxify scoring for local research environments via `requirements-ml.txt`
 - Escalation triggers and safety-netting included in every clinical answer
 
 ---
@@ -422,6 +423,8 @@ image/
 Dockerfile                      container build
 Procfile                        Railway/Heroku start command
 requirements.txt                Python dependencies
+requirements-ml.txt             optional local Detoxify/PyTorch dependencies
+scripts/start.sh                migrations, legacy account import and production server startup
 ```
 
 ---
@@ -549,7 +552,7 @@ Install the `mcp` package first: `pip install mcp`.
 | Official guidance | NHS Conditions and MedlinePlus |
 | Drug interactions | openFDA drug label API |
 | Clinical trials | ClinicalTrials.gov API v2 |
-| Moderation | Detoxify (RoBERTa) with regex fallback |
+| Moderation | Deterministic rules, with optional local Detoxify scoring |
 | PDF parsing and export | PyMuPDF |
 | Email | Gmail SMTP via App Password (or any SMTP provider) |
 | MCP | FastMCP streamable HTTP |
@@ -614,6 +617,10 @@ There is no component/E2E test suite yet -- `App.tsx` is a single large file wit
 
 ### Docker
 
+The production image uses separate Node build and Python runtime stages. Node, frontend source,
+local patient data and optional CUDA/PyTorch moderation packages are not included in the runtime
+image. Install `requirements-ml.txt` only in a local research environment that needs Detoxify.
+
 ```bash
 docker build -t flynnmed .
 docker run -p 8000:8000 --env-file .env flynnmed
@@ -622,16 +629,21 @@ docker run -p 8000:8000 --env-file .env flynnmed
 ### Railway
 
 1. Connect the repository in Railway.
-2. Set all environment variables in the Railway Variables panel.
-3. Railway reads `Procfile` and starts the server automatically.
-4. The MCP server is available at `https://your-app.railway.app/mcp`.
+2. Add PostgreSQL and set `DATABASE_URL`, `JWT_SECRET_KEY` and the required application keys in Railway Variables.
+3. Deploy from the repository Dockerfile. The startup script applies Alembic migrations, imports accounts from the former Railway JSON-blob table, switches to `DATA_BACKEND=sql`, and then starts Uvicorn.
+4. Confirm the deployment log reaches `Starting FlynnMed` and the health check succeeds.
+5. The MCP server is available at `https://your-app.railway.app/mcp`.
+
+The legacy account import is idempotent. Existing patient accounts receive a relational patient row
+and MRN during the first successful deployment, while subsequent deployments skip those accounts.
 
 ---
 
 ## PostgreSQL
 
-For hosted or shared deployments, set `DATABASE_URL` and `DATA_BACKEND=sql` so account data,
-consent grants, and clinician patient access persist between deployments.
+For hosted or shared deployments, set `DATABASE_URL` so account data, consent grants, and clinician
+patient access persist between deployments. The production startup script sets `DATA_BACKEND=sql`
+after applying migrations.
 
 1. Create a PostgreSQL database (Neon, Supabase or any provider).
 2. Add `DATABASE_URL` to the environment.
