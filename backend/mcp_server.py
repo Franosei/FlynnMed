@@ -32,7 +32,6 @@ Tools:
 from __future__ import annotations
 
 import json
-import sys
 
 from dotenv import load_dotenv
 
@@ -40,13 +39,15 @@ load_dotenv()
 
 try:
     from mcp.server.fastmcp import FastMCP
-except ImportError:
-    print(
-        "ERROR: mcp package not installed.\n"
-        "Install with:  pip install mcp\n"
-        "Then re-run:   python -m backend.mcp_server"
+except ImportError as exc:
+    message = (
+        "MCP integration is unavailable. Install the compatible dependency with "
+        "`pip install 'mcp>=1.28,<2'`. "
+        f"Original import error: {exc}"
     )
-    sys.exit(1)
+    if __name__ == "__main__":
+        raise SystemExit(message) from exc
+    raise RuntimeError(message) from exc
 
 from backend.clinical_notes import generate_soap_note  # noqa: E402
 from backend.clinical_context_guard import (  # noqa: E402

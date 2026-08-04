@@ -22,7 +22,7 @@ pyjwt
 argon2-cffi
 
 # MCP server (Model Context Protocol -- expose clinical tools to  agents)
-mcp
+mcp>=1.28,<2
 
 # Safety / moderation uses deterministic rules in the core deployment.
 # Install requirements-ml.txt separately when local Detoxify scoring is needed.

@@ -636,6 +636,8 @@ docker run -p 8000:8000 --env-file .env flynnmed
 
 The legacy account import is idempotent. Existing patient accounts receive a relational patient row
 and MRN during the first successful deployment, while subsequent deployments skip those accounts.
+The MCP dependency is pinned to the compatible 1.x API. If MCP cannot initialise, FlynnMed logs the
+problem and continues serving the patient and clinician application without the optional MCP route.
 
 ---
 

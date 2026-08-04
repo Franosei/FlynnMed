@@ -29,6 +29,15 @@ def test_heavy_ml_stack_is_not_in_core_runtime_requirements():
     assert "detoxify" in optional
 
 
+def test_mcp_runtime_is_pinned_to_the_compatible_major_version():
+    core = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    mcp_server = (ROOT / "backend" / "mcp_server.py").read_text(encoding="utf-8")
+
+    assert "mcp>=1.28,<2" in core
+    assert "sys.exit(1)" not in mcp_server
+    assert "raise RuntimeError(message)" in mcp_server
+
+
 def test_docker_context_excludes_local_records_and_build_outputs():
     ignored = (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
 
