@@ -68,9 +68,10 @@ import {
   transcribeAudio,
   decidePatientAccess,
   updateNote,
+  updateSafetyReview,
   uploadDocuments
 } from "./api";
-import type { AccessOverview, AuthResponse, CarePlan, CarePlanTask, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, Dict, EscalationThreshold, FeedbackRating, LabReminder, MedReminder, Message, MissedCareItem, ProductConfig, Snapshot, TrialSearchResult } from "./types";
+import type { AccessOverview, AuthResponse, CarePlan, CarePlanTask, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, Dict, EscalationThreshold, FeedbackRating, LabReminder, MedReminder, Message, MissedCareItem, ProductConfig, SafetyReview, Snapshot, TrialSearchResult } from "./types";
 import type { ClarifyOption, UploadExtracted } from "./api";
 import {
   buildSeries,
@@ -87,7 +88,7 @@ import {
   vitalLabel
 } from "./utils";
 
-type View = "workspace" | "chat" | "timeline" | "trials" | "care-plans" | "patients" | "access";
+type View = "workspace" | "safety" | "chat" | "timeline" | "trials" | "care-plans" | "patients" | "access";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null };
@@ -236,6 +237,7 @@ function App() {
             : <WorkspaceView snapshot={snapshot} setView={setView} setSnapshot={setSnapshot} />
         )}
         {view === "chat" && <ChatView snapshot={snapshot} setSnapshot={setSnapshot} setNotice={setNotice} />}
+        {!clinician && view === "safety" && <SafetyReviewView snapshot={snapshot} setSnapshot={setSnapshot} setNotice={setNotice} />}
         {!clinician && view === "timeline" && <TimelineView snapshot={snapshot} />}
         {!clinician && view === "trials" && <TrialsView snapshot={snapshot} setSnapshot={setSnapshot} setNotice={setNotice} />}
         {!clinician && view === "care-plans" && <CarePlanScreen snapshot={snapshot} />}
@@ -526,10 +528,10 @@ function Shell({
       ]
     : [
         { id: "workspace", label: "Home", short: "Home", icon: Home },
+        { id: "safety", label: "Safety Review", short: "Safety", icon: ShieldCheck },
         { id: "chat", label: "Health Chat", short: "Chat", icon: MessageSquare },
         { id: "care-plans", label: "My Care Plans", short: "Plans", icon: ListChecks },
         { id: "timeline", label: "My Timeline", short: "Timeline", icon: CalendarClock },
-        { id: "trials", label: "Find Trials", short: "Trials", icon: FlaskConical },
         { id: "access", label: "Clinician Access", short: "Access", icon: UserCheck }
       ];
   const name = clean(snapshot.profile.display_name, snapshot.user);
@@ -648,9 +650,15 @@ function WorkspaceView({
 
       <section className="action-grid">
         <ActionButton
+          icon={<ShieldCheck size={21} />}
+          title="Safety review"
+          body="Review important changes in results, symptoms and medicines, with the facts and guidance behind each proposed next step."
+          onClick={() => setView("safety")}
+        />
+        <ActionButton
           icon={<MessageSquare size={21} />}
           title="Chat"
-          body="Ask a question, continue a conversation, upload records, and save structured health context."
+          body="Ask a health question, clarify missing information, or add a new record."
           onClick={() => setView("chat")}
         />
         <ActionButton
@@ -659,15 +667,181 @@ function WorkspaceView({
           body="Review conditions, medications, allergies, readings, uploaded records, and trend cards."
           onClick={() => setView("timeline")}
         />
-        <ActionButton
-          icon={<Search size={21} />}
-          title="Find Clinical Trials"
-          body="Rank recruiting ClinicalTrials.gov records against your saved account profile."
-          onClick={() => setView("trials")}
-        />
       </section>
 
       <RecordPanel snapshot={snapshot} setSnapshot={setSnapshot} compact />
+    </div>
+  );
+}
+
+function SafetyReviewView({
+  snapshot,
+  setSnapshot,
+  setNotice
+}: {
+  snapshot: Snapshot;
+  setSnapshot: (snapshot: Snapshot) => void;
+  setNotice: (notice: string) => void;
+}) {
+  const [busy, setBusy] = useState("");
+  const [followUp, setFollowUp] = useState<Record<string, { happened: boolean | null; improved: boolean | null; note: string }>>({});
+  const reviews = snapshot.safety_reviews ?? [];
+  const emergencyCount = reviews.filter((item) => item.priority === "emergency").length;
+
+  async function save(review: SafetyReview, payload: Parameters<typeof updateSafetyReview>[1]) {
+    setBusy(review.review_id);
+    try {
+      const response = await updateSafetyReview(review.review_id, payload);
+      setSnapshot(response.snapshot);
+      setNotice(payload.status === "patient_confirmed"
+        ? "Your confirmation is saved. A qualified clinician still needs to review the proposal."
+        : "Follow-up saved.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not update the safety review.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return (
+    <div className="view-stack safety-review-page">
+      <section className="workspace-band safety-heading">
+        <div>
+          <span className="eyebrow">Evidence to action</span>
+          <h2>Safety review</h2>
+          <p>Important changes found across your results, symptoms, medicines and allergies.</p>
+        </div>
+        <div className={`safety-count${emergencyCount ? " emergency" : ""}`}>
+          <strong>{reviews.length}</strong>
+          <span>{reviews.length === 1 ? "active review" : "active reviews"}</span>
+        </div>
+      </section>
+
+      {emergencyCount > 0 && (
+        <section className="emergency-banner" role="alert">
+          <AlertTriangle size={24} />
+          <div>
+            <strong>Emergency action comes first</strong>
+            <p>Follow the emergency instruction below now. Do not wait for confirmation or clinician approval in FlynnMed.</p>
+          </div>
+        </section>
+      )}
+
+      {reviews.length === 0 ? (
+        <section className="safety-empty">
+          <CheckCircle2 size={26} />
+          <div>
+            <h3>No supported safety conflict is active</h3>
+            <p>FlynnMed only shows a finding when a locked rule can link it to exact record facts and guidance. This is not a complete clinical review.</p>
+          </div>
+        </section>
+      ) : reviews.map((review) => {
+        const draft = followUp[review.review_id] ?? {
+          happened: review.outcome.action_happened,
+          improved: review.outcome.patient_improved,
+          note: review.outcome.note || ""
+        };
+        return (
+          <article className={`safety-review safety-${review.priority}`} key={review.review_id}>
+            <header className="safety-review-header">
+              <div>
+                <span className="safety-priority">{review.priority}</span>
+                <h3>{review.category}</h3>
+              </div>
+              <span className="review-status">{review.status.replace(/_/g, " ")}</span>
+            </header>
+
+            <div className="safety-flow">
+              <section>
+                <span>What changed</span>
+                <p>{review.what_changed}</p>
+              </section>
+              <section>
+                <span>Why it matters</span>
+                <p>{review.why_it_matters}</p>
+              </section>
+              <section className="proposed-action">
+                <span>Proposed next step</span>
+                <p>{review.proposed_action}</p>
+              </section>
+            </div>
+
+            <div className="traceability-grid">
+              <section>
+                <h4>Patient facts used</h4>
+                {review.patient_facts.map((fact) => (
+                  <div className="trace-row" key={`${fact.record_type}-${fact.record_id}`}>
+                    <strong>{fact.label}</strong>
+                    <span>{fact.value}{fact.recorded_on ? `, ${formatDate(fact.recorded_on)}` : ""}</span>
+                  </div>
+                ))}
+              </section>
+              <section>
+                <h4>Guidance used</h4>
+                {review.evidence.map((source) => (
+                  <div className="trace-row" key={source.source_url}>
+                    <a href={source.source_url} target="_blank" rel="noreferrer">{source.source_title}</a>
+                    <span>{source.passage}</span>
+                  </div>
+                ))}
+              </section>
+            </div>
+
+            <details className="uncertainty-panel">
+              <summary>Uncertainty and limits</summary>
+              <p>{review.uncertainty}</p>
+            </details>
+
+            <section className="approval-strip">
+              <div>
+                <span>Approver</span>
+                <strong>{review.approver}</strong>
+                <small>{review.writeback.message}</small>
+              </div>
+              {review.status === "detected" && review.priority !== "emergency" && (
+                <button className="primary" disabled={busy === review.review_id} onClick={() => save(review, { status: "patient_confirmed" })}>
+                  <CheckCircle2 size={17} />
+                  Confirm for review
+                </button>
+              )}
+            </section>
+
+            {(review.status !== "detected" || review.priority === "emergency") && (
+              <section className="follow-up-panel">
+                <h4>Follow-up</h4>
+                <div className="follow-up-fields">
+                  <fieldset>
+                    <legend>Did the action happen?</legend>
+                    <div className="segmented compact-segmented">
+                      <button type="button" className={draft.happened === true ? "active" : ""} onClick={() => setFollowUp({ ...followUp, [review.review_id]: { ...draft, happened: true } })}>Yes</button>
+                      <button type="button" className={draft.happened === false ? "active" : ""} onClick={() => setFollowUp({ ...followUp, [review.review_id]: { ...draft, happened: false } })}>No</button>
+                    </div>
+                  </fieldset>
+                  <fieldset>
+                    <legend>Are you feeling better?</legend>
+                    <div className="segmented compact-segmented">
+                      <button type="button" className={draft.improved === true ? "active" : ""} onClick={() => setFollowUp({ ...followUp, [review.review_id]: { ...draft, improved: true } })}>Yes</button>
+                      <button type="button" className={draft.improved === false ? "active" : ""} onClick={() => setFollowUp({ ...followUp, [review.review_id]: { ...draft, improved: false } })}>No</button>
+                    </div>
+                  </fieldset>
+                </div>
+                <label>
+                  Note for the clinician <span className="optional-tag">Optional</span>
+                  <textarea rows={3} value={draft.note} maxLength={500} onChange={(event) => setFollowUp({ ...followUp, [review.review_id]: { ...draft, note: event.target.value } })} />
+                </label>
+                <button className="ghost" disabled={busy === review.review_id || draft.happened === null} onClick={() => save(review, {
+                  status: "follow_up_recorded",
+                  action_happened: draft.happened ?? undefined,
+                  patient_improved: draft.improved ?? undefined,
+                  note: draft.note
+                })}>
+                  Save follow-up
+                </button>
+              </section>
+            )}
+          </article>
+        );
+      })}
     </div>
   );
 }
@@ -757,12 +931,16 @@ function ClinicianWorkspace({
 function PatientAccessView({ setNotice }: { setNotice: (notice: string) => void }) {
   const [overview, setOverview] = useState<AccessOverview | null>(null);
   const [busy, setBusy] = useState("");
+  const [loadError, setLoadError] = useState("");
 
   async function refresh() {
     try {
       setOverview(await fetchAccessOverview());
+      setLoadError("");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Could not load access requests.");
+      const message = error instanceof Error ? error.message : "Could not load access requests.";
+      setLoadError(message);
+      setNotice(message);
     }
   }
 
@@ -806,14 +984,24 @@ function PatientAccessView({ setNotice }: { setNotice: (notice: string) => void 
         </div>
         <div className="mrn-card">
           <span>Your MRN</span>
-          <strong>{overview?.patient_id || "Unavailable"}</strong>
-          <small>Share this privately with your clinician.</small>
+          <strong>{loadError ? "Database not connected" : overview?.patient_id || "Loading..."}</strong>
+          <small>{loadError ? "Your MRN will appear when clinician access is available." : "Share this privately with your clinician."}</small>
         </div>
       </section>
 
+      {loadError && (
+        <section className="access-unavailable" role="alert">
+          <AlertTriangle size={20} />
+          <div>
+            <strong>Clinician access is temporarily unavailable</strong>
+            <p>{loadError}</p>
+          </div>
+        </section>
+      )}
+
       <section className="surface-card">
         <h3>Pending requests</h3>
-        {!overview?.requests.some((item) => item.status === "pending") && (
+        {!loadError && !overview?.requests.some((item) => item.status === "pending") && (
           <p className="muted">No clinician is waiting for access.</p>
         )}
         <div className="access-list">
@@ -843,7 +1031,7 @@ function PatientAccessView({ setNotice }: { setNotice: (notice: string) => void 
 
       <section className="surface-card">
         <h3>Active access</h3>
-        {!overview?.requests.some((item) => item.status === "active") && (
+        {!loadError && !overview?.requests.some((item) => item.status === "active") && (
           <p className="muted">No clinician currently has access.</p>
         )}
         <div className="access-list">

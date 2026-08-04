@@ -12,6 +12,10 @@ import os
 import secrets
 
 
+class DatabaseConfigurationError(RuntimeError):
+    """Raised when a relational workflow is used without its database."""
+
+
 def environment() -> str:
     return os.getenv("ENVIRONMENT", "development").strip().lower()
 
@@ -23,7 +27,7 @@ def is_production() -> bool:
 def database_url() -> str:
     url = os.getenv("DATABASE_URL", "").strip()
     if not url:
-        raise RuntimeError(
+        raise DatabaseConfigurationError(
             "DATABASE_URL is required (Postgres) -- the legacy JSON-file/dual-backend "
             "local-dev store has been retired. Run `docker compose up -d db` for local dev."
         )

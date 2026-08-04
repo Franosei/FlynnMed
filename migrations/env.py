@@ -3,10 +3,13 @@ from __future__ import annotations
 from logging.config import fileConfig
 
 from alembic import context
+from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
 from backend.config import database_url
 from backend.models import Base
+
+load_dotenv()
 
 config = context.config
 if config.config_file_name is not None:

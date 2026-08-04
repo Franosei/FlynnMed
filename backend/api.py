@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import time
@@ -12,12 +13,13 @@ from pathlib import Path
 from typing import Dict, Generator, List, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from backend.clinical_notes import generate_soap_note
 from backend.care_plan_agent import CarePlanAgent
@@ -37,6 +39,7 @@ from backend.clinical_context_guard import (
     validate_generated_answer,
 )
 from backend.clinical_trials import build_trial_search_profile, find_matching_trials
+from backend.config import DatabaseConfigurationError
 from backend.db import get_db
 from backend.email_service import send_clinical_note_email, send_urgent_care_alert
 from backend.feedback_store import save_feedback
@@ -50,6 +53,7 @@ from backend.image_analysis_agent import (
 from backend.intent_risk_classifier import IntentRiskClassifier
 from backend.patient_history import build_patient_history_context
 from backend.role_router import RoleRouter
+from backend.safety_review import build_safety_reviews, update_review_state
 from backend.product_config import (
     FOUNDER_NAME,
     PRIVACY_NOTICE_POINTS,
@@ -71,7 +75,47 @@ from backend.voice_transcriber import VoiceTranscriber
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title=f"{PRODUCT_NAME} API")
+
+
+@app.exception_handler(DatabaseConfigurationError)
+async def database_configuration_error(
+    request: Request,
+    exc: DatabaseConfigurationError,
+) -> JSONResponse:
+    del request, exc
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": (
+                "Clinician access is unavailable because the secure patient database is not connected. "
+                "Set DATABASE_URL, run the database migrations, then restart FlynnMed."
+            )
+        },
+    )
+
+
+@app.exception_handler(SQLAlchemyError)
+async def relational_database_error(
+    request: Request,
+    exc: SQLAlchemyError,
+) -> JSONResponse:
+    del request
+    logger.error(
+        "Relational database request failed",
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": (
+                "Clinician access is unavailable because the secure patient database is not ready. "
+                "Check the database connection, apply the current migrations, then restart FlynnMed."
+            )
+        },
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -231,6 +275,13 @@ def _snapshot(username: str) -> Dict:
     triage_summaries = UserStore.get_triage_summaries(username, limit=None)
     latest_triage = triage_summaries[0] if triage_summaries else {}
     chat_history = _reconcile_chat_history(username, UserStore.get_chat_history(username))
+    safety_reviews = build_safety_reviews(
+        vitals=vitals,
+        symptoms=symptom_logs,
+        medications=medications,
+        allergies=allergies,
+        saved_states=UserStore.get_safety_review_states(username),
+    )
 
     return {
         "product": {
@@ -266,6 +317,7 @@ def _snapshot(username: str) -> Dict:
         "memory": UserStore.get_longitudinal_memory(username),
         "trial_search_result": UserStore.get_trial_search_result(username),
         "clinical_notes": UserStore.get_clinical_notes(username),
+        "safety_reviews": safety_reviews,
     }
 
 
@@ -352,6 +404,13 @@ class VitalsPayload(BaseModel):
     unit: str = ""
     recorded_on: str = ""
     notes: str = ""
+
+
+class SafetyReviewUpdatePayload(BaseModel):
+    status: str
+    action_happened: Optional[bool] = None
+    patient_improved: Optional[bool] = None
+    note: str = ""
 
 
 class TrialSearchPayload(BaseModel):
@@ -751,6 +810,29 @@ def me(username: str = Depends(current_user)) -> Dict:
 @app.get("/api/snapshot")
 def snapshot(username: str = Depends(current_user)) -> Dict:
     return _snapshot(username)
+
+
+@app.patch("/api/safety-reviews/{review_id}")
+def update_safety_review(
+    review_id: str,
+    payload: SafetyReviewUpdatePayload,
+    username: str = Depends(current_user),
+) -> Dict:
+    reviews = {item["review_id"]: item for item in _snapshot(username)["safety_reviews"]}
+    if review_id not in reviews:
+        raise HTTPException(status_code=404, detail="This safety review is no longer active.")
+    current = UserStore.get_safety_review_states(username).get(review_id)
+    try:
+        state = update_review_state(current, payload.dict())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    UserStore.save_safety_review_state(username, review_id, state)
+    updated_snapshot = _snapshot(username)
+    updated_review = next(
+        item for item in updated_snapshot["safety_reviews"]
+        if item["review_id"] == review_id
+    )
+    return {"review": updated_review, "snapshot": updated_snapshot}
 
 
 # ---------------------------------------------------------------------------

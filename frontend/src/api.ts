@@ -1,4 +1,4 @@
-import type { AccessGrant, AccessOverview, AuthResponse, CarePlan, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, FeedbackRating, FeedbackResponse, ProductConfig, Snapshot } from "./types";
+import type { AccessGrant, AccessOverview, AuthResponse, CarePlan, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, FeedbackRating, FeedbackResponse, ProductConfig, SafetyReview, Snapshot } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 const TOKEN_KEY = "flynnmed_token";
@@ -81,6 +81,21 @@ export function signup(payload: Record<string, unknown>): Promise<AuthResponse> 
 
 export function fetchSnapshot(): Promise<Snapshot> {
   return apiRequest<Snapshot>("/api/snapshot");
+}
+
+export function updateSafetyReview(
+  reviewId: string,
+  payload: {
+    status: "detected" | "patient_confirmed" | "follow_up_recorded";
+    action_happened?: boolean;
+    patient_improved?: boolean;
+    note?: string;
+  }
+): Promise<{ review: SafetyReview; snapshot: Snapshot }> {
+  return apiRequest(`/api/safety-reviews/${encodeURIComponent(reviewId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
 }
 
 export function fetchAccessOverview(): Promise<AccessOverview> {

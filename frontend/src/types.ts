@@ -109,6 +109,40 @@ export type Snapshot = {
   memory: Dict<any>;
   trial_search_result?: TrialSearchResult | null;
   clinical_notes: ClinicalNote[];
+  safety_reviews?: SafetyReview[];
+};
+
+export type SafetyReview = {
+  review_id: string;
+  rule_id: string;
+  priority: "emergency" | "urgent" | "review";
+  category: string;
+  status: "detected" | "patient_confirmed" | "follow_up_recorded";
+  what_changed: string;
+  why_it_matters: string;
+  uncertainty: string;
+  proposed_action: string;
+  patient_facts: Array<{
+    record_type: string;
+    record_id: string;
+    label: string;
+    value: string;
+    recorded_on: string;
+  }>;
+  evidence: Array<{
+    claim: string;
+    source_title: string;
+    source_url: string;
+    passage: string;
+  }>;
+  approver: string;
+  outcome: {
+    action_happened: boolean | null;
+    patient_improved: boolean | null;
+    note: string;
+    updated_at: string;
+  };
+  writeback: { status: string; message: string };
 };
 
 export type AuthResponse = {

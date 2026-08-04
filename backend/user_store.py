@@ -254,6 +254,7 @@ def _normalize_user_record(username: str, record: Dict) -> Dict:
     normalized.setdefault("conditions", [])
     normalized.setdefault("vitals", [])
     normalized.setdefault("clinical_notes", [])
+    normalized.setdefault("safety_review_states", {})
     normalized.setdefault("active_conversation_id", f"conv-{uuid4().hex[:12]}")
 
     normalized["conversation"] = [
@@ -1080,6 +1081,30 @@ class UserStore:
         return summaries[0] if summaries else {}
 
     @staticmethod
+    def get_safety_review_states(username: str) -> Dict[str, Dict]:
+        user = _get_user_record(username)
+        if not user:
+            return {}
+        states = user.get("safety_review_states", {})
+        return deepcopy(states) if isinstance(states, dict) else {}
+
+    @staticmethod
+    def save_safety_review_state(username: str, review_id: str, state: Dict) -> Optional[Dict]:
+        user = _get_user_record(username)
+        if not user or not review_id:
+            return None
+        states = user.setdefault("safety_review_states", {})
+        states[review_id] = deepcopy(state)
+        _append_audit(
+            user,
+            "safety_review_updated",
+            "Safety review workflow updated",
+            metadata={"review_id": review_id, "status": state.get("status", "")},
+        )
+        _save_user_record(username, user)
+        return deepcopy(state)
+
+    @staticmethod
     def save_trial_search_result(username: str, result: Dict) -> None:
         """Persist the most recent trial search result so it survives app restarts."""
         user = _get_user_record(username)
@@ -1495,7 +1520,10 @@ class UserStore:
 
     @staticmethod
     def list_all_users_for_migration() -> Dict[str, Dict]:
-        return _get_backend().list_all_users()
+        # The target DATABASE_URL must be set for the SQL session in the same
+        # migration process. Read the source explicitly from users.json so it
+        # is not accidentally switched to the target Postgres JSON backend.
+        return _LocalJSONUserBackend().list_all_users()
 
     # ── Export ──────────────────────────────────────────────────────────────────
 

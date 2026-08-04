@@ -4,9 +4,30 @@
 
 # FlynnMed
 
-FlynnMed is a clinical AI platform for patients and healthcare professionals. It gives signed-in users a role-aware workspace for evidence-based health questions, medical image triage, document upload, symptom and measurement tracking, medication management, agentic care-plan generation, SOAP clinical notes, GP-ready summaries, clinical trial search and secure email delivery -- with every answer passed through deterministic safety gates and evidence-tier ranking before it reaches the user.
+FlynnMed is a clinical safety and continuity workspace for patients and healthcare professionals. Its primary workflow reviews changes in patient records, identifies a small set of supported medicine and abnormal-result risks, links each finding to the exact patient facts and guidance behind it, prepares a bounded next step for confirmation and clinical review, and records whether follow-up happened. Evidence-based chat and the wider record tools support this workflow.
 
 The Python backend (`backend/`) runs the full clinical workflow: crisis pre-screen, intent and risk classification, role routing, tiered evidence retrieval, hard policy gates, note generation, care-plan generation and email. The React/TypeScript frontend (`frontend/`) is a single-page app that talks to `/api/*` endpoints served by `backend/api.py`. Both are built and deployed as one ASGI service -- there is no separate frontend host.
+
+## Signature safety workflow
+
+The patient workspace now leads with **Safety review**:
+
+```text
+Saved records and daily changes
+  -> locked safety checks
+  -> exact patient facts and supporting guidance
+  -> bounded next-step proposal
+  -> patient confirmation
+  -> clinician review required
+  -> health-record write-back when SMART-on-FHIR is connected
+  -> follow-up and patient-reported improvement
+```
+
+The first locked rule set is deliberately narrow. It covers severe and moderate potassium results, current emergency symptom entries, exact medicine-allergy conflicts, and warfarin recorded with selected NSAIDs. Unknown results are not assigned an invented reference range. The screen states uncertainty, never tells a patient to stop a prescribed medicine independently, and places emergency action before confirmation or approval.
+
+`backend/safety_review.py` is deterministic and separately tested. Every clinical claim returned by it includes structured `patient_facts` and an `evidence` item with the source title, URL and relevant passage. Patient-controlled workflow states are limited to confirmation and follow-up. They cannot create clinician approval.
+
+SMART-on-FHIR remains disconnected by default. Read and write capabilities are represented by the interface in `backend/fhir/`, but the safety screen clearly marks write-back as unavailable until a real sandbox connection, explicit clinician approval and production governance are in place.
 
 This README is written for developers working on the codebase: it documents the system architecture, every backend module, the full REST API surface, environment configuration and deployment. If you're looking for end-user documentation, see the [Features](#features) section below instead.
 
@@ -26,6 +47,7 @@ This README is written for developers working on the codebase: it documents the 
 
 ## Table of Contents
 
+- [Signature safety workflow](#signature-safety-workflow)
 - [Architecture](#architecture)
 - [Quick Start](#quick-start)
 - [User Roles](#user-roles)
@@ -156,8 +178,8 @@ SMTP_USER=your@gmail.com
 SMTP_PASSWORD=your-16-char-app-password
 EMAIL_FROM=FlynnMed <your@gmail.com>
 
-# Relational database (required for clinician/patient consent)
-DATABASE_URL=
+# Relational database (required for clinician/patient consent and MRNs)
+DATABASE_URL=postgresql+psycopg://flynnmed:flynnmed_dev_only@localhost:5432/flynnmed
 DATA_BACKEND=sql
 
 # MCP API key (optional -- protects /mcp endpoint)
@@ -167,7 +189,26 @@ MCP_API_KEY=
 Gmail requires an App Password, not your regular password. Generate one at:
 `myaccount.google.com -> Security -> 2-Step Verification -> App passwords`
 
-### 3. Frontend
+### 3. Database
+
+Start PostgreSQL and apply the schema before starting FlynnMed:
+
+```powershell
+docker compose up -d db
+py -m alembic upgrade head
+```
+
+For an existing account in `users.json`, migrate it before switching `DATA_BACKEND` to `sql`:
+
+```powershell
+# Keep DATA_BACKEND=legacy for these two commands.
+py -m backend.scripts.migrate_json_to_sql
+py -m backend.scripts.migrate_json_to_sql --verify
+```
+
+Then set `DATA_BACKEND=sql` in `.env`. This creates a relational patient row and MRN for each migrated patient account.
+
+### 4. Frontend
 
 ```powershell
 cd frontend
@@ -176,7 +217,7 @@ npm run build
 cd ..
 ```
 
-### 4. Start the server
+### 5. Start the server
 
 ```powershell
 py -m uvicorn backend.api:app --host 127.0.0.1 --port 8000
@@ -184,7 +225,7 @@ py -m uvicorn backend.api:app --host 127.0.0.1 --port 8000
 
 Open `http://127.0.0.1:8000`.
 
-### 5. Frontend development
+### 6. Frontend development
 
 Keep the backend running on port 8000, then in `frontend/`:
 
@@ -350,6 +391,7 @@ backend/
   rag_system.py                 retrieval, generation and document ingestion engine
   response_templates.py         role-specific headings, personas and tier labels
   role_router.py                RoleConfig and RoleRouter per clinical role
+  safety_review.py              locked longitudinal medicine and abnormal-result safety checks
   summarizer.py                 LLM wrapper, follow-up chips and SOAP generation helpers
   symptom_tracker.py            symptom trend summarisation
   triage_summary.py             structured triage output
@@ -400,7 +442,8 @@ All endpoints are served from `backend/api.py` and prefixed `/api` unless noted.
 | GET | `/api/clinician/patients/{patient_id}` | Read an approved patient chart under an active consent grant |
 | POST | `/api/auth/login` | Exchange credentials for a JWT |
 | GET | `/api/me` | Current user profile |
-| GET | `/api/snapshot` | Full workspace snapshot (record, notes, trials, memory) on load |
+| GET | `/api/snapshot` | Full workspace snapshot, including active safety reviews, on load |
+| PATCH | `/api/safety-reviews/{review_id}` | Confirm a safety proposal or record whether follow-up happened |
 | PUT | `/api/profile` | Update profile fields |
 | GET | `/api/terms/{role_label}` | Role-specific terms text shown at signup |
 | DELETE | `/api/chat` | Clear chat history |
@@ -524,7 +567,7 @@ Install the `mcp` package first: `pip install mcp`.
 | `OPENAI_MODEL` | Yes | Chat model name |
 | `OPENAI_VISION_MODEL` | No | Vision-capable model for medical image intake (default: OPENAI_MODEL or gpt-4o) |
 | `OPENAI_EMBEDDING_MODEL` | No | Embedding model (default: text-embedding-3-small) |
-| `DATABASE_URL` | For clinician access | PostgreSQL connection string; legacy personal-only development can use local JSON |
+| `DATABASE_URL` | For clinician access | PostgreSQL connection string required for MRNs, consent grants and clinician patient charts |
 | `DATA_BACKEND` | For clinician access | Set to `sql` after migrations to enable relational accounts, consent grants, and clinician patient charts |
 | `SMTP_HOST` | No | SMTP host (e.g. smtp.gmail.com) |
 | `SMTP_PORT` | No | SMTP port (587 for STARTTLS, 465 for SSL) |
@@ -603,6 +646,9 @@ consent grants, and clinician patient access persist between deployments.
 
 **`OPENAI_API_KEY not found`**
 Create `.env` with a valid API key and restart the server from the project root.
+
+**Clinician Access shows `Database not connected` instead of an MRN**
+Start PostgreSQL, set `DATABASE_URL`, run `py -m alembic upgrade head`, migrate any existing `users.json` accounts, set `DATA_BACKEND=sql`, and restart FlynnMed. An MRN is created with the relational patient row, so FlynnMed does not fabricate one while that database is unavailable.
 
 **Accounts or trial results disappear after a deployment**
 Set `DATABASE_URL` so the app uses PostgreSQL. Local `users.json` does not persist across Railway deployments.
