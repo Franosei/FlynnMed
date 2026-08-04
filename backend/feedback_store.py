@@ -14,6 +14,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
+from backend.config import psycopg_database_url
+
 
 FEEDBACK_TABLE = "response_feedback"
 
@@ -39,7 +41,7 @@ def _connect():
     database_url = os.getenv("DATABASE_URL", "")
     if not database_url:
         raise RuntimeError("DATABASE_URL is not set -- feedback cannot be saved.")
-    return psycopg.connect(database_url)
+    return psycopg.connect(psycopg_database_url(database_url))
 
 
 def _ensure_table() -> None:

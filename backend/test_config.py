@@ -5,7 +5,7 @@ import pytest
 
 from backend.api import database_configuration_error
 from backend.api import relational_database_error
-from backend.config import DatabaseConfigurationError, database_url
+from backend.config import DatabaseConfigurationError, database_url, psycopg_database_url
 from sqlalchemy.exc import SQLAlchemyError
 
 
@@ -14,6 +14,20 @@ def test_database_url_raises_specific_configuration_error(monkeypatch):
 
     with pytest.raises(DatabaseConfigurationError, match="DATABASE_URL is required"):
         database_url()
+
+
+def test_psycopg_database_url_removes_sqlalchemy_driver_name():
+    sqlalchemy_url = "postgresql+psycopg://user:password@example.invalid/flynnmed?sslmode=require"
+
+    assert psycopg_database_url(sqlalchemy_url) == (
+        "postgresql://user:password@example.invalid/flynnmed?sslmode=require"
+    )
+
+
+def test_psycopg_database_url_preserves_native_postgres_url():
+    native_url = "postgresql://user:password@example.invalid/flynnmed"
+
+    assert psycopg_database_url(native_url) == native_url
 
 
 def test_database_configuration_error_is_a_clear_503_response():

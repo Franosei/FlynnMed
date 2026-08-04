@@ -55,6 +55,18 @@ def test_migration_source_can_read_legacy_postgres(monkeypatch):
     assert received_urls == ["postgresql://example.invalid/flynnmed"]
 
 
+def test_legacy_postgres_backend_normalises_sqlalchemy_url(monkeypatch):
+    monkeypatch.setattr(user_store_module, "_ensure_upload_root", lambda: None)
+
+    backend = user_store_module._PostgresUserBackend(
+        "postgresql+psycopg://user:password@example.invalid/flynnmed?sslmode=require"
+    )
+
+    assert backend.database_url == (
+        "postgresql://user:password@example.invalid/flynnmed?sslmode=require"
+    )
+
+
 def test_migration_source_rejects_unknown_value():
     with pytest.raises(ValueError, match="Migration source"):
         UserStore.list_all_users_for_migration("unknown")

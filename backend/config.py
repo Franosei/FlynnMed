@@ -34,6 +34,14 @@ def database_url() -> str:
     return url
 
 
+def psycopg_database_url(url: str | None = None) -> str:
+    """Return a libpq-compatible URL from a SQLAlchemy PostgreSQL URL."""
+    configured_url = (url if url is not None else database_url()).strip()
+    if configured_url.startswith("postgresql+psycopg://"):
+        return "postgresql://" + configured_url.removeprefix("postgresql+psycopg://")
+    return configured_url
+
+
 _dev_jwt_secret: str | None = None
 
 

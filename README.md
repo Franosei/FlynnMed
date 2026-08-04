@@ -662,6 +662,9 @@ Create `.env` with a valid API key and restart the server from the project root.
 **Clinician Access shows `Database not connected` instead of an MRN**
 Start PostgreSQL, set `DATABASE_URL`, run `py -m alembic upgrade head`, migrate any existing `users.json` accounts, set `DATA_BACKEND=sql`, and restart FlynnMed. An MRN is created with the relational patient row, so FlynnMed does not fabricate one while that database is unavailable.
 
+Railway and SQLAlchemy may use a `postgresql+psycopg://` URL. FlynnMed converts that form
+automatically for components which connect through psycopg directly.
+
 **Accounts or trial results disappear after a deployment**
 Set `DATABASE_URL` so the app uses PostgreSQL. Local `users.json` does not persist across Railway deployments.
 

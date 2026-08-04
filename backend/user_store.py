@@ -12,6 +12,8 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
+from backend.config import psycopg_database_url
+
 load_dotenv()
 
 DATA_DIR = Path("data")
@@ -412,7 +414,7 @@ class _LocalJSONUserBackend:
 
 class _PostgresUserBackend:
     def __init__(self, database_url: str) -> None:
-        self.database_url = database_url
+        self.database_url = psycopg_database_url(database_url)
         self._ready = False
         _ensure_upload_root()
 
