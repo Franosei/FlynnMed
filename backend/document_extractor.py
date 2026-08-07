@@ -294,7 +294,7 @@ def extract_health_data_from_images(images: List[bytes], filename: str = "") -> 
         empty["extraction_errors"] = ["No pages were available to render for vision extraction."]
         return empty
 
-    model = os.getenv("OPENAI_VISION_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o"))
+    model = os.getenv("OPENAI_VISION_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
     client = OpenAI(api_key=api_key)
     payloads = []
     errors = []

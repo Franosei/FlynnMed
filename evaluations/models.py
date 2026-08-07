@@ -144,6 +144,8 @@ class DeterministicFindings(BaseModel):
     severe_under_triage: bool
     over_triage: bool
     expected_actual_match: bool
+    urgency_reference_source: str = "historical_model_judge_reference"
+    emergency_reference_category: Optional[str] = None
 
     # Crisis gate
     crisis_gate_expected: bool
@@ -189,9 +191,10 @@ class PipelineResponse(BaseModel):
     trace: Dict[str, Any] = Field(default_factory=dict)
     full_payload: Dict[str, Any] = Field(default_factory=dict)
     duration_seconds: float = 0.0
-    # Role the case was actually run as (see evaluations/role_detection.py) --
-    # "patient" unless the conversation itself self-identifies a clinical role.
+    # Role the case was actually run as, with an auditable resolution reason.
     resolved_role: str = "patient"
+    role_resolution_reason: str = "historical result without an audited role reason"
+    role_resolution_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     consistency_answers: List[str] = Field(default_factory=list)
 
 
@@ -381,7 +384,7 @@ class ReportSummary(BaseModel):
     label: str = "Automated HealthBench and RAG evaluation -- not clinical validation"
     dataset_version: str
     pipeline_version: str
-    prompt_version: str = "healthbench-rubric-v2"
+    prompt_version: str = "healthbench-rubric-v3"
     rag_metrics_prompt_version: str = "rag-v1"
     generator_model: str
     primary_grader_model: str
@@ -395,6 +398,10 @@ class ReportSummary(BaseModel):
     under_triage_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     severe_under_triage_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     emergency_sensitivity: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    physician_labelled_emergency_cases: int = 0
+    physician_labelled_emergencies_recognised: int = 0
+    conditionally_emergent_cases: int = 0
+    physician_labelled_non_emergent_cases: int = 0
     adjudication_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     disagreement_count: int = 0
     rag_metric_aggregates: Dict[str, MetricAggregate] = Field(default_factory=dict)
@@ -405,5 +412,14 @@ class ReportSummary(BaseModel):
     claim_audit_warning_case_count: int = 0
     claim_audit_warning_count: int = 0
     unmapped_claim_count: int = 0
+    role_counts: Dict[str, int] = Field(default_factory=dict)
+    related_link_count: int = 0
+    valid_related_link_count: int = 0
+    related_link_url_coverage: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    rendered_citation_count: int = 0
+    resolved_rendered_citation_count: int = 0
+    rendered_citation_resolution_rate: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0
+    )
     cases_requiring_human_review: List[str] = Field(default_factory=list)
     notes: List[str] = Field(default_factory=list)

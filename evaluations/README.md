@@ -18,10 +18,11 @@ rubric decision records evidence from the answer, and the harness rejects a
 grade that rewrites, reorders, adds, or drops rubric criteria. The weighted
 score is calculated locally from the dataset points.
 
-The default evaluator is `gpt-5.4-mini`. When the primary and adjudicator are
+The default response generator is `gpt-5.4-mini`, and the default evaluator is
+`gpt-5.6-luna`. When the primary and adjudicator are
 the same model, the redundant second call is skipped to reduce latency and
 cost; safety-trigger reasons are still recorded. **With the example `.env`
-below, both default to `gpt-5.4-mini`, so adjudication is fully disabled** --
+below, both default to `gpt-5.6-luna`, so adjudication is fully disabled** --
 the runner prints a `WARNING` at startup whenever this is the case. Set
 `EVAL_ADJUDICATOR_MODEL` to a genuinely different model (e.g. `gpt-4o-mini`)
 if you want flagged cases to actually get an independent second opinion.
@@ -77,13 +78,13 @@ OPENAI_API_KEY=sk-...
 # Optional: a separate project key with access to all evaluator models.
 EVAL_API_KEY=sk-...
 
-EVAL_GENERATOR_MODEL=gpt-4o-mini
-EVAL_PRIMARY_GRADER_MODEL=gpt-5.4-mini
+EVAL_GENERATOR_MODEL=gpt-5.4-mini
+EVAL_PRIMARY_GRADER_MODEL=gpt-5.6-luna
 # Must differ from EVAL_PRIMARY_GRADER_MODEL or the second-opinion adjudicator
 # call is skipped for every flagged case (a startup WARNING prints when they match).
-EVAL_ADJUDICATOR_MODEL=gpt-5.4-mini
-EVAL_RAG_METRICS_MODEL=gpt-5.4-mini
-EVAL_FALLBACK_MODEL=gpt-5.4-mini
+EVAL_ADJUDICATOR_MODEL=gpt-5.6-luna
+EVAL_RAG_METRICS_MODEL=gpt-5.6-luna
+EVAL_FALLBACK_MODEL=gpt-5.6-luna
 EVAL_ADJUDICATION_THRESHOLD=0.7
 EVAL_DOCUMENT_RELEVANCE_THRESHOLD=0.6
 EVAL_MINIMUM_RELIABLE_SAMPLE_SIZE=5
@@ -100,6 +101,16 @@ generation, the runner makes a small access-check request to each distinct
 configured evaluator model. A permission error therefore stops the run before
 retrieval and answer generation consume time or tokens. Never commit either key.
 
+For the current PowerShell session, set the key without printing it:
+
+```powershell
+$secureKey = Read-Host "Evaluation API key" -AsSecureString
+$env:EVAL_API_KEY = [Net.NetworkCredential]::new("", $secureKey).Password
+```
+
+The value entered by `Read-Host` is stored only in the process environment for
+that terminal session. Do not paste API keys into evaluation logs or chat.
+
 HealthBench grading and Tier metrics retry with `EVAL_FALLBACK_MODEL` when it
 differs from the primary model. Raw results record the model that actually
 produced each completed grade.
@@ -115,6 +126,11 @@ py -m evaluations.runner --dataset healthbench --dry-run
 
 # Reproducible ten-case sample
 py -m evaluations.runner --dataset healthbench --sample 10 --random-seed 20260714
+
+# Re-run the exact cases from a prior sanitised report
+py -m evaluations.runner --dataset healthbench `
+  --case-manifest evaluations/results/reports/healthbench_300_summary.json `
+  --run-id healthbench_300_role_v2
 
 # Periodic consistency run with two additional production calls per case
 py -m evaluations.runner --dataset healthbench --sample 10 --consistency-repeats 2
@@ -145,9 +161,26 @@ completion is labelled `dataset_ideal_completion_not_clinician_validated`.
 
 ## Role-aware execution
 
-Cases explicitly identifying the user as a doctor, nurse, midwife, or
-physiotherapist run through a fresh one-case account with that role. Other
-cases run anonymously in patient mode. Reports store the resolved role.
+Role resolution is deterministic and auditable. Explicit professional identity
+takes priority, followed by HealthBench's `health-professional` and
+`not-health-professional` audience tags, then high-confidence clinical framing
+such as `my patient`, ward context or multiple specialist-language signals.
+Nursing context routes to the nurse role. Personal and caregiver questions stay
+in patient mode. Reports store the role, reason and confidence for every case.
+
+Synthetic role accounts are isolated under the run's `runtime/` directory.
+The evaluator forces the legacy file backend for these accounts and never writes
+them to the configured Railway or local relational patient database.
+
+## Link and citation metrics
+
+The report separates three different concepts:
+
+1. Related-link URL coverage checks whether retrieved sources contain valid HTTP links.
+2. Rendered-citation resolution checks whether `[S1](...)` points to the stored S1 URL.
+3. Citation accuracy and completeness remain clinical grounding metrics. A working link
+   does not prove that its excerpt supports a claim, and an uncited claim can still lower
+   completeness.
 
 ## Output
 

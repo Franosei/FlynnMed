@@ -1,4 +1,4 @@
-import type { AccessGrant, AccessOverview, AuthResponse, CarePlan, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, FeedbackRating, FeedbackResponse, ProductConfig, SafetyReview, Snapshot } from "./types";
+import type { AccessGrant, AccessOverview, AuthResponse, CarePlan, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, FeedbackRating, FeedbackResponse, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, SafetyReview, Snapshot } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 const TOKEN_KEY = "flynnmed_token";
@@ -136,20 +136,67 @@ export function fetchClinicianPatient(patientId: string): Promise<ClinicianPatie
   );
 }
 
-export async function streamChat(
+// ── Pre-visit summary + patient-scoped clinician chat ───────────────────────
+
+export function generatePrevisitSummary(patientId: string): Promise<PreVisitSummary> {
+  return apiRequest<PreVisitSummary>(
+    `/api/clinician/patients/${encodeURIComponent(patientId)}/summary`,
+    { method: "POST" }
+  );
+}
+
+export function savePrevisitSummaryDraft(patientId: string, summaryText: string): Promise<PreVisitSummary> {
+  return apiRequest<PreVisitSummary>(
+    `/api/clinician/patients/${encodeURIComponent(patientId)}/summary/draft`,
+    { method: "PATCH", body: JSON.stringify({ summary_text: summaryText }) }
+  );
+}
+
+export function releasePrevisitSummary(patientId: string, summaryText: string): Promise<PreVisitSummary> {
+  return apiRequest<PreVisitSummary>(
+    `/api/clinician/patients/${encodeURIComponent(patientId)}/summary/release`,
+    { method: "POST", body: JSON.stringify({ summary_text: summaryText }) }
+  );
+}
+
+export function fetchPrevisitChatHistory(patientId: string): Promise<{ messages: PreVisitChatMessage[] }> {
+  return apiRequest(`/api/clinician/patients/${encodeURIComponent(patientId)}/chat`);
+}
+
+export async function streamPrevisitChat(
+  patientId: string,
   message: string,
-  onEvent: (event: ChatStreamEvent) => void
+  onEvent: (event: PrevisitChatStreamEvent) => void
 ): Promise<void> {
   const token = getStoredToken();
-  const response = await fetch(`${API_BASE}/api/chat/stream`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`
-    },
-    body: JSON.stringify({ message })
-  });
+  const response = await fetch(
+    `${API_BASE}/api/clinician/patients/${encodeURIComponent(patientId)}/chat`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ message })
+    }
+  );
+  return consumeNdjsonStream<PrevisitChatStreamEvent>(response, onEvent);
+}
 
+export function fetchMyPrevisitSummaries(): Promise<{ summaries: PreVisitSummary[] }> {
+  return apiRequest("/api/previsit-summaries");
+}
+
+/**
+ * Shared ndjson stream consumer -- one JSON event per line, tolerant of
+ * partial flushes/heartbeats (unparseable lines are dropped rather than
+ * thrown). Used by every streaming endpoint in this file so the buffering
+ * logic lives in exactly one place.
+ */
+async function consumeNdjsonStream<TEvent>(
+  response: Response,
+  onEvent: (event: TEvent) => void
+): Promise<void> {
   if (!response.ok || !response.body) {
     throw new Error(await readError(response));
   }
@@ -162,7 +209,7 @@ export async function streamChat(
     const trimmed = line.trim();
     if (!trimmed) return;
     try {
-      onEvent(JSON.parse(trimmed) as ChatStreamEvent);
+      onEvent(JSON.parse(trimmed) as TEvent);
     } catch {
       // Ignore unparseable lines (partial flushes, heartbeats)
     }
@@ -181,8 +228,24 @@ export async function streamChat(
   } catch (err) {
     // The connection dropped mid-stream -- surface a clean error event
     const message = err instanceof Error ? err.message : "The connection was interrupted.";
-    onEvent({ type: "error", message: `Stream interrupted: ${message}` });
+    onEvent({ type: "error", message: `Stream interrupted: ${message}` } as TEvent);
   }
+}
+
+export async function streamChat(
+  message: string,
+  onEvent: (event: ChatStreamEvent) => void
+): Promise<void> {
+  const token = getStoredToken();
+  const response = await fetch(`${API_BASE}/api/chat/stream`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify({ message })
+  });
+  return consumeNdjsonStream<ChatStreamEvent>(response, onEvent);
 }
 
 export async function streamImageAnalysis(
@@ -202,39 +265,7 @@ export async function streamImageAnalysis(
     },
     body: form
   });
-
-  if (!response.ok || !response.body) {
-    throw new Error(await readError(response));
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  const processLine = (line: string) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    try {
-      onEvent(JSON.parse(trimmed) as ChatStreamEvent);
-    } catch {
-      // Ignore unparseable lines (partial flushes, heartbeats)
-    }
-  };
-
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) processLine(line);
-    }
-    if (buffer.trim()) processLine(buffer);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "The connection was interrupted.";
-    onEvent({ type: "error", message: `Stream interrupted: ${message}` });
-  }
+  return consumeNdjsonStream<ChatStreamEvent>(response, onEvent);
 }
 
 export interface UploadExtracted {

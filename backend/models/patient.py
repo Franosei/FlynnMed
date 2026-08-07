@@ -47,6 +47,8 @@ class Patient(Base, TimestampMixin):
     uploads: Mapped[list["Upload"]] = relationship(back_populates="patient", cascade="all, delete-orphan")
     triage_summaries: Mapped[list["TriageSummary"]] = relationship(back_populates="patient", cascade="all, delete-orphan")
     interaction_traces: Mapped[list["InteractionTrace"]] = relationship(back_populates="patient", cascade="all, delete-orphan")
+    previsit_summaries: Mapped[list["PreVisitSummary"]] = relationship(back_populates="patient", cascade="all, delete-orphan")
+    previsit_chat_messages: Mapped[list["PreVisitChatMessage"]] = relationship(back_populates="patient", cascade="all, delete-orphan")
 
 
 class Medication(Base, TimestampMixin):
@@ -264,3 +266,85 @@ class InteractionTrace(Base, TimestampMixin):
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
     patient: Mapped["Patient"] = relationship(back_populates="interaction_traces")
+
+
+class PreVisitSummary(Base, TimestampMixin):
+    """
+    Append-only: every generate/edit/release inserts a new row rather than
+    updating one in place, so the full history survives for future reference
+    and for continuity of care across clinicians. "Current draft" is the
+    latest status="draft" row; "current released" is the latest
+    status="released" row; full history is just patient_id + created_at order.
+
+    authored_by_* / released_by_* are snapshot columns, not re-derived via the
+    account FK -- unlike ClinicalNote.edited_by_account_id (which the SQL
+    repository never actually populates), these are always written at insert
+    time so "who wrote this" survives even if the account is later renamed or
+    deleted (the FK itself is ON DELETE SET NULL).
+    """
+    __tablename__ = "previsit_summaries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")  # draft | released
+    generation_trigger: Mapped[str] = mapped_column(String(32), nullable=False, default="ai_generated")
+    # ai_generated | clinician_edited | released
+    summary_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    authored_by_account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    authored_by_display_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    authored_by_clinical_role: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    authored_by_organization: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+    consent_grant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("consent_grants.id", ondelete="SET NULL"), nullable=True
+    )
+
+    released_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    released_by_account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    released_by_display_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    released_by_clinical_role: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+    patient: Mapped["Patient"] = relationship(back_populates="previsit_summaries")
+
+    __table_args__ = (Index("ix_previsit_summaries_patient_created", "patient_id", "created_at"),)
+
+
+class PreVisitChatMessage(Base, TimestampMixin):
+    """
+    The clinician-scoped, patient-specific exploratory chat used to inform a
+    PreVisitSummary. Kept separate from PreVisitSummary rows (not nested under
+    one) because the transcript is continuous per patient across multiple
+    generate/regenerate cycles, not scoped to a single summary version.
+    """
+    __tablename__ = "previsit_chat_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String(32), nullable=False)  # clinician | assistant
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    authored_by_account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    authored_by_display_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    authored_by_clinical_role: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+    consent_grant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("consent_grants.id", ondelete="SET NULL"), nullable=True
+    )
+    trace_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    sources: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    patient: Mapped["Patient"] = relationship(back_populates="previsit_chat_messages")
+
+    __table_args__ = (Index("ix_previsit_chat_patient_timestamp", "patient_id", "timestamp"),)

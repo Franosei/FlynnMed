@@ -27,6 +27,10 @@ class AuditAction(str, enum.Enum):
     clinician_read_gp_prep = "clinician_read_gp_prep"
     clinician_read_chat_history = "clinician_read_chat_history"
     clinician_read_clinical_notes = "clinician_read_clinical_notes"
+    clinician_generate_previsit_summary = "clinician_generate_previsit_summary"
+    clinician_edit_previsit_summary_draft = "clinician_edit_previsit_summary_draft"
+    clinician_release_previsit_summary = "clinician_release_previsit_summary"
+    clinician_chat_previsit = "clinician_chat_previsit"
 
 
 class AuditOutcome(str, enum.Enum):

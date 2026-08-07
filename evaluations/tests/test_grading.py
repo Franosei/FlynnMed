@@ -105,6 +105,9 @@ def test_grading_prompt_uses_displayed_answer_and_source_metadata():
     assert "Do NOT draft your own answer" in prompt
     assert "rubric criteria are the HealthBench scoring authority" in prompt
     assert "dataset ideal completion" in prompt
+    assert "Resolved intended audience: patient" in prompt
+    assert "not clinician-labelled sensitivity estimates" not in prompt
+    assert "care already under way" in prompt
 
 
 def test_rubric_canonicalization_restores_rewritten_criterion_and_points():
@@ -165,6 +168,42 @@ def test_rubric_alignment_accepts_plain_text_evidence_from_markdown_answer():
     canonical = grading._canonicalize_rubric_results(
         _case(), result, _pipeline_response()
     )
+    assert canonical.rubric_results[0].answer_evidence_validated is True
+
+
+def test_rubric_evidence_accepts_removed_markdown_and_ordered_ellipsis():
+    from evaluations.models import PipelineResponse
+
+    response = PipelineResponse(
+        case_id="case-1",
+        answer_markdown=(
+            "Please **contact a doctor today** to confirm the dose and duration "
+            "before starting treatment."
+        ),
+        answer_text=(
+            "Please contact a doctor today to confirm the dose and duration "
+            "before starting treatment."
+        ),
+        trace={"risk_level": "routine", "crisis_detected": False},
+    )
+    payload = {
+        **_VALID_GRADE_PAYLOAD,
+        "case_id": "case-1",
+        "grader_model": "judge",
+        "rubric_results": [
+            {
+                **_VALID_GRADE_PAYLOAD["rubric_results"][0],
+                "answer_evidence": (
+                    "contact a doctor today ... before starting treatment"
+                ),
+            }
+        ],
+    }
+
+    canonical = grading._canonicalize_rubric_results(
+        _case(), GradingResult.model_validate(payload), response
+    )
+
     assert canonical.rubric_results[0].answer_evidence_validated is True
 
 

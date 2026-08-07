@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Generator, List, Optional
@@ -18,10 +19,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
-from backend.clinical_notes import generate_soap_note
+from backend.clinical_notes import generate_previsit_chart_summary, generate_soap_note
 from backend.care_plan_agent import CarePlanAgent
 from backend.care_plan_store import CarePlanStore
 from backend.clinician_access import (
@@ -30,8 +32,13 @@ from backend.clinician_access import (
     authorized_patient_summary,
     decide_access_request,
     request_patient_access,
+    require_active_previsit_access,
     revoke_access,
 )
+from backend.clinician_chat_data import load_patient_data_bundle
+from backend.models.account import Account, AccountKind
+from backend.models.audit import AuditAction, AuditLogEntry, AuditOutcome
+from backend.models.patient import Patient, PreVisitChatMessage, PreVisitSummary
 from backend.clinical_context_guard import (
     adjudicate_patient_context,
     build_review_required_plan,
@@ -39,8 +46,9 @@ from backend.clinical_context_guard import (
     validate_generated_answer,
 )
 from backend.clinical_trials import build_trial_search_profile, find_matching_trials
+from backend.query_expander import QueryExpander
 from backend.config import DatabaseConfigurationError
-from backend.db import get_db
+from backend.db import get_db, get_session_factory
 from backend.email_service import send_clinical_note_email, send_urgent_care_alert
 from backend.feedback_store import save_feedback
 from backend.fhir.stub_client import fhir_integration_status
@@ -452,6 +460,14 @@ class AccessRequestPayload(BaseModel):
 class AccessDecisionPayload(BaseModel):
     approve: bool
     decision_note: str = ""
+
+
+class PrevisitSummaryDraftPayload(BaseModel):
+    summary_text: str
+
+
+class PrevisitChatPayload(BaseModel):
+    message: str
 
 
 @app.get("/api/health")
@@ -918,6 +934,394 @@ def clinician_patient_summary(
         return authorized_patient_summary(db, username, patient_id)
     except AccessWorkflowError as exc:
         raise _access_error(db, exc) from exc
+
+
+# ---------------------------------------------------------------------------
+# Clinician pre-visit summary + inline patient-scoped chat
+# ---------------------------------------------------------------------------
+
+
+def _previsit_summary_dict(row: PreVisitSummary) -> Dict:
+    return {
+        "id": str(row.id),
+        "status": row.status,
+        "generation_trigger": row.generation_trigger,
+        "summary_text": row.summary_text,
+        "authored_by_display_name": row.authored_by_display_name,
+        "authored_by_clinical_role": row.authored_by_clinical_role,
+        "authored_by_organization": row.authored_by_organization,
+        "released_at": row.released_at.isoformat() if row.released_at else "",
+        "released_by_display_name": row.released_by_display_name,
+        "released_by_clinical_role": row.released_by_clinical_role,
+        "created_at": row.created_at.isoformat(),
+    }
+
+
+def _previsit_chat_message_dict(row: PreVisitChatMessage) -> Dict:
+    return {
+        "id": str(row.id),
+        "role": row.role,
+        "content": row.content,
+        "authored_by_display_name": row.authored_by_display_name,
+        "authored_by_clinical_role": row.authored_by_clinical_role,
+        "sources": row.sources,
+        "created_at": row.created_at.isoformat(),
+    }
+
+
+def _clinician_role_label(clinician: Account) -> str:
+    return clinician.clinical_role or clinician.role_label or "healthcare_professional"
+
+
+@app.post("/api/clinician/patients/{patient_id}/summary")
+def generate_previsit_summary(
+    patient_id: str,
+    username: str = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Dict:
+    """Generates or regenerates the AI-suggested pre-visit summary draft.
+    Same endpoint serves both -- "regenerate" is just calling this again
+    once a chat transcript / prior draft exists, so the model builds on
+    what's already there rather than starting fresh."""
+    try:
+        clinician, patient, grant = require_active_previsit_access(
+            db, username, patient_id, action=AuditAction.clinician_generate_previsit_summary
+        )
+    except AccessWorkflowError as exc:
+        raise _access_error(db, exc) from exc
+
+    bundle = load_patient_data_bundle(db, patient)
+
+    latest_draft = db.execute(
+        select(PreVisitSummary)
+        .where(PreVisitSummary.patient_id == patient.id, PreVisitSummary.status == "draft")
+        .order_by(PreVisitSummary.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    transcript_rows = db.execute(
+        select(PreVisitChatMessage)
+        .where(PreVisitChatMessage.patient_id == patient.id)
+        .order_by(PreVisitChatMessage.timestamp.asc())
+    ).scalars().all()
+
+    role_key = _clinician_role_label(clinician)
+    summary_text = generate_previsit_chart_summary(
+        patient_chart=bundle,
+        chat_transcript=[{"role": t.role, "content": t.content} for t in transcript_rows],
+        clinician_role_key=role_key,
+        llm=_get_rag_engine().llm,
+        previous_draft=latest_draft.summary_text if latest_draft else None,
+    )
+
+    row = PreVisitSummary(
+        id=uuid.uuid4(),
+        patient_id=patient.id,
+        status="draft",
+        generation_trigger="ai_generated",
+        summary_text=summary_text,
+        authored_by_account_id=clinician.id,
+        authored_by_display_name=clinician.display_name,
+        authored_by_clinical_role=role_key,
+        authored_by_organization=clinician.organization,
+        consent_grant_id=grant.id,
+    )
+    db.add(row)
+    # Flush (not commit) -- populates the Python-side TimestampMixin
+    # defaults/generated id on `row` within the current transaction; the
+    # actual commit happens once at the end of the request via get_db()'s
+    # dependency (commit-on-success, rollback-on-error), matching how every
+    # other DB-backed route in this codebase already works.
+    db.flush()
+    return _previsit_summary_dict(row)
+
+
+@app.patch("/api/clinician/patients/{patient_id}/summary/draft")
+def save_previsit_summary_draft(
+    patient_id: str,
+    payload: PrevisitSummaryDraftPayload,
+    username: str = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Dict:
+    """Persists the clinician's hand-edited draft as a new append-only row.
+    Frontend should call this only on an explicit "Save draft" click, not
+    per-keystroke, to avoid flooding the append-only table."""
+    try:
+        clinician, patient, grant = require_active_previsit_access(
+            db, username, patient_id, action=AuditAction.clinician_edit_previsit_summary_draft
+        )
+    except AccessWorkflowError as exc:
+        raise _access_error(db, exc) from exc
+
+    role_key = _clinician_role_label(clinician)
+    row = PreVisitSummary(
+        id=uuid.uuid4(),
+        patient_id=patient.id,
+        status="draft",
+        generation_trigger="clinician_edited",
+        summary_text=payload.summary_text,
+        authored_by_account_id=clinician.id,
+        authored_by_display_name=clinician.display_name,
+        authored_by_clinical_role=role_key,
+        authored_by_organization=clinician.organization,
+        consent_grant_id=grant.id,
+    )
+    db.add(row)
+    # Flush (not commit) -- populates the Python-side TimestampMixin
+    # defaults/generated id on `row` within the current transaction; the
+    # actual commit happens once at the end of the request via get_db()'s
+    # dependency (commit-on-success, rollback-on-error), matching how every
+    # other DB-backed route in this codebase already works.
+    db.flush()
+    return _previsit_summary_dict(row)
+
+
+@app.post("/api/clinician/patients/{patient_id}/summary/release")
+def release_previsit_summary(
+    patient_id: str,
+    payload: PrevisitSummaryDraftPayload,
+    username: str = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Dict:
+    """The only code path anywhere that writes a status="released" row --
+    nothing reaches the patient's portal until this explicit, separate
+    action is called. Body carries the summary text so any last-second edit
+    not yet saved as a draft row is captured at release time too."""
+    try:
+        clinician, patient, grant = require_active_previsit_access(
+            db, username, patient_id, action=AuditAction.clinician_release_previsit_summary
+        )
+    except AccessWorkflowError as exc:
+        raise _access_error(db, exc) from exc
+
+    role_key = _clinician_role_label(clinician)
+    now = datetime.now(timezone.utc)
+    row = PreVisitSummary(
+        id=uuid.uuid4(),
+        patient_id=patient.id,
+        status="released",
+        generation_trigger="released",
+        summary_text=payload.summary_text,
+        authored_by_account_id=clinician.id,
+        authored_by_display_name=clinician.display_name,
+        authored_by_clinical_role=role_key,
+        authored_by_organization=clinician.organization,
+        consent_grant_id=grant.id,
+        released_at=now,
+        released_by_account_id=clinician.id,
+        released_by_display_name=clinician.display_name,
+        released_by_clinical_role=role_key,
+    )
+    db.add(row)
+    # Flush (not commit) -- populates the Python-side TimestampMixin
+    # defaults/generated id on `row` within the current transaction; the
+    # actual commit happens once at the end of the request via get_db()'s
+    # dependency (commit-on-success, rollback-on-error), matching how every
+    # other DB-backed route in this codebase already works.
+    db.flush()
+    return _previsit_summary_dict(row)
+
+
+@app.get("/api/clinician/patients/{patient_id}/chat")
+def get_previsit_chat(
+    patient_id: str,
+    username: str = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Dict:
+    try:
+        _clinician, patient, _grant = require_active_previsit_access(
+            db, username, patient_id, action=AuditAction.clinician_chat_previsit
+        )
+    except AccessWorkflowError as exc:
+        raise _access_error(db, exc) from exc
+
+    rows = db.execute(
+        select(PreVisitChatMessage)
+        .where(PreVisitChatMessage.patient_id == patient.id)
+        .order_by(PreVisitChatMessage.timestamp.asc())
+    ).scalars().all()
+    return {"messages": [_previsit_chat_message_dict(r) for r in rows]}
+
+
+def _save_previsit_chat_message(
+    *,
+    patient_id: uuid.UUID,
+    role: str,
+    content: str,
+    authored_by_account_id: Optional[uuid.UUID],
+    authored_by_display_name: str,
+    authored_by_clinical_role: str,
+    consent_grant_id: Optional[uuid.UUID],
+    trace_id: str = "",
+    sources: Optional[List[Dict]] = None,
+) -> None:
+    # Opens its own session rather than reusing the request-scoped `db` from
+    # the outer endpoint -- this runs from inside a StreamingResponse
+    # generator, and a fresh, short-lived session here is simpler to reason
+    # about than relying on FastAPI's yield-dependency lifetime for the
+    # duration of a stream, matching the per-call-session convention
+    # UserStore/CarePlanStore already use elsewhere in this codebase.
+    session_factory = get_session_factory()
+    with session_factory() as write_db:
+        write_db.add(
+            PreVisitChatMessage(
+                id=uuid.uuid4(),
+                patient_id=patient_id,
+                role=role,
+                content=content,
+                authored_by_account_id=authored_by_account_id,
+                authored_by_display_name=authored_by_display_name,
+                authored_by_clinical_role=authored_by_clinical_role,
+                consent_grant_id=consent_grant_id,
+                trace_id=trace_id or None,
+                sources=sources or [],
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
+        write_db.commit()
+
+
+@app.post("/api/clinician/patients/{patient_id}/chat")
+def previsit_chat(
+    patient_id: str,
+    payload: PrevisitChatPayload,
+    username: str = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """
+    Streaming, patient-scoped clinician chat -- reuses the full evidence
+    pipeline (mandatory retrieval, HyDE expansion, evidence ranking,
+    claim-verification) via target_patient_data rather than a cheaper
+    bypass, same quality bar as the patient-facing chat.
+    """
+    question = payload.message.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Enter a message before sending.")
+
+    try:
+        clinician, patient, grant = require_active_previsit_access(
+            db, username, patient_id, action=AuditAction.clinician_chat_previsit
+        )
+    except AccessWorkflowError as exc:
+        raise _access_error(db, exc) from exc
+
+    bundle = load_patient_data_bundle(db, patient)
+    transcript_rows = db.execute(
+        select(PreVisitChatMessage)
+        .where(PreVisitChatMessage.patient_id == patient.id)
+        .order_by(PreVisitChatMessage.timestamp.asc())
+    ).scalars().all()
+    chat_history = [{"role": t.role, "content": t.content} for t in transcript_rows]
+
+    role_key = _clinician_role_label(clinician)
+    now = _utc_now()
+
+    _save_previsit_chat_message(
+        patient_id=patient.id,
+        role="clinician",
+        content=question,
+        authored_by_account_id=clinician.id,
+        authored_by_display_name=clinician.display_name,
+        authored_by_clinical_role=role_key,
+        consent_grant_id=grant.id,
+    )
+
+    def generate() -> Generator[bytes, None, None]:
+        yield _json_line(
+            {
+                "type": "user_message",
+                "message": {"role": "clinician", "content": question, "timestamp": now},
+            }
+        )
+        try:
+            rag_engine = _get_rag_engine()
+            payload_final = None
+            for event in rag_engine.stream_user_question_events(
+                question=question,
+                chat_history=chat_history,
+                user=username,
+                target_patient_data=bundle,
+            ):
+                event_type = event.get("type")
+                if event_type == "status":
+                    yield _json_line({"type": "status", "message": event.get("message", "Working...")})
+                elif event_type == "token":
+                    yield _json_line({"type": "token", "delta": event.get("delta", "")})
+                elif event_type == "final":
+                    payload_final = event.get("payload")
+
+            if not payload_final:
+                raise RuntimeError("The answer pipeline did not return a payload.")
+
+            assistant_content = payload_final["answer_markdown"]
+            _save_previsit_chat_message(
+                patient_id=patient.id,
+                role="assistant",
+                content=assistant_content,
+                authored_by_account_id=None,
+                authored_by_display_name="FlynnMed",
+                authored_by_clinical_role="",
+                consent_grant_id=grant.id,
+                trace_id=payload_final.get("trace", {}).get("trace_id", ""),
+                sources=payload_final.get("sources", []),
+            )
+            yield _json_line(
+                {
+                    "type": "assistant_message",
+                    "message": {
+                        "role": "assistant",
+                        "content": assistant_content,
+                        "sources": payload_final.get("sources", []),
+                    },
+                }
+            )
+            yield _json_line({"type": "done"})
+        except Exception as exc:
+            yield _json_line({"type": "error", "message": str(exc)})
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+
+@app.get("/api/previsit-summaries")
+def list_my_previsit_summaries(
+    username: str = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Dict:
+    """Patient-side read -- only ever returns status="released" rows for the
+    caller's own patient record, newest first. Kept separate from the hot
+    _snapshot() payload (refetched after nearly every action app-wide)
+    rather than folded in, mirroring the existing list_notes/get_note
+    precedent for ClinicalNote."""
+    account = db.execute(
+        select(Account).where(Account.username == username.strip().lower())
+    ).scalar_one_or_none()
+    if account is None or account.account_kind != AccountKind.patient:
+        raise HTTPException(status_code=403, detail="Patient account required.")
+    patient = db.execute(
+        select(Patient).where(Patient.account_id == account.id)
+    ).scalar_one_or_none()
+    if patient is None:
+        return {"summaries": []}
+
+    db.add(
+        AuditLogEntry(
+            actor_account_id=account.id,
+            actor_role_at_time=account.account_kind.value,
+            patient_id=patient.id,
+            action=AuditAction.patient_read_self,
+            resource_type="patient",
+            resource_id=patient.patient_id,
+            outcome=AuditOutcome.success,
+        )
+    )
+    db.flush()
+
+    rows = db.execute(
+        select(PreVisitSummary)
+        .where(PreVisitSummary.patient_id == patient.id, PreVisitSummary.status == "released")
+        .order_by(PreVisitSummary.created_at.desc())
+    ).scalars().all()
+    return {"summaries": [_previsit_summary_dict(r) for r in rows]}
 
 
 @app.put("/api/profile")
@@ -1466,6 +1870,7 @@ def search_trials(payload: TrialSearchPayload, username: str = Depends(current_u
         profile=trial_profile,
         location_query=payload.location,
         max_results=max(1, min(payload.max_results, 25)),
+        query_expander=QueryExpander(),
     )
     UserStore.save_trial_search_result(username, result)
     return {"result": result, "snapshot": _snapshot(username)}

@@ -28,6 +28,7 @@ from backend.clinical_context_guard import (
 from backend.official_guidance import OfficialGuidanceEngine
 from backend.patient_history import build_patient_history_context
 from backend.pubmed_search import PubMedCentralSearcher
+from backend.query_expander import QueryExpander
 
 # Sources the extractor confirms are near-zero relevance and don't answer the
 # question are excluded outright -- same threshold and rationale as
@@ -243,6 +244,7 @@ class CarePlanAgent:
         self._model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         self._guidance = OfficialGuidanceEngine()
         self._pubmed = PubMedCentralSearcher()
+        self._query_expander = QueryExpander()
 
     # ------------------------------------------------------------------
     # Public API
@@ -607,10 +609,31 @@ AGENT RULES:
 
     def _pubmed_search(self, query: str) -> str:
         try:
-            records = self._pubmed.search_article_records(query, 3)
+            # The agent-chosen query and the query-variant/HyDE expansion run
+            # concurrently -- neither depends on the other -- so the extra
+            # variant search below adds at most one more PubMed round trip,
+            # not a serial LLM-call-then-search chain.
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                primary_future = executor.submit(self._pubmed.search_article_records, query, 3)
+                expansion_future = executor.submit(self._query_expander.expand_with_hyde, query)
+                records = primary_future.result()
+                try:
+                    hyde_result = expansion_future.result()
+                except Exception as exc:
+                    print(f"[CarePlanAgent] query expansion failed: {exc}")
+                    hyde_result = None
+
+            if hyde_result and hyde_result.query_variants:
+                best_variant = hyde_result.query_variants[0].strip()
+                if best_variant and best_variant.lower() != query.strip().lower():
+                    try:
+                        records = records + self._pubmed.search_article_records(best_variant, 2)
+                    except Exception as exc:
+                        print(f"[CarePlanAgent] variant PubMed search failed: {exc}")
+
             if not records:
                 return "No PubMed results found."
-            relevant = self._filter_relevant(records[:3], title_key="title", snippet_keys=["abstract"])
+            relevant = self._filter_relevant(records[:5], title_key="title", snippet_keys=["abstract"])
             if not relevant:
                 return "No relevant PubMed results found for this patient's confirmed data."
             parts = []

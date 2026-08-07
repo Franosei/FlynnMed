@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Tuple
+from urllib.parse import urlsplit
 
 from evaluations.config import (
     HEALTHBENCH_GRADING_PROMPT_VERSION,
@@ -47,6 +49,14 @@ _RAG_METRIC_TIERS = {
         ("consistency", "Consistency / reproducibility"),
     ),
 }
+
+
+def _is_valid_related_link(value: object) -> bool:
+    try:
+        parts = urlsplit(str(value or "").strip())
+    except ValueError:
+        return False
+    return parts.scheme.lower() in {"http", "https"} and bool(parts.netloc)
 
 
 def _aggregate_rag_metrics(
@@ -119,8 +129,7 @@ def _aggregate_by_tag(case_results: List[CaseResult]) -> dict[str, TagAggregate]
                 else None
             ),
             under_triage_rate=(
-                sum(1 for cr in graded if cr.deterministic.under_triage)
-                / graded_count
+                sum(1 for cr in graded if cr.deterministic.under_triage) / graded_count
                 if graded_count
                 else None
             ),
@@ -206,13 +215,25 @@ def build_report_summary(
         else None
     )
     emergency_expected = [
-        cr for cr in healthbench_results if cr.deterministic.crisis_gate_expected
+        cr
+        for cr in healthbench_results
+        if "physician_agreed_category:emergent" in cr.case.tags
     ]
+    emergencies_recognised = sum(
+        1 for cr in emergency_expected if cr.deterministic.crisis_gate_activated
+    )
     emergency_sensitivity = (
-        sum(1 for cr in emergency_expected if cr.deterministic.crisis_gate_activated)
-        / len(emergency_expected)
+        emergencies_recognised / len(emergency_expected)
         if emergency_expected
         else None
+    )
+    conditionally_emergent_cases = sum(
+        "physician_agreed_category:conditionally-emergent" in cr.case.tags
+        for cr in healthbench_results
+    )
+    physician_labelled_non_emergent_cases = sum(
+        "physician_agreed_category:non-emergent" in cr.case.tags
+        for cr in healthbench_results
     )
     adjudication_rate = (
         sum(1 for cr in healthbench_results if cr.adjudication.terra_grade is not None)
@@ -251,11 +272,50 @@ def build_report_summary(
         for claim in cr.rag_metrics.claim_assessments
         if claim.answer_quote_validated is not True
     )
+    role_counts = dict(
+        sorted(
+            Counter(cr.pipeline_response.resolved_role for cr in case_results).items()
+        )
+    )
+    related_sources = [
+        source for cr in case_results for source in (cr.pipeline_response.sources or [])
+    ]
+    valid_related_link_count = sum(
+        _is_valid_related_link(source.get("url")) for source in related_sources
+    )
+    related_link_count = len(related_sources)
+    related_link_url_coverage = (
+        valid_related_link_count / related_link_count if related_link_count else None
+    )
+    deterministic_results = [
+        cr.deterministic for cr in case_results if cr.deterministic
+    ]
+    rendered_citation_count = sum(
+        result.citation_count for result in deterministic_results
+    )
+    resolved_rendered_citation_count = sum(
+        result.resolved_citation_count for result in deterministic_results
+    )
+    rendered_citation_resolution_rate = (
+        resolved_rendered_citation_count / rendered_citation_count
+        if rendered_citation_count
+        else None
+    )
 
     review_cases = [
         cr.case.case_id for cr in case_results if cr.requires_human_review()
     ]
     by_tag = _aggregate_by_tag(case_results)
+    notes = [
+        "Overall under-triage rates remain model-judge audit proxies. Emergency "
+        "recognition sensitivity uses only HealthBench's physician-agreed emergent "
+        "category; conditionally emergent cases are reported separately."
+    ]
+    if config.primary_grader_model == config.adjudicator_model:
+        notes.append(
+            "Primary and adjudicator models are identical, so triggered secondary "
+            "adjudication was skipped and the run has no independent cross-check."
+        )
 
     return ReportSummary(
         dataset_version=dataset_version,
@@ -274,6 +334,12 @@ def build_report_summary(
         under_triage_rate=under_triage_rate,
         severe_under_triage_rate=severe_under_triage_rate,
         emergency_sensitivity=emergency_sensitivity,
+        physician_labelled_emergency_cases=len(emergency_expected),
+        physician_labelled_emergencies_recognised=emergencies_recognised,
+        conditionally_emergent_cases=conditionally_emergent_cases,
+        physician_labelled_non_emergent_cases=(
+            physician_labelled_non_emergent_cases
+        ),
         adjudication_rate=adjudication_rate,
         disagreement_count=disagreement_count,
         rag_metric_aggregates=rag_metric_aggregates,
@@ -283,8 +349,16 @@ def build_report_summary(
         claim_audit_warning_case_count=claim_audit_warning_case_count,
         claim_audit_warning_count=claim_audit_warning_count,
         unmapped_claim_count=unmapped_claim_count,
+        role_counts=role_counts,
+        related_link_count=related_link_count,
+        valid_related_link_count=valid_related_link_count,
+        related_link_url_coverage=related_link_url_coverage,
+        rendered_citation_count=rendered_citation_count,
+        resolved_rendered_citation_count=resolved_rendered_citation_count,
+        rendered_citation_resolution_rate=rendered_citation_resolution_rate,
         cases_requiring_human_review=review_cases,
         by_tag=by_tag,
+        notes=notes,
     )
 
 
@@ -294,6 +368,8 @@ def _sanitized_case_entry(case_result: CaseResult) -> dict:
         "source_dataset": case_result.case.source_dataset,
         "tags": case_result.case.tags,
         "resolved_role": case_result.pipeline_response.resolved_role,
+        "role_resolution_reason": case_result.pipeline_response.role_resolution_reason,
+        "role_resolution_confidence": case_result.pipeline_response.role_resolution_confidence,
         "requires_human_review": case_result.requires_human_review(),
     }
     if (
@@ -326,6 +402,17 @@ def _sanitized_case_entry(case_result: CaseResult) -> dict:
                 for result in case_result.adjudication.final_grade.rubric_results
                 if result.answer_evidence_validated is False
             ),
+            "link_integrity": {
+                "related_links": len(case_result.pipeline_response.sources),
+                "valid_related_links": sum(
+                    _is_valid_related_link(source.get("url"))
+                    for source in case_result.pipeline_response.sources
+                ),
+                "rendered_citations": case_result.deterministic.citation_count,
+                "resolved_rendered_citations": (
+                    case_result.deterministic.resolved_citation_count
+                ),
+            },
         }
     if case_result.rag_metrics:
         entry["rag_metrics"] = {
@@ -362,6 +449,23 @@ def _rag_metric_lines(summary: ReportSummary) -> list[str]:
             f"Document split: {summary.relevant_document_count} relevant, "
             f"{summary.irrelevant_document_count} irrelevant/distractor. "
             "Relevance is judged from stored excerpts before dependent metrics.",
+            "",
+            "Link integrity is reported separately from clinical citation grounding. "
+            "A working URL does not prove that its excerpt supports a claim.",
+            (
+                f"- Related source URLs: {summary.valid_related_link_count}/"
+                f"{summary.related_link_count} valid "
+                f"({summary.related_link_url_coverage:.1%})"
+                if summary.related_link_url_coverage is not None
+                else "- Related source URLs: n/a (no retrieved sources)"
+            ),
+            (
+                f"- Rendered citation targets: {summary.resolved_rendered_citation_count}/"
+                f"{summary.rendered_citation_count} resolved to their stored source "
+                f"({summary.rendered_citation_resolution_rate:.1%})"
+                if summary.rendered_citation_resolution_rate is not None
+                else "- Rendered citation targets: n/a (no rendered citations)"
+            ),
             "",
         ]
     )
@@ -417,13 +521,23 @@ def _healthbench_lines(summary: ReportSummary) -> list[str]:
             f"- Graded cases: {summary.healthbench_graded_cases}/{summary.total_cases}",
             f"- Pass rate: {summary.pass_rate:.1%}",
             f"- Weighted HealthBench score: {summary.weighted_healthbench_score:.3f}",
-            f"- Under-triage rate: {summary.under_triage_rate:.1%}",
-            f"- Severe under-triage rate: {summary.severe_under_triage_rate:.1%}",
+            "Overall triage rates below use model-judge urgency inference and remain "
+            "audit proxies. Emergency recognition uses the dataset's physician-agreed "
+            "emergent category only.",
+            "",
+            f"- Judge-inferred under-triage rate: {summary.under_triage_rate:.1%}",
+            f"- Judge-inferred severe under-triage rate: {summary.severe_under_triage_rate:.1%}",
             (
-                f"- Emergency sensitivity: {summary.emergency_sensitivity:.1%}"
+                f"- Physician-labelled emergency recognition sensitivity: "
+                f"{summary.emergency_sensitivity:.1%} "
+                f"({summary.physician_labelled_emergencies_recognised}/"
+                f"{summary.physician_labelled_emergency_cases})"
                 if summary.emergency_sensitivity is not None
-                else "- Emergency sensitivity: n/a (no emergency-expected cases)"
+                else "- Physician-labelled emergency recognition sensitivity: n/a"
             ),
+            f"- Conditionally emergent cases: {summary.conditionally_emergent_cases}",
+            f"- Physician-labelled non-emergent cases: "
+            f"{summary.physician_labelled_non_emergent_cases}",
             f"- Secondary adjudication rate: {summary.adjudication_rate:.1%}",
             f"- Primary/adjudicator disagreements: {summary.disagreement_count}",
             "",
@@ -443,7 +557,9 @@ def _by_tag_lines(summary: ReportSummary) -> list[str]:
         "A case can carry more than one tag, so rows do not sum to the overall totals."
     )
     lines.append("")
-    lines.append("| Tag | Graded cases | Pass rate | Weighted score | Under-triage | Severe under-triage |")
+    lines.append(
+        "| Tag | Graded cases | Pass rate | Weighted score | Judge-inferred under-triage | Judge-inferred severe under-triage |"
+    )
     lines.append("|---|---|---|---|---|---|")
     for tag, agg in sorted(graded_tags.items()):
         lines.append(
@@ -476,6 +592,8 @@ def _markdown_report(summary: ReportSummary, case_results: List[CaseResult]) -> 
         f"- RAG metrics judge model: `{summary.rag_metrics_model}`",
         f"- Run date: `{summary.run_date}`",
         f"- Total cases: {summary.total_cases}",
+        "- Routed roles: "
+        + ", ".join(f"{role}={count}" for role, count in summary.role_counts.items()),
         "",
     ]
 

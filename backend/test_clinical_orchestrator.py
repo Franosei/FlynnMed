@@ -5,7 +5,7 @@ from backend.intent_risk_classifier import IntentClassification
 
 
 class _FakeMemory:
-    def search(self, query, user):
+    def search(self, query, user, hypothetical_passage=""):
         return []
 
     def add_entries(self, entries):
@@ -126,7 +126,18 @@ def test_ambiguity_flag_is_ignored_when_risk_level_is_urgent(monkeypatch):
         longitudinal_memory_summary="",
     )
 
-    assert bundle["kind"] == "answer"
+    # With the fakes returning zero real sources, the evidence-gate retry
+    # (Step 11c) also comes up empty, so the terminal refusal fires -- this is
+    # the correct new behavior (see backend/clinical_orchestrator.py's
+    # _build_limited_bundle), not a regression. What this test actually cares
+    # about is that the *ambiguity* gate specifically did not short-circuit it
+    # under urgent risk: a bundle produced by that gate instead would carry
+    # retrieval_mode == "clarification_requested" (see the test above this
+    # one) -- proving retrieval_mode is the no-evidence marker instead proves
+    # the flow ran all the way through retrieval rather than being intercepted
+    # early by the ambiguity check.
+    assert bundle["kind"] == "final"
+    assert bundle["payload"]["trace"]["retrieval_mode"] == "no_evidence_after_retry"
 
 
 def test_doctor_acls_education_bypasses_crisis_short_circuit(monkeypatch):
@@ -159,9 +170,22 @@ def test_doctor_acls_education_bypasses_crisis_short_circuit(monkeypatch):
         longitudinal_memory_summary="",
     )
 
-    assert bundle["kind"] == "answer"
-    assert bundle["role_config"].role_key == "doctor"
-    assert bundle["intent"].crisis_detected is False
+    # With the fakes returning zero real sources, the evidence-gate retry also
+    # comes up empty and the terminal refusal fires -- correct new behavior,
+    # not a regression (see the comment in
+    # test_ambiguity_flag_is_ignored_when_risk_level_is_urgent above). What
+    # this test cares about is that the *crisis* short-circuit specifically
+    # did not fire for an ACLS-education question: that bundle would instead
+    # carry retrieval_mode == "crisis_escalation", risk_level == "crisis", and
+    # crisis_detected == True (see _build_crisis_bundle) -- none of which are
+    # present here, proving the flow ran through the normal evidence pipeline
+    # instead of being hijacked by the crisis gate.
+    assert bundle["kind"] == "final"
+    trace = bundle["payload"]["trace"]
+    assert trace["retrieval_mode"] == "no_evidence_after_retry"
+    assert trace["role_key"] == "doctor"
+    assert trace["risk_level"] != "crisis"
+    assert trace.get("crisis_detected", False) is False
 
 
 def test_documentation_mode_short_circuits_clinical_classification_and_retrieval(
@@ -326,3 +350,169 @@ def test_agentic_retrieval_loop_prompt_instructs_using_confirmed_meaning():
     sent_prompt = fake_llm.client.chat.completions.calls[0]["messages"][0]["content"]
     assert "confirmed meaning" in sent_prompt.lower()
     assert "raw ambiguous wording" in sent_prompt.lower()
+
+
+class _FakeOfficialGuidanceSequenced:
+    """Returns one configured result set per call (in order); records the
+    queries it was called with so a test can assert on exactly what was
+    searched for."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = []
+
+    def search(self, queries, top_k, preferred=None):
+        self.calls.append(list(queries))
+        if self._responses:
+            return self._responses.pop(0)
+        return []
+
+
+def _rejected_source() -> dict:
+    # No title -> evidence_ranker._validate_source returns "invalid", which
+    # forces status="excluded" unconditionally (backend/evidence_ranker.py's
+    # _assess_evidence_quality, "if validation_status == 'invalid': status =
+    # 'excluded'") -- a deterministic, controllable way to make the first
+    # retrieval pass fail the quality gate regardless of topical relevance.
+    return {
+        "source_id": "S1",
+        "url": "https://example.nhs.uk/x",
+        "provider": "nhs",
+        "source_type": "official_guidance",
+        "snippet": "irrelevant",
+    }
+
+
+def _good_source(text: str) -> dict:
+    return {
+        "source_id": "S1",
+        "title": text,
+        "url": "https://www.nice.org.uk/guidance/x",
+        "provider": "nice",
+        "source_type": "official_guidance",
+        "snippet": text,
+        "detail_snippet": text,
+    }
+
+
+_RETRY_QUESTION = "What is the current NICE guidance on managing gout flares in adults?"
+_RETRY_VARIANT = "gout flare management NICE adults guidance"
+
+
+def _run_evidence_gate_retry_case(monkeypatch, fake_guidance):
+    orchestrator = _build_orchestrator(monkeypatch)
+    routine_intent = IntentClassification(
+        intent_category="general_info",
+        risk_level="routine",
+        pathway_hint="general_triage",
+    )
+    orchestrator.intent_classifier.classify = lambda *a, **kw: routine_intent
+    orchestrator.official_guidance = fake_guidance
+
+    monkeypatch.setattr(
+        AgenticRetrievalLoop,
+        "run",
+        lambda self, *a, **kw: {
+            "collected_sources": [_rejected_source()],
+            "personal_context": [],
+            "trial_results": [],
+            "tool_calls_made": [
+                {
+                    "tool": "search_nhs_guidance",
+                    "args": {"query": _RETRY_QUESTION},
+                    "iteration": 0,
+                }
+            ],
+            "hyde_passage": "",
+            "query_variants": [_RETRY_QUESTION, _RETRY_VARIANT],
+        },
+    )
+
+    return orchestrator.prepare_bundle(
+        question=_RETRY_QUESTION,
+        user="patient1",
+        user_profile={},
+        longitudinal_memory_summary="",
+    )
+
+
+def test_evidence_gate_retry_recovers_with_second_query_variant(monkeypatch):
+    """
+    The gate rejects the agentic loop's only source (missing title -> invalid).
+    Step 11c should retry once, seeded with query_variants[1] (never [0] again,
+    since that's what already failed), and if the retry turns up a source that
+    passes the gate, the flow continues to a normal cited answer instead of
+    falling back to an unbacked general-knowledge answer.
+    """
+    fake_guidance = _FakeOfficialGuidanceSequenced([[_good_source(_RETRY_VARIANT)]])
+
+    bundle = _run_evidence_gate_retry_case(monkeypatch, fake_guidance)
+
+    assert bundle["kind"] == "answer"
+    assert bundle["retrieval_mode"] == "evidence_quality_gate_retry_recovered"
+    assert bundle["combined_sources"], "retry should have surfaced an accepted source"
+    assert fake_guidance.calls, "the retry should have called official_guidance.search"
+    assert _RETRY_VARIANT in fake_guidance.calls[0]
+    assert _RETRY_QUESTION not in fake_guidance.calls[0]
+
+
+def test_evidence_gate_retry_refuses_instead_of_general_knowledge_when_still_empty(
+    monkeypatch,
+):
+    """
+    Same setup, but the retry also finds nothing usable. The system must not
+    let the answer LLM fall back to unbacked general knowledge -- it should
+    short-circuit to the graceful refusal bundle (_build_limited_bundle)
+    instead, exactly like the crisis and transformation short-circuits already
+    do, before _build_role_context or the answer LLM is ever reached.
+    """
+    fake_guidance = _FakeOfficialGuidanceSequenced([[]])
+
+    bundle = _run_evidence_gate_retry_case(monkeypatch, fake_guidance)
+
+    assert bundle["kind"] == "final"
+    payload = bundle["payload"]
+    assert payload["sources"] == []
+    assert payload["trace"]["retrieval_mode"] == "no_evidence_after_retry"
+    assert "clinician" in payload["answer_markdown"].lower() or "consult" in payload["answer_markdown"].lower()
+
+
+def test_no_live_evidence_at_all_also_refuses_instead_of_general_knowledge(monkeypatch):
+    """
+    The `no_live_evidence` case (nothing ever retrieved, not even a rejected
+    source) already gets one retry today via the pre-existing Step 9 fallback.
+    If that retry also fails, it must reach the same terminal refusal as the
+    quality-gate-rejected case -- not the old general-knowledge fallback --
+    since the whole point is that the system never answers from pure model
+    knowledge, regardless of which empty-evidence state caused it.
+    """
+    orchestrator = _build_orchestrator(monkeypatch)
+    routine_intent = IntentClassification(
+        intent_category="general_info",
+        risk_level="routine",
+        pathway_hint="general_triage",
+    )
+    orchestrator.intent_classifier.classify = lambda *a, **kw: routine_intent
+
+    monkeypatch.setattr(
+        AgenticRetrievalLoop,
+        "run",
+        lambda self, *a, **kw: {
+            "collected_sources": [],
+            "personal_context": [],
+            "trial_results": [],
+            "tool_calls_made": [],
+            "hyde_passage": "",
+            "query_variants": [],
+        },
+    )
+
+    bundle = orchestrator.prepare_bundle(
+        question="What is the current guidance on a very obscure hypothetical condition?",
+        user="patient1",
+        user_profile={},
+        longitudinal_memory_summary="",
+    )
+
+    assert bundle["kind"] == "final"
+    assert bundle["payload"]["trace"]["retrieval_mode"] == "no_evidence_after_retry"

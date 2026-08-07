@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from uuid import uuid4
 
+from backend.response_templates import get_persona_block
 from backend.user_store import UserStore, compute_current_age
 from backend.utils import render_vital_for_prompt
 
@@ -237,3 +238,130 @@ def generate_soap_note(
         "email_sent": False,
         "email_sent_at": None,
     }
+
+
+def _format_history_section(patient_chart: Dict) -> str:
+    """
+    The longitudinal/history material _build_objective_section doesn't
+    cover -- recent symptom logs, triage history, and prior care-plan/
+    clinical-note summaries -- formatted for a chart-review briefing rather
+    than a single-visit SOAP note.
+    """
+    lines: List[str] = []
+
+    symptom_logs = patient_chart.get("symptom_logs") or []
+    if symptom_logs:
+        recent = [
+            f"{s.get('symptom', '')} (severity {s.get('severity', '?')}, {s.get('logged_for', 'date unknown')})"
+            for s in symptom_logs[:8]
+        ]
+        lines.append("Recent symptom logs: " + "; ".join(recent))
+
+    triage_summaries = patient_chart.get("triage_summaries") or []
+    if triage_summaries:
+        recent_triage = [
+            f"{t.get('urgency_level', '?')} -- {t.get('next_step', '')} ({t.get('question', '')[:80]})"
+            for t in triage_summaries[:5]
+        ]
+        lines.append("Recent triage history: " + "; ".join(recent_triage))
+
+    care_plans = patient_chart.get("care_plans") or []
+    if care_plans:
+        plan_lines = [
+            f"{cp.get('title', cp.get('condition', 'Care plan'))} ({cp.get('status', 'unknown')})"
+            for cp in care_plans[:5]
+        ]
+        lines.append("Active care plans: " + "; ".join(plan_lines))
+
+    clinical_notes = patient_chart.get("clinical_notes") or []
+    if clinical_notes:
+        note_lines = [
+            f"{cn.get('created_at', '')[:10]}: {cn.get('assessment', '')[:150]}"
+            for cn in clinical_notes[:5]
+        ]
+        lines.append("Prior clinical notes (assessment excerpts):\n  " + "\n  ".join(note_lines))
+
+    return "\n".join(lines) if lines else "No additional symptom/triage/care-plan history recorded."
+
+
+def generate_previsit_chart_summary(
+    patient_chart: Dict,
+    chat_transcript: List[Dict],
+    clinician_role_key: str,
+    llm,
+    previous_draft: Optional[str] = None,
+) -> str:
+    """
+    Synthesizes a patient's full chart into one flowing pre-visit briefing --
+    contrast with generate_soap_note above, which is tightly coupled to
+    summarizing a single live conversation into 4 fixed SOAP fields tied to
+    one triage event. This instead reviews the whole longitudinal record
+    (conditions, meds, allergies, vitals trend, symptom logs, triage
+    history, prior care plans/notes) into a chart-review narrative, and --
+    when previous_draft/chat_transcript are supplied, i.e. the "regenerate"
+    path after the clinician has asked follow-up questions -- builds on that
+    prior material rather than starting fresh. Returns a single markdown
+    string (not a JSON object of fixed fields). Never touches the
+    retrieval/evidence pipeline -- this is structured-data synthesis, not an
+    evidence-grounded clinical question; the inline chat is what gets that.
+    """
+    from backend.summarizer import LLMHelper
+
+    user_profile = patient_chart.get("user_profile") or {}
+    objective_section = _build_objective_section(
+        user_profile,
+        patient_chart.get("vitals") or [],
+        patient_chart.get("medications") or [],
+        patient_chart.get("conditions") or [],
+        patient_chart.get("allergies") or [],
+    )
+    history_section = _format_history_section(patient_chart)
+
+    transcript_block = ""
+    if chat_transcript:
+        turns = [
+            f"{'Clinician' if t.get('role') == 'clinician' else 'Assistant'}: {t.get('content', '')[:400]}"
+            for t in chat_transcript[-12:]
+        ]
+        transcript_block = (
+            "\n\nEXPLORATORY CHAT WITH THE CLINICIAN (incorporate what was learned here):\n"
+            + "\n".join(turns)
+        )
+
+    previous_draft_block = (
+        f"\n\nPREVIOUS DRAFT (revise and improve, don't discard prior clinical reasoning "
+        f"unless the chart or chat above contradicts it):\n{previous_draft}"
+        if previous_draft
+        else ""
+    )
+
+    persona = get_persona_block(clinician_role_key)
+    prompt = (
+        f"{persona}\n\n"
+        "You are drafting a pre-visit chart-review briefing for this clinician, to read "
+        "before a call or visit with this patient. Synthesize the record below into one "
+        "flowing markdown summary -- not a SOAP note, not a fixed-field form. Cover: "
+        "overview of active issues, anything notable that changed recently, and 1-3 "
+        "specific points worth raising or confirming at this visit. Be concise and "
+        "clinically precise; do not invent facts not present in the record below.\n\n"
+        f"CHART -- OBJECTIVE DATA:\n{objective_section}\n\n"
+        f"CHART -- HISTORY:\n{history_section}"
+        f"{transcript_block}"
+        f"{previous_draft_block}\n\n"
+        "Return only the markdown briefing text, nothing else."
+    )
+
+    try:
+        response = llm.client.chat.completions.create(
+            model=LLMHelper.AUX_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+        )
+        return (response.choices[0].message.content or "").strip()
+    except Exception as exc:
+        print(f"[ClinicalNotes] Pre-visit summary generation failed: {exc}")
+        return (
+            "_AI drafting failed -- showing raw chart data instead. Please write the "
+            "summary manually or try regenerating._\n\n"
+            f"{objective_section}\n\n{history_section}"
+        )

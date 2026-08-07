@@ -20,7 +20,7 @@ load_dotenv()
 # Bumped by hand when the harness's own grading prompt templates change
 # materially (not FlynnMed's internal prompts, which this harness doesn't
 # own or version -- see reporting.py's pipeline_version for that).
-HEALTHBENCH_GRADING_PROMPT_VERSION = "healthbench-rubric-v2"
+HEALTHBENCH_GRADING_PROMPT_VERSION = "healthbench-rubric-v3"
 RAG_METRICS_PROMPT_VERSION = "rag-claim-audit-v4"
 
 DATASET_URLS = {
@@ -58,27 +58,24 @@ def _env_int(name: str) -> Optional[int]:
 @dataclass
 class EvalConfig:
     # Response-generation model FlynnMed's own pipeline will use for this run.
-    # Defaults to whatever the app is actually configured with (OPENAI_MODEL),
-    # so the eval reflects real production behaviour unless explicitly pinned.
+    # Pin evaluation generation independently from the application's model so
+    # benchmark runs remain reproducible when OPENAI_MODEL changes.
     generator_model: str = field(
-        default_factory=lambda: (
-            os.getenv("EVAL_GENERATOR_MODEL")
-            or os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
-        )
+        default_factory=lambda: os.getenv("EVAL_GENERATOR_MODEL", "gpt-4o-mini")
     )
     # HealthBench rubric graders. A second call is skipped automatically when
     # primary and adjudicator resolve to the same model.
     primary_grader_model: str = field(
-        default_factory=lambda: os.getenv("EVAL_PRIMARY_GRADER_MODEL", "gpt-5.4-mini")
+        default_factory=lambda: os.getenv("EVAL_PRIMARY_GRADER_MODEL", "gpt-5.6-luna")
     )
     adjudicator_model: str = field(
-        default_factory=lambda: os.getenv("EVAL_ADJUDICATOR_MODEL", "gpt-5.4-mini")
+        default_factory=lambda: os.getenv("EVAL_ADJUDICATOR_MODEL", "gpt-5.6-luna")
     )
     rag_metrics_model: str = field(
-        default_factory=lambda: os.getenv("EVAL_RAG_METRICS_MODEL", "gpt-5.4-mini")
+        default_factory=lambda: os.getenv("EVAL_RAG_METRICS_MODEL", "gpt-5.6-luna")
     )
     evaluator_fallback_model: str = field(
-        default_factory=lambda: os.getenv("EVAL_FALLBACK_MODEL", "gpt-5.4-mini")
+        default_factory=lambda: os.getenv("EVAL_FALLBACK_MODEL", "gpt-5.6-luna")
     )
 
     generator_reasoning_effort: Optional[str] = field(
@@ -116,6 +113,9 @@ class EvalConfig:
     consistency_repeats: int = field(
         default_factory=lambda: _env_int("EVAL_CONSISTENCY_REPEATS") or 0
     )
+    regrade_workers: int = field(
+        default_factory=lambda: max(1, _env_int("EVAL_REGRADE_WORKERS") or 4)
+    )
     gold_answers_path: Optional[Path] = field(
         default_factory=lambda: (
             Path(raw)
@@ -128,7 +128,9 @@ class EvalConfig:
         key = os.getenv("OPENAI_API_KEY", "")
         if not key:
             raise ValueError(
-                "OPENAI_API_KEY not set. Required for anything other than --dry-run."
+                "No evaluation API key is configured. Set EVAL_API_KEY or "
+                "OPENAI_API_KEY in the current shell or .env. Do not paste the key "
+                "into logs, reports, source control, or chat."
             )
         return key
 

@@ -10,7 +10,7 @@ class _FakeCompletions:
         self._payload = payload
         self.last_messages = None
 
-    def create(self, model, messages, temperature, response_format):
+    def create(self, model, messages, response_format, temperature=None):
         self.last_messages = messages
         content = json.dumps(self._payload)
         return SimpleNamespace(

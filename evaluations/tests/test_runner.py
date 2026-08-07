@@ -128,6 +128,83 @@ def test_load_completed_case_ids_returns_empty_set_for_missing_file(tmp_path):
     assert runner._load_completed_case_ids(tmp_path / "does_not_exist.jsonl") == set()
 
 
+def test_regrade_healthbench_preserves_answer_and_uses_checkpoint(
+    tmp_path, monkeypatch
+):
+    source_dir = tmp_path / "raw" / "saved-run"
+    source_dir.mkdir(parents=True)
+    saved = _minimal_case_result("case-1")
+    (source_dir / "cases.jsonl").write_text(
+        saved.model_dump_json() + "\n", encoding="utf-8"
+    )
+    grade = GradingResult(
+        case_id="case-1",
+        grader_model="gpt-5.6-sol",
+        rubric_results=[
+            RubricResult(
+                criterion="Advises rest.",
+                points=5,
+                met=True,
+                explanation="The answer advises rest.",
+                answer_evidence="ans",
+            )
+        ],
+        clinical_correctness_score=0.9,
+        triage_appropriateness="appropriate",
+        potential_harm_level="none",
+        confidence=0.9,
+        explanation="Meets the rubric.",
+        expected_urgency_level="routine",
+    )
+    calls = []
+    monkeypatch.setattr(
+        runner,
+        "grade_with_primary",
+        lambda *args: calls.append(args) or grade,
+    )
+    config = EvalConfig(
+        output_path=tmp_path,
+        primary_grader_model="gpt-5.6-sol",
+        adjudicator_model="gpt-5.6-sol",
+    )
+    args = argparse.Namespace(run_id="saved-run")
+
+    runner._regrade_saved_healthbench("healthbench", args, config)
+
+    report = (
+        tmp_path
+        / "reports"
+        / "saved-run_healthbench-rubric-v3_gpt_5_6_sol_summary.json"
+    )
+    assert report.exists()
+    assert len(calls) == 1
+    regraded = json.loads(report.read_text(encoding="utf-8"))
+    assert regraded["summary"]["primary_grader_model"] == "gpt-5.6-sol"
+
+    monkeypatch.setattr(
+        runner,
+        "grade_with_primary",
+        lambda *args: pytest.fail("completed checkpoint must be reused"),
+    )
+    runner._regrade_saved_healthbench("healthbench", args, config)
+
+
+def test_regrade_modes_are_mutually_exclusive():
+    with pytest.raises(SystemExit) as exc_info:
+        runner.main(
+            [
+                "--dataset",
+                "healthbench",
+                "--run-id",
+                "saved-run",
+                "--regrade-healthbench",
+                "--regrade-rag",
+            ]
+        )
+
+    assert exc_info.value.code == 2
+
+
 def test_load_completed_case_ids_reads_existing_results(tmp_path):
     raw_path = tmp_path / "cases.jsonl"
     with open(raw_path, "w", encoding="utf-8") as fh:
@@ -165,6 +242,29 @@ def test_load_completed_case_ids_ignores_rag_only_results_without_healthbench(tm
     raw_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
     assert runner._load_completed_case_ids(raw_path) == set()
+
+
+def test_case_manifest_reproduces_prior_report_order(tmp_path):
+    manifest = tmp_path / "summary.json"
+    manifest.write_text(
+        json.dumps({"cases": [{"case_id": "case-2"}, {"case_id": "case-1"}]}),
+        encoding="utf-8",
+    )
+
+    selected = runner._select_manifest_cases(
+        [_valid_case("case-1"), _valid_case("case-2"), _valid_case("case-3")],
+        manifest,
+    )
+
+    assert [case.case_id for case in selected] == ["case-2", "case-1"]
+
+
+def test_case_manifest_rejects_missing_case(tmp_path):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps(["case-404"]), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="absent from this dataset"):
+        runner._select_manifest_cases([_valid_case("case-1")], manifest)
 
 
 def test_run_dataset_applies_sample_limit_and_resume(tmp_path, monkeypatch):
@@ -275,6 +375,37 @@ def test_run_dataset_randomizes_before_sampling(tmp_path, monkeypatch):
     assert observed == [case.case_id for case in expected[:3]]
 
 
+def test_run_dataset_uses_exact_manifest_instead_of_sample_limit(tmp_path, monkeypatch):
+    all_cases = [_valid_case(f"case-{i}") for i in range(5)]
+    monkeypatch.setattr(
+        runner, "_prepare_cases", lambda dataset_name, force_download: all_cases
+    )
+    observed = []
+    monkeypatch.setattr(
+        runner,
+        "dry_run",
+        lambda cases, config: observed.extend(case.case_id for case in cases),
+    )
+    manifest = tmp_path / "summary.json"
+    manifest.write_text(
+        json.dumps({"cases": [{"case_id": "case-4"}, {"case_id": "case-1"}]}),
+        encoding="utf-8",
+    )
+    config = EvalConfig(output_path=tmp_path, sample_limit=1)
+    args = argparse.Namespace(
+        dry_run=True,
+        resume=False,
+        run_id=None,
+        force_download=False,
+        random_seed=None,
+        case_manifest=manifest,
+    )
+
+    runner.run_dataset("healthbench", args, config)
+
+    assert observed == ["case-4", "case-1"]
+
+
 def test_consistency_repeats_are_opt_in(monkeypatch):
     primary = PipelineResponse(
         case_id="case-1", answer_markdown="primary", answer_text="primary"
@@ -375,7 +506,11 @@ def test_failed_secondary_adjudication_preserves_primary_grade(monkeypatch):
         lambda *args: (_ for _ in ()).throw(ValueError("invalid evidence")),
     )
 
-    result = runner.finalize_healthbench_result(case, response, grade, EvalConfig())
+    config = EvalConfig(
+        primary_grader_model="gpt-5.6-luna",
+        adjudicator_model="gpt-5.6-terra",
+    )
+    result = runner.finalize_healthbench_result(case, response, grade, config)
 
     assert result.weighted_score == 1.0
     assert result.adjudication.final_grade is grade
@@ -419,7 +554,11 @@ def test_same_model_secondary_adjudication_is_skipped(monkeypatch):
         lambda *args: pytest.fail("same model must not be called twice"),
     )
 
-    result = runner.finalize_healthbench_result(case, response, grade, EvalConfig())
+    config = EvalConfig(
+        primary_grader_model="gpt-5.4-mini",
+        adjudicator_model="gpt-5.4-mini",
+    )
+    result = runner.finalize_healthbench_result(case, response, grade, config)
 
     assert result.adjudication.triggered is True
     assert result.adjudication.adjudication_skipped is True
@@ -434,7 +573,7 @@ def test_main_stops_before_dataset_when_evaluator_access_fails(monkeypatch, caps
     monkeypatch.setattr(
         grading,
         "validate_evaluator_access",
-        lambda config: (_ for _ in ()).throw(
+        lambda config, **kwargs: (_ for _ in ()).throw(
             grading.EvaluatorAccessError("HTTP 401; set EVAL_API_KEY")
         ),
     )
@@ -449,6 +588,35 @@ def test_main_stops_before_dataset_when_evaluator_access_fails(monkeypatch, caps
 
     assert exc_info.value.code == 2
     assert "HTTP 401" in capsys.readouterr().err
+
+
+def test_main_reports_missing_evaluation_key_without_traceback(monkeypatch, capsys):
+    from evaluations import grading
+
+    monkeypatch.setattr(runner, "load_config", lambda: EvalConfig())
+    monkeypatch.setattr(
+        grading,
+        "validate_evaluator_access",
+        lambda config, **kwargs: (_ for _ in ()).throw(
+            ValueError(
+                "Set EVAL_API_KEY or OPENAI_API_KEY in the current shell or .env."
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_dataset",
+        lambda *args: pytest.fail("dataset must not start without credentials"),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        runner.main(["--dataset", "healthbench", "--sample", "10"])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert "evaluator access check FAILED" in captured.err
+    assert "EVAL_API_KEY" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_warns_when_adjudicator_matches_primary_grader(capsys):

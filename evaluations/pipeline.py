@@ -9,32 +9,34 @@ intent/risk classification, policy gate, pathway context, agentic evidence
 retrieval, and response synthesis) unmodified.
 
 Role handling: FlynnMed's role-aware behaviour (backend/role_router.py) is
-driven entirely by the calling account's stored `clinical_role` profile
-field, not by anything inferred from the message text. A case run with
-`user=None` always gets patient-mode defaults regardless of what the
-conversation says (e.g. "I'm an emergency medicine physician..."). To
-actually exercise the pipeline the way a real account with that role would,
-`ensure_eval_account()` creates a clearly-namespaced, one-shot, never-reused
-account (via `UserStore.create_user`, an existing public API -- no new
-backend code) with the role `evaluations.role_detection.detect_stated_role`
-found in the case's own text, and `run_case` passes that account's username
-instead of `None`. Cases with no detected clinical self-identification keep
-using `user=None` (patient-mode), identical to before -- role_router.py's
-own default for an empty profile is already "patient", so this changes
-nothing for the common case, only for cases that actually claim a different
-role. Because each account is used for exactly one case and never read
-again, there is no risk of one case's saved trace/triage history leaking
-into another's patient-history context.
+driven by the calling account's stored `clinical_role`. The harness resolves
+the intended audience using explicit role statements, HealthBench audience
+tags and bounded clinical-context rules. It creates an isolated, one-case
+account for professional roles and passes that username into the unchanged
+production pipeline. Patient cases keep `user=None`, which is FlynnMed's
+patient-mode default. Evaluation account storage is configured under the run
+directory before backend modules are imported, preventing real account data
+or evaluation cases from entering one another's context.
 """
 
 from __future__ import annotations
 
+import os
 import time
+from pathlib import Path
 from typing import Optional
 
 from evaluations.config import EvalConfig
 from evaluations.models import EvalCase, PipelineResponse
 from evaluations.role_detection import eval_account_username
+
+
+def configure_evaluation_storage(storage_root: Path) -> None:
+    """Isolate synthetic evaluation accounts from local and hosted records."""
+    storage_root.mkdir(parents=True, exist_ok=True)
+    os.environ["DATA_BACKEND"] = "legacy"
+    os.environ["FLYNNMED_USER_DB_PATH"] = str(storage_root / "eval_users.json")
+    os.environ["FLYNNMED_DATA_DIR"] = str(storage_root / "data")
 
 
 def ensure_eval_account(role: str, case_id: str) -> Optional[str]:
@@ -84,14 +86,18 @@ def build_rag_engine(config: EvalConfig):
 
 
 def run_case(
-    rag_engine, case: EvalCase, user: Optional[str] = None, role: str = "patient"
+    rag_engine,
+    case: EvalCase,
+    user: Optional[str] = None,
+    role: str = "patient",
+    role_reason: str = "caller did not supply a role resolution reason",
+    role_confidence: Optional[float] = None,
 ) -> PipelineResponse:
     """Runs one EvalCase through the real pipeline and captures the result.
 
-    `user`: resolved by the caller via `detect_stated_role` +
-    `ensure_eval_account` -- `None` (the default) reproduces the original
-    anonymous/patient-mode behaviour exactly. `role` is recorded on the
-    result purely for report transparency (see PipelineResponse.resolved_role).
+    `user`: resolved by the caller via `resolve_case_role` and
+    `ensure_eval_account`. `None` reproduces anonymous patient mode. The role,
+    reason and confidence are recorded for report transparency.
 
     Raises whatever RAGEngine.handle_user_question raises -- the runner is
     responsible for retry/error handling (see evaluations/grading.py's
@@ -122,4 +128,6 @@ def run_case(
         full_payload=payload,
         duration_seconds=duration,
         resolved_role=role,
+        role_resolution_reason=role_reason,
+        role_resolution_confidence=role_confidence,
     )

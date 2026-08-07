@@ -1,91 +1,181 @@
-"""Detects a self-stated clinical role from a case's own conversation text.
+"""Resolve the intended audience for an evaluation case.
 
-FlynnMed's role-aware behaviour (`backend/role_router.py`) is driven entirely
-by the calling account's stored `clinical_role` profile field -- there is no
-code path anywhere in the pipeline that infers role from what the person
-actually says in a message. Evaluation cases run through an account with
-`user=None` (or an empty/default profile) are therefore always evaluated
-under patient-mode defaults (most conservative escalation threshold, lay
-terminology), even when the conversation itself makes clear the asker is a
-clinician.
-
-This module is purely an evaluation-side concern: it decides which of
-FlynnMed's existing account roles (see role_router.py's canonical role keys)
-a case *should* be run as, so the harness can exercise the pipeline the same
-way a real account with that role would. It does not change, patch, or
-otherwise touch how FlynnMed itself classifies or responds -- it only
-changes which pre-existing, unmodified role configuration the evaluation
-routes a case through.
-
-Detection is deliberately conservative (fixed, generic self-identification
-phrasing, not per-case content) to avoid false positives -- e.g. a patient
-saying "my doctor told me..." must not be misdetected as the patient being a
-doctor.
+Production permissions continue to come from the authenticated account. This
+module only creates an isolated evaluation account whose role matches the case
+audience. Resolution is deterministic and records its reason so benchmark role
+assignment can be audited independently of answer quality.
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from evaluations.models import EvalCase
 
-# Mirrors role_router.py's canonical role keys exactly (patient, caregiver,
-# doctor, nurse, midwife, physiotherapist) -- deliberately not importing from
-# backend/ to keep this module fully independent of pipeline internals; the
-# values themselves are just the account role strings FlynnMed already knows
-# how to route (see backend/role_router.py's _ALIAS_MAP).
-_ROLE_PATTERNS: list[tuple[str, "re.Pattern[str]"]] = [
+
+@dataclass(frozen=True)
+class RoleResolution:
+    role: str
+    reason: str
+    confidence: float
+
+
+_ROLE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
         "doctor",
         re.compile(
-            r"\bI(?:'m| am) an?\s+(?:[a-z]+\s+){0,3}?"
-            r"(?:physician|doctor|GP|general practitioner|surgeon|MD)\b",
+            r"\b(?:I(?:'m| am)|as) an?\s+(?:[a-z-]+\s+){0,4}"
+            r"(?:physician|doctor|doc|GP|general practitioner|surgeon|resident|"
+            r"consultant|attending|cardiologist|urologist|allergist|"
+            r"anaesthetist|anesthesiologist|psychiatrist|paediatrician|pediatrician|"
+            r"intensivist)\b",
             re.I,
         ),
     ),
     (
         "nurse",
-        re.compile(r"\bI(?:'m| am) an?\s+(?:[a-z]+\s+){0,3}?nurse\b", re.I),
+        re.compile(
+            r"\b(?:I(?:'m| am)|as|act like) an?\s+(?:[a-z-]+\s+){0,4}"
+            r"(?:nurse|nurse practitioner|registered nurse|RN)\b",
+            re.I,
+        ),
     ),
     (
         "midwife",
-        re.compile(r"\bI(?:'m| am) an?\s+(?:[a-z]+\s+){0,3}?midwife\b", re.I),
+        re.compile(
+            r"\b(?:I(?:'m| am)|as) an?\s+(?:[a-z-]+\s+){0,3}midwi(?:fe|ves)\b", re.I
+        ),
     ),
     (
         "physiotherapist",
         re.compile(
-            r"\bI(?:'m| am) an?\s+(?:[a-z]+\s+){0,3}?(?:physiotherapist|physical therapist)\b",
+            r"\b(?:I(?:'m| am)|as) an?\s+(?:[a-z-]+\s+){0,3}"
+            r"(?:physiotherapist|physical therapist)\b",
+            re.I,
+        ),
+    ),
+    (
+        "healthcare_professional",
+        re.compile(
+            r"\b(?:I(?:'m| am)|as) an?\s+(?:[a-z-]+\s+){0,3}"
+            r"(?:clinician|pharmacist|paramedic|healthcare professional)\b",
             re.I,
         ),
     ),
 ]
 
+_NURSING_CONTEXT = re.compile(
+    r"\b(?:senior nurse|staff nurse|nursing perspective|nursing assessment|"
+    r"nurse-led|psych ward|on the ward)\b",
+    re.I,
+)
+_CLINICIAN_CONTEXT = re.compile(
+    r"\b(?:my patients?|one of my patients?|the patient|this patient|patient presents?|"
+    r"patient has|patient with|patient is|patient was|patient started|patient taking|"
+    r"we (?:admitted|prescribed|started|ordered|examined|diagnosed|treated)|"
+    r"I (?:prescribed|started|ordered|examined|diagnosed|treated)|"
+    r"routine exam|clinical practice|discharge (?:note|summary)|progress note|"
+    r"dialysis team|Dr\.?\s+[A-Z])\b",
+    re.I,
+)
+_PATIENT_CONTEXT = re.compile(
+    r"\b(?:I have|I've had|I feel|I take|my symptoms?|my doctor|my GP|my medicine|"
+    r"my child|my baby|my toddler|my husband|my wife|my labs?|my eGFR|"
+    r"I gave birth|should I take)\b",
+    re.I,
+)
+_PROFESSIONAL_SIGNALS = [
+    re.compile(
+        r"\b(?:guidelines?|consensus|systematic review|meta-analysis|clinical trials?|"
+        r"protocol|recent evidence|latest evidence)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:contraindications?|perioperative|work-?up|differential diagnosis|"
+        r"indications?|haemodynamic|hemodynamic)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:dose adjustment|dosing interval|titrate|titration|renal dosing|"
+        r"creatinine clearance|eGFR|LFTs?|therapeutic monitoring|trough levels?)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:treatment approach|management approach|recommended window|"
+        r"advanced imaging|first-line treatment|maintenance therapy|"
+        r"clinical decision|assessment and plan)\b",
+        re.I,
+    ),
+]
 
-_CURLY_APOSTROPHES = str.maketrans({"’": "'", "‘": "'"})
+_APOSTROPHES = str.maketrans({"\u2018": "'", "\u2019": "'"})
+_BROKEN_APOSTROPHES = ("\u00e2\u20ac\u02dc", "\u00e2\u20ac\u2122")
+
+
+def _user_text(case: EvalCase) -> str:
+    text = " ".join(
+        turn.content for turn in case.conversation if turn.role.lower() == "user"
+    )
+    text = text.translate(_APOSTROPHES)
+    for broken in _BROKEN_APOSTROPHES:
+        text = text.replace(broken, "'")
+    return text
+
+
+def _audience_tag(case: EvalCase) -> str:
+    for tag in case.tags:
+        if tag == "physician_agreed_category:health-professional":
+            return "professional"
+        if tag == "physician_agreed_category:not-health-professional":
+            return "patient"
+    return ""
+
+
+def resolve_case_role(case: EvalCase) -> RoleResolution:
+    """Resolve role from explicit identity, dataset audience, then context."""
+    text = _user_text(case)
+
+    for role_key, pattern in _ROLE_PATTERNS:
+        if pattern.search(text):
+            return RoleResolution(role_key, "explicit clinical role in user text", 1.0)
+
+    audience_tag = _audience_tag(case)
+    nursing_context = bool(_NURSING_CONTEXT.search(text))
+    if audience_tag == "professional":
+        role = "nurse" if nursing_context else "healthcare_professional"
+        return RoleResolution(
+            role, "HealthBench health-professional audience tag", 0.95
+        )
+    if audience_tag == "patient":
+        return RoleResolution(
+            "patient", "HealthBench not-health-professional audience tag", 0.95
+        )
+
+    if _CLINICIAN_CONTEXT.search(text):
+        role = "nurse" if nursing_context else "healthcare_professional"
+        return RoleResolution(
+            role, "case is framed around clinician-managed patient care", 0.9
+        )
+
+    professional_signal_count = sum(
+        bool(pattern.search(text)) for pattern in _PROFESSIONAL_SIGNALS
+    )
+    if professional_signal_count >= 2 and not _PATIENT_CONTEXT.search(text):
+        return RoleResolution(
+            "healthcare_professional",
+            "multiple professional clinical-language signals without a patient framing",
+            0.8,
+        )
+
+    return RoleResolution("patient", "no reliable professional audience signal", 0.8)
 
 
 def detect_stated_role(case: EvalCase) -> str:
-    """Returns the canonical role key implied by the case's own conversation,
-    or "patient" (FlynnMed's default) if no clear clinical self-identification
-    is present. Only scans user turns -- a role claim inside an assistant/
-    reference turn shouldn't count.
-
-    Real HealthBench text commonly uses a curly apostrophe ("I’m a doctor")
-    rather than a straight one -- normalised here so every pattern only has
-    to be written once, instead of duplicating each with both quote styles.
-    """
-    text = " ".join(turn.content for turn in case.conversation if turn.role == "user")
-    text = text.translate(_CURLY_APOSTROPHES)
-    for role_key, pattern in _ROLE_PATTERNS:
-        if pattern.search(text):
-            return role_key
-    return "patient"
+    """Backward-compatible role-only interface used by existing callers."""
+    return resolve_case_role(case).role
 
 
 def eval_account_username(role: str, case_id: str) -> str:
-    """Deterministic, clearly-namespaced, per-case username so eval accounts
-    can never collide with (or be mistaken for) a real user, and each case
-    gets a fresh, never-reused account -- no cross-case history contamination
-    is possible since nothing is ever read back into a second case."""
     safe_case_id = re.sub(r"[^a-zA-Z0-9_-]", "", case_id)[:32]
     return f"eval-harness-{role}-{safe_case_id}"

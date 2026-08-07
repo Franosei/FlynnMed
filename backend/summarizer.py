@@ -20,9 +20,8 @@ class LLMHelper:
     Wrapper around OpenAI's Chat Completions API for question answering and summarization.
     """
 
-    # gpt-4o for all answer generation -- quality over cost for a health application.
-    # gpt-4o-mini is used only for cheap auxiliary calls (triage JSON, extraction, etc.)
-    ANSWER_MODEL = "gpt-4o"
+    # gpt-4o-mini for all generation -- both final answers and auxiliary calls.
+    ANSWER_MODEL = "gpt-4o-mini"
     AUX_MODEL = "gpt-4o-mini"
     REQUEST_TIMEOUT_SECONDS = 120.0
 
@@ -57,7 +56,7 @@ class LLMHelper:
     ) -> str | Generator[str, None, None]:
         """
         Creates a role-aware, evidence-grounded response using the supplied evidence dossier.
-        Uses gpt-4o for answer quality. Inline source citations like [S1] are mandatory.
+        Uses gpt-4o-mini for answer quality. Inline source citations like [S1] are mandatory.
         """
         if role_config:
             from backend.response_templates import get_persona_block
@@ -382,8 +381,13 @@ class LLMHelper:
         """
         Reviews the answer and checks whether each factual claim is backed by
         a retrieved source. Returns a list of dicts:
-          {"claim": "...", "status": "supported"|"general_knowledge", "source_ids": [...]}
-        Only the top 5 claims are checked to keep latency low.
+          {"claim": "...", "status": "supported"|"general_knowledge",
+           "requires_evidence": bool, "source_ids": [...]}
+        Only the top 5 claims are checked to keep latency low. requires_evidence
+        distinguishes claims a reader would expect to be evidence-backed (a
+        mechanism, a statistic, a named causal relationship) from generic
+        safety-netting or self-care language that doesn't need a citation --
+        callers should only act on unsupported claims where this is true.
         """
         if not answer_markdown or not source_briefings:
             return []
@@ -400,12 +404,18 @@ class LLMHelper:
                     "role": "system",
                     "content": (
                         "You check whether factual claims in a clinical answer are backed by the listed sources. "
-                        "Extract up to 5 specific factual or clinical claims from the answer. "
+                        "Extract up to 5 specific factual or clinical claims from the answer -- prioritise claims "
+                        "that assert a specific mechanism, causal explanation, statistic, dosing detail, or "
+                        "diagnostic/prognostic fact. Skip purely conversational lines, generic safety-netting "
+                        "('seek care if symptoms worsen'), or requests for more information.\n"
                         "For each claim, decide: "
                         "'supported' (a listed source clearly backs it), or "
-                        "'general_knowledge' (plausible but not directly in any listed source). "
+                        "'general_knowledge' (plausible but not directly in any listed source).\n"
+                        "Also set requires_evidence: true if this is the kind of specific clinical claim a "
+                        "reader would reasonably expect to be evidence-backed; false if it's generic safety "
+                        "advice, common-sense self-care, or too vague to need a citation.\n"
                         "Return a JSON object with one key: claims. "
-                        'Each claim is: {"claim": str, "status": str, "source_ids": [str]}.'
+                        'Each claim is: {"claim": str, "status": str, "requires_evidence": bool, "source_ids": [str]}.'
                     ),
                 },
                 {
@@ -432,10 +442,61 @@ class LLMHelper:
                     {
                         "claim": str(item.get("claim", "")).strip(),
                         "status": str(item.get("status", "general_knowledge")).strip(),
+                        "requires_evidence": bool(item.get("requires_evidence", False)),
                         "source_ids": [str(s) for s in item.get("source_ids", [])],
                     }
                 )
         return result
+
+    def rewrite_unsupported_claims(
+        self,
+        answer_markdown: str,
+        unsupported_claims: list[dict],
+        source_briefings: list[dict],
+    ) -> str:
+        """
+        Revises an answer so that claims flagged by check_claim_source_alignment
+        as evidence-requiring but unsupported read as appropriately hedged
+        general knowledge instead of unqualified fact. Nothing else in the
+        answer should change -- structure, other claims, citations, banners.
+        Falls back to the original answer if the rewrite call fails or returns
+        nothing usable, so a broken correction never blocks delivery.
+        """
+        if not unsupported_claims or not answer_markdown:
+            return answer_markdown
+
+        claims_block = "\n".join(f'- "{c["claim"]}"' for c in unsupported_claims)
+        source_block = "\n".join(
+            f"[{s['source_id']}] {s.get('title', '')}" for s in source_briefings[:8]
+        )
+
+        prompt = (
+            "You are revising a clinical answer. The following specific claims in it were "
+            "checked and are NOT backed by any of the listed retrieved sources -- they are "
+            "general knowledge at best, not something the retrieved evidence confirms:\n\n"
+            f"{claims_block}\n\n"
+            f"Sources available:\n{source_block}\n\n"
+            "Rewrite the answer below so that ONLY these specific claims are softened with "
+            "appropriate hedging (e.g. 'often', 'can be', 'it's possible that' -- or a note "
+            "that it would need clinical confirmation) so they no longer read as confirmed "
+            "fact. Do not change anything else: keep the same structure, headings, other "
+            "claims, citations, banners, and tone. Do not add new claims or remove content "
+            "unrelated to the flagged claims.\n\n"
+            f"Original answer:\n{answer_markdown}\n\n"
+            "Return only the revised answer text, nothing else."
+        )
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.AUX_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+            )
+            revised = (response.choices[0].message.content or "").strip()
+            return revised or answer_markdown
+        except Exception as exc:
+            print(f"[LLMHelper] rewrite_unsupported_claims failed, keeping original: {exc}")
+            return answer_markdown
 
     def generate_follow_up_questions(
         self,

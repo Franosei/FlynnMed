@@ -192,7 +192,42 @@ export type ClinicianPatientSummary = {
   clinical_notes: Dict<any>[];
   chat_history: Dict<any>[];
   chat_history_authorized: boolean;
+  previsit_summaries: PreVisitSummary[];
 };
+
+// ── Pre-visit summary + patient-scoped clinician chat ───────────────────────
+
+export type PreVisitSummary = {
+  id: string;
+  status: "draft" | "released";
+  generation_trigger: "ai_generated" | "clinician_edited" | "released";
+  summary_text: string;
+  authored_by_display_name: string;
+  authored_by_clinical_role: string;
+  authored_by_organization: string;
+  released_at: string;
+  released_by_display_name: string;
+  released_by_clinical_role: string;
+  created_at: string;
+};
+
+export type PreVisitChatMessage = {
+  id: string;
+  role: "clinician" | "assistant";
+  content: string;
+  authored_by_display_name: string;
+  authored_by_clinical_role: string;
+  sources?: Source[];
+  created_at: string;
+};
+
+export type PrevisitChatStreamEvent =
+  | { type: "user_message"; message: { role: "clinician"; content: string; timestamp: string } }
+  | { type: "assistant_message"; message: { role: "assistant"; content: string; sources?: Source[] } }
+  | { type: "status"; message: string }
+  | { type: "token"; delta: string }
+  | { type: "error"; message: string }
+  | { type: "done" };
 
 export type TrialSearchResult = {
   searched_at?: string;

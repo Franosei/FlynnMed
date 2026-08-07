@@ -169,9 +169,7 @@ def test_build_report_summary_breaks_healthbench_scoring_down_by_tag():
     case_1.overall_pass = True
 
     case_2 = _with_healthbench(
-        _case_result(
-            case_id="case-2", tags=["theme:communication", "theme:hedging"]
-        )
+        _case_result(case_id="case-2", tags=["theme:communication", "theme:hedging"])
     )
     case_2.weighted_score = 0.0
     case_2.overall_pass = False
@@ -220,6 +218,17 @@ def test_build_report_summary_handles_empty_list():
 
 def test_report_combines_healthbench_and_tier_metrics(tmp_path):
     result = _with_healthbench(_case_result(rag_metrics=_rag_metrics()))
+    result.pipeline_response.resolved_role = "nurse"
+    result.pipeline_response.role_resolution_reason = (
+        "explicit clinical role in user text"
+    )
+    result.pipeline_response.role_resolution_confidence = 1.0
+    result.pipeline_response.sources = [
+        {"source_id": "S1", "url": "https://www.nhs.uk/conditions/example/"},
+        {"source_id": "S2", "url": ""},
+    ]
+    result.deterministic.citation_count = 1
+    result.deterministic.resolved_citation_count = 1
     summary = build_report_summary(
         [result], EvalConfig(), dataset_version="healthbench"
     )
@@ -228,16 +237,29 @@ def test_report_combines_healthbench_and_tier_metrics(tmp_path):
     assert summary.pass_rate == 1.0
     assert summary.weighted_healthbench_score == 0.8
     assert summary.rag_metric_aggregates["faithfulness"].average_score == 0.8
+    assert summary.role_counts == {"nurse": 1}
+    assert summary.related_link_url_coverage == 0.5
+    assert summary.rendered_citation_resolution_rate == 1.0
 
     _, json_path, markdown_path = write_report(
         [result], EvalConfig(output_path=tmp_path), "healthbench", "combined-run"
     )
     payload = json.loads(json_path.read_text(encoding="utf-8"))
     assert payload["cases"][0]["healthbench"]["weighted_score"] == 0.8
+    assert payload["cases"][0]["resolved_role"] == "nurse"
+    assert payload["cases"][0]["role_resolution_confidence"] == 1.0
+    assert payload["cases"][0]["healthbench"]["link_integrity"] == {
+        "related_links": 2,
+        "valid_related_links": 1,
+        "rendered_citations": 1,
+        "resolved_rendered_citations": 1,
+    }
     markdown = markdown_path.read_text(encoding="utf-8")
     assert "Weighted HealthBench score: 0.800" in markdown
     assert "Tiered RAG quality metrics" in markdown
     assert "PROVISIONAL - insufficient sample" in markdown
+    assert "Related source URLs: 1/2 valid (50.0%)" in markdown
+    assert "Rendered citation targets: 1/1 resolved" in markdown
 
 
 def test_metric_aggregate_reports_item_denominator_and_sufficiency():

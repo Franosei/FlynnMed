@@ -1,6 +1,13 @@
+import os
+
 from evaluations.config import EvalConfig
 from evaluations.models import ConversationTurn, EvalCase
-from evaluations.pipeline import build_rag_engine, ensure_eval_account, run_case
+from evaluations.pipeline import (
+    build_rag_engine,
+    configure_evaluation_storage,
+    ensure_eval_account,
+    run_case,
+)
 
 
 class _FakeRagEngine:
@@ -94,11 +101,18 @@ def test_run_case_records_resolved_role_and_passes_user_through():
     )
 
     response = run_case(
-        fake_engine, case, user="eval-harness-doctor-case-1", role="doctor"
+        fake_engine,
+        case,
+        user="eval-harness-doctor-case-1",
+        role="doctor",
+        role_reason="explicit clinical role in user text",
+        role_confidence=1.0,
     )
 
     assert fake_engine.calls[0]["user"] == "eval-harness-doctor-case-1"
     assert response.resolved_role == "doctor"
+    assert response.role_resolution_reason == "explicit clinical role in user text"
+    assert response.role_resolution_confidence == 1.0
 
 
 def test_run_case_defaults_to_patient_role_and_none_user():
@@ -117,6 +131,17 @@ def test_ensure_eval_account_returns_none_for_patient_role():
     # patient is role_router.py's own default for an anonymous/empty profile,
     # so there's nothing to create -- must not touch UserStore at all.
     assert ensure_eval_account("patient", "case-1") is None
+
+
+def test_configure_evaluation_storage_isolates_accounts(tmp_path, monkeypatch):
+    monkeypatch.delenv("FLYNNMED_USER_DB_PATH", raising=False)
+    monkeypatch.delenv("FLYNNMED_DATA_DIR", raising=False)
+
+    configure_evaluation_storage(tmp_path)
+
+    assert os.environ["DATA_BACKEND"] == "legacy"
+    assert os.environ["FLYNNMED_USER_DB_PATH"] == str(tmp_path / "eval_users.json")
+    assert os.environ["FLYNNMED_DATA_DIR"] == str(tmp_path / "data")
 
 
 def test_ensure_eval_account_creates_account_for_non_patient_role(monkeypatch):

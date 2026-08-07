@@ -106,7 +106,18 @@ class MemoryStore:
         top_k: int = 4,
         similarity_threshold: float = 0.45,
         user: Optional[str] = None,
+        hypothetical_passage: str = "",
     ) -> List[Tuple[Dict, float]]:
+        """
+        hypothetical_passage: optional HyDE-style passage (a plausible excerpt from the
+        kind of document that would answer the query). When supplied, it's embedded
+        alongside the raw query and each entry is scored against whichever of the two
+        matches best -- a hypothetical passage often lands closer to real stored
+        entries in embedding space than a short question does. Embedding calls are
+        cheap/fast, so this adds negligible latency next to the LLM call that produces
+        the passage (which the caller generates once, in parallel with other retrieval
+        work, and reuses here).
+        """
         if not self.entries:
             return []
 
@@ -114,9 +125,15 @@ class MemoryStore:
         if not filtered_entries:
             return []
 
-        query_vec = self._embed_text(query)
         all_vectors = np.array([entry["embedding"] for entry in filtered_entries], dtype=np.float32)
+
+        query_vec = self._embed_text(query)
         similarities = np.dot(all_vectors, query_vec)
+
+        if hypothetical_passage and hypothetical_passage.strip():
+            hyde_vec = self._embed_text(hypothetical_passage)
+            hyde_similarities = np.dot(all_vectors, hyde_vec)
+            similarities = np.maximum(similarities, hyde_similarities)
 
         matches = [
             (filtered_entries[index], float(score))

@@ -60,6 +60,7 @@ from backend.utils import build_excerpt
 
 if TYPE_CHECKING:
     from backend.context_graph import ContextGraph
+    from backend.evidence_schema import ExtractedEvidenceDossier
     from backend.memory_store import MemoryStore
     from backend.moderation_ml import ModerationEnsemble
     from backend.official_guidance import OfficialGuidanceEngine
@@ -210,12 +211,18 @@ class AgenticRetrievalLoop:
         pubmed: "PubMedCentralSearcher",
         memory: "MemoryStore",
         user: Optional[str],
+        query_expander: Optional["QueryExpander"] = None,
     ) -> None:
         self.llm = llm
         self.official_guidance = official_guidance
         self.pubmed = pubmed
         self.memory = memory
         self.user = user
+        self.query_expander = query_expander
+        # Set once per run() call so the agent's own tool calls (e.g. _search_personal,
+        # invoked later in the same run during the discretionary loop) can reuse the
+        # HyDE passage generated up front instead of the query alone.
+        self._current_hyde_passage = ""
 
     def run(
         self,
@@ -269,15 +276,19 @@ class AgenticRetrievalLoop:
         system_prompt = (
             "You are a clinical evidence retrieval agent for a worldwide health-information assistant.\n"
             f"{operating_contract_prompt(selected_skills or ['evidence_retrieval'], current_location)}\n\n"
-            "Your task: decide which tools to call to gather the right evidence BEFORE the answer is written.\n"
+            "Your task: decide which ADDITIONAL tools to call to gather the right evidence BEFORE the "
+            "answer is written. search_nhs_guidance and search_pubmed have already been run once with "
+            "the base question (see the tool results below) -- that baseline search is mandatory and "
+            "always happens, so do not skip evidence gathering.\n"
             "Do NOT answer the question yourself.\n\n"
             f"Clinical role: {role_key}\n"
             f"Pathway: {pathway_hint}\n"
             f"Retrieval strategy: {pathway_guidance}{med_hint}\n\n"
             "Rules:\n"
-            "- Call search_nhs_guidance when UK/NICE guidance is relevant; treat it as general evidence "
-            "when the user's jurisdiction is unknown or different.\n"
-            "- Call search_pubmed when you need research evidence or more detail.\n"
+            "- Call search_nhs_guidance again only if a more specific or differently-worded query would "
+            "surface better guidance than the baseline search did.\n"
+            "- Call search_pubmed again only if a more specific research query (e.g. a named drug, "
+            "mechanism, or sub-topic) would surface better evidence than the baseline search did.\n"
             "- Call check_drug_interactions if the question involves medications or interactions.\n"
             "- Call search_patient_documents if the question relates to the patient's own records.\n"
             "- Call search_clinical_trials ONLY if the question explicitly asks about trials.\n"
@@ -285,7 +296,7 @@ class AgenticRetrievalLoop:
             "otherwise ambiguous term in the question, use that confirmed meaning/terminology in "
             "every search query below -- never search using the raw ambiguous wording alone, "
             "since that risks retrieving guidance for the wrong meaning entirely.\n"
-            "- Make at most 4 tool calls total. Stop as soon as you have sufficient evidence.\n"
+            "- Make at most 3 additional tool calls total. Stop as soon as you have sufficient evidence.\n"
             "- When you have finished gathering evidence, respond with the word DONE."
         )
 
@@ -304,6 +315,122 @@ class AgenticRetrievalLoop:
         personal_context: List[Dict] = []
         trial_results: List[Dict] = []
         tool_calls_made: List[Dict] = []
+        hyde_passage = ""
+        query_variants: List[str] = []
+
+        # Baseline evidence retrieval is mandatory for every question -- NHS/NICE
+        # guidance and PubMed/PMC literature must always be attempted at least once,
+        # regardless of what the agent decides. This closes the gap where the agent
+        # judged a question didn't "need" evidence and the final answer was written
+        # from unbacked general knowledge with no citation at all.
+        #
+        # The query-variant + HyDE expansion call rides in the SAME parallel batch as
+        # the two mandatory searches rather than running before them, so it adds no
+        # serial step to the critical path -- worst case it's the slowest of the three
+        # and the batch waits on it exactly as long as it already waits on NHS/PubMed.
+        def _run_expansion():
+            if not self.query_expander:
+                return None
+            return self.query_expander.expand_with_hyde(question, patient_summary)
+
+        mandatory_tools = (
+            ("search_nhs_guidance", self._search_nhs),
+            ("search_pubmed", self._search_pubmed),
+        )
+        hyde_result = None
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            search_futures = {
+                executor.submit(search_fn, question): tool_name
+                for tool_name, search_fn in mandatory_tools
+            }
+            expansion_future = executor.submit(_run_expansion)
+
+            for future in search_futures:
+                tool_name = search_futures[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    print(f"[AgenticLoop] mandatory {tool_name} failed: {exc}")
+                    continue
+
+                sources = result.get("sources") or []
+                print(f"[AgenticLoop] mandatory {tool_name}({question!r}) -> {len(sources)} source(s)")
+                collected_sources.extend(sources)
+                tool_calls_made.append(
+                    {
+                        "tool": tool_name,
+                        "args": {"query": question},
+                        "iteration": 0,
+                        "mandatory": True,
+                    }
+                )
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"[Mandatory baseline {tool_name} result] "
+                            + result.get("summary", "No results.")[:2000]
+                        ),
+                    }
+                )
+
+            try:
+                hyde_result = expansion_future.result()
+            except Exception as exc:
+                print(f"[AgenticLoop] query expansion failed: {exc}")
+
+        # One bounded follow-up round using the single best variant (not all 3, to
+        # keep the added cost small) -- only fires when expansion actually produced
+        # something different from the raw question, and only these two calls wait
+        # on the expansion result rather than the whole request.
+        if hyde_result and hyde_result.query_variants:
+            best_variant = hyde_result.query_variants[0]
+            query_variants = hyde_result.query_variants
+            hyde_passage = hyde_result.hypothetical_passage
+            self._current_hyde_passage = hyde_passage
+            if best_variant and best_variant.strip().lower() != question.strip().lower():
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    variant_futures = {
+                        executor.submit(search_fn, best_variant): tool_name
+                        for tool_name, search_fn in mandatory_tools
+                    }
+                    for future in variant_futures:
+                        tool_name = variant_futures[future]
+                        try:
+                            result = future.result()
+                        except Exception as exc:
+                            print(f"[AgenticLoop] variant {tool_name} failed: {exc}")
+                            continue
+
+                        sources = result.get("sources") or []
+                        print(
+                            f"[AgenticLoop] variant {tool_name}({best_variant!r}) "
+                            f"-> {len(sources)} source(s)"
+                        )
+                        collected_sources.extend(sources)
+                        tool_calls_made.append(
+                            {
+                                "tool": tool_name,
+                                "args": {"query": best_variant},
+                                "iteration": 0,
+                                "mandatory": True,
+                                "variant": True,
+                            }
+                        )
+
+            if hyde_passage:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "[Query expansion] Additional retrieval-friendly query variants "
+                            f"already generated for this question: {query_variants}. "
+                            "A hypothetical reference passage was also generated for retrieval "
+                            "matching purposes only (never cite or repeat it to the user): "
+                            f"{hyde_passage[:400]}"
+                        ),
+                    }
+                )
 
         for iteration in range(max_iterations):
             try:
@@ -381,6 +508,8 @@ class AgenticRetrievalLoop:
             "personal_context": personal_context,
             "trial_results": trial_results,
             "tool_calls_made": tool_calls_made,
+            "hyde_passage": hyde_passage,
+            "query_variants": query_variants,
         }
 
     # -- Tool implementations ------------------------------------------------
@@ -569,7 +698,9 @@ class AgenticRetrievalLoop:
     def _search_personal(self, query: str) -> Dict:
         if not query or not self.user:
             return {"summary": "No query or user.", "personal_matches": []}
-        matches = self.memory.search(query=query, user=self.user)
+        matches = self.memory.search(
+            query=query, user=self.user, hypothetical_passage=self._current_hyde_passage
+        )
         personal: List[Dict] = []
         for entry, score in matches[:4]:
             meta = entry.get("metadata", {})
@@ -629,7 +760,10 @@ class AgenticRetrievalLoop:
                     raw_context=f"Requested condition: {condition}",
                 )
             results = find_matching_trials(
-                search_profile, location_query=location, max_results=5
+                search_profile,
+                location_query=location,
+                max_results=5,
+                query_expander=self.query_expander,
             )
             return {
                 "trials": results.get("trials", [])
@@ -847,6 +981,7 @@ class ClinicalOrchestrator:
             pubmed=self.pubmed,
             memory=self.memory,
             user=normalized_user,
+            query_expander=self.query_expander,
         )
 
         try:
@@ -871,6 +1006,8 @@ class ClinicalOrchestrator:
         collected_sources: List[Dict] = agent_result.get("collected_sources", [])
         personal_context: List[Dict] = agent_result.get("personal_context", [])
         tool_calls_made: List[Dict] = agent_result.get("tool_calls_made", [])
+        hyde_passage: str = agent_result.get("hyde_passage", "")
+        query_variants: List[str] = agent_result.get("query_variants", [])
 
         # Derive expanded_queries from what the agent actually searched
         expanded_queries: List[str] = list(
@@ -889,34 +1026,17 @@ class ClinicalOrchestrator:
             print(
                 "[Orchestrator] Agent found no sources -- falling back to direct retrieval."
             )
-            fallback_queries = self._build_search_queries(
-                retrieval_question, history_context, graph_hints
-            )
-            search_queries = self._augment_queries_with_pathway(
-                fallback_queries, pathway_context, clinical_decision
-            )
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                preferred = list(dict.fromkeys(pathway_context.preferred_sources or []))
-                official_future = executor.submit(
-                    self.official_guidance.search, search_queries, 1, preferred or None
+            collected_sources, personal_context, expanded_queries = (
+                self._run_fallback_retrieval(
+                    retrieval_question,
+                    history_context,
+                    graph_hints,
+                    pathway_context,
+                    clinical_decision,
+                    normalized_user,
+                    hyde_passage,
                 )
-                pubmed_future = executor.submit(
-                    self._retrieve_pubmed_for_queries, search_queries, normalized_user
-                )
-                try:
-                    collected_sources = official_future.result()
-                except Exception as exc:
-                    print(f"[Orchestrator] Fallback NHS search failed: {exc}")
-                try:
-                    pubmed_future.result()
-                except Exception as exc:
-                    print(f"[Orchestrator] Fallback PubMed search failed: {exc}")
-
-            # Semantic search for personal context in fallback path
-            matches = self.memory.search(query=retrieval_question, user=normalized_user)
-            personal_context, pubmed_matches = self._split_matches(matches)
-            collected_sources.extend(self._build_source_briefings(pubmed_matches))
-            expanded_queries = fallback_queries
+            )
 
         # -- Step 10: Deduplicate and rank evidence ---------------------------
         raw_sources = self._deduplicate_sources(collected_sources)
@@ -937,51 +1057,113 @@ class ClinicalOrchestrator:
             )
         )
 
-        if combined_sources:
+        # -- Step 11/11b: Evidence dossier (anti-hallucination layer) + --------
+        # reconcile specialty-mismatch exclusions. The dossier's per-article LLM
+        # extraction is the only stage that checks for cross-specialty term
+        # mismatch (e.g. respiratory vs. urology "peak flow") -- evidence_ranker's
+        # quality gate has no concept of this, so a source it accepted as
+        # question_aligned/background_only can still be a confirmed mismatch.
+        combined_sources, evidence_quality_report, evidence_dossier = (
+            self._build_dossier_and_reconcile(
+                combined_sources,
+                evidence_quality_report,
+                retrieval_question,
+                user_profile,
+                patient_history,
+                medications,
+                conditions,
+            )
+        )
+
+        # -- Step 11c: Retry retrieval once if the gate rejected everything ----
+        # A quality-gate rejection (sources existed but none passed) and a truly
+        # empty retrieval (nothing was ever found) both currently converge here
+        # with zero usable sources. Rather than let the answer LLM fall back to
+        # unbacked general knowledge, try one more retrieval round seeded with a
+        # genuinely different query before giving up -- reusing the next unused
+        # HyDE variant (query_variants[0] was already tried above; [1] never was)
+        # so this isn't just repeating the same search verbatim.
+        retrieval_retry_attempted = False
+        if not combined_sources:
+            retrieval_retry_attempted = True
+            retry_seed = (
+                query_variants[1]
+                if len(query_variants) > 1 and query_variants[1].strip()
+                else None
+            )
+            if not retry_seed or retry_seed.strip().lower() == retrieval_question.strip().lower():
+                retry_seed = None
+            retry_collected, retry_personal, retry_queries_used = self._run_fallback_retrieval(
+                retry_seed or retrieval_question,
+                history_context,
+                graph_hints,
+                pathway_context,
+                clinical_decision,
+                normalized_user,
+                hyde_passage,
+            )
+            retry_raw = self._deduplicate_sources(retry_collected)
+            retry_raw, _ = self._exclude_context_incompatible_sources(
+                retry_raw, clinical_context
+            )
+            combined_sources, evidence_quality_report = (
+                self.evidence_ranker.rank_and_tier_with_report(
+                    sources=retry_raw,
+                    question=question,
+                    role_config=role_config,
+                    intent=intent,
+                    memory_store=self.memory,
+                    top_k=6,
+                    patient_history=patient_history,
+                    context_graph=context_graph,
+                )
+            )
+            combined_sources, evidence_quality_report, evidence_dossier = (
+                self._build_dossier_and_reconcile(
+                    combined_sources,
+                    evidence_quality_report,
+                    retrieval_question,
+                    user_profile,
+                    patient_history,
+                    medications,
+                    conditions,
+                )
+            )
+            personal_context = personal_context + retry_personal
+            expanded_queries = retry_queries_used
+
+        if retrieval_retry_attempted:
+            # combined_sources is only still empty here if the retry also found
+            # nothing usable -- the terminal refusal check right below is what
+            # handles that case, never a general-knowledge answer.
+            retrieval_mode = (
+                "evidence_quality_gate_retry_recovered"
+                if combined_sources
+                else "no_evidence_after_retry"
+            )
+        else:
+            # retrieval_retry_attempted is only False when combined_sources was
+            # already non-empty after Step 11/11b (that's the retry's trigger
+            # condition), so combined_sources is guaranteed non-empty here.
             retrieval_mode = (
                 "agentic_multi_source" if tool_calls_made else "live_multi_source"
             )
-        elif raw_sources:
-            retrieval_mode = "evidence_quality_filtered"
-        else:
-            retrieval_mode = "general_knowledge"
 
-        # -- Step 11: Evidence dossier (anti-hallucination layer) -------------
-        evidence_dossier = None
-        if combined_sources:
-            try:
-                from backend.evidence_extractor import build_evidence_dossier
-
-                evidence_dossier = build_evidence_dossier(
-                    llm=self.llm,
-                    sources=combined_sources,
-                    question=retrieval_question,
-                    user_profile=user_profile,
-                    patient_history_ctx=patient_history,
-                    medications=medications or [],
-                    conditions=conditions or [],
-                )
-            except Exception as exc:
-                print(
-                    f"[Orchestrator] Evidence dossier build failed (non-fatal): {exc}"
-                )
-
-        # -- Step 11b: Reconcile specialty-mismatch exclusions -----------------
-        # The dossier's per-article LLM extraction is the only stage that checks for
-        # cross-specialty term mismatch (e.g. respiratory vs. urology "peak flow").
-        # evidence_ranker's quality gate has no concept of this, so a source it
-        # accepted as question_aligned/background_only can still be a confirmed
-        # mismatch. Strip those source_ids out of combined_sources and the quality
-        # report now, before either reaches the answer prompt or the Sources panel --
-        # otherwise the "use ... for general context" permission in the quality gate
-        # text stays open for a source the dossier already rejected.
-        if evidence_dossier and evidence_dossier.excluded_source_ids:
-            combined_sources, evidence_quality_report = (
-                self._exclude_mismatched_sources(
-                    combined_sources,
-                    evidence_quality_report,
-                    evidence_dossier.excluded_source_ids,
-                )
+        # -- Terminal refusal: never let the answer LLM run on zero evidence ---
+        # If, even after the retry above, nothing passed the quality gate, the
+        # system must not answer from unbacked general knowledge. Short-circuit
+        # here exactly like _build_transformation_bundle/the crisis path already
+        # do, before _build_role_context or the answer LLM is ever reached.
+        if not combined_sources:
+            return self._build_limited_bundle(
+                question=question,
+                normalized_user=normalized_user,
+                personal_context=personal_context,
+                retrieval_mode=retrieval_mode,
+                expanded_queries=expanded_queries,
+                role_config=role_config,
+                intent=intent,
+                policy_decision=policy_decision,
             )
 
         # -- Step 12: Build role-aware LLM context ----------------------------
@@ -992,7 +1174,6 @@ class ClinicalOrchestrator:
             pathway_context=pathway_context,
             clinical_decision=clinical_decision,
             evidence_quality_report=evidence_quality_report,
-            no_sources=not combined_sources,
             evidence_dossier=evidence_dossier,
             clinical_context=clinical_context,
         )
@@ -1312,7 +1493,6 @@ class ClinicalOrchestrator:
         pathway_context,
         clinical_decision: ClinicalDecision,
         evidence_quality_report: Optional[Dict] = None,
-        no_sources: bool = False,
         evidence_dossier=None,
         clinical_context: Optional[ClinicalContextDecision] = None,
     ) -> str:
@@ -1422,26 +1602,11 @@ class ClinicalOrchestrator:
                 "Biomedical evidence (tiered by source authority):\n"
                 + "\n\n".join(evidence_parts)
             )
-        elif no_sources:
-            filtered = (
-                evidence_quality_report
-                and evidence_quality_report.get("overall_status")
-                == "no_sources_passed_quality_gate"
-            )
-            if filtered:
-                parts.append(
-                    "Private source-use instruction: do not cite the retrieved sources because they do "
-                    "not directly answer this request. Answer useful parts from established general "
-                    "clinical knowledge, label uncertainty naturally, and ask only for details that "
-                    "would change the next action. Never mention filtering, retrieval, evidence checks, "
-                    "structured evidence, or internal review processes."
-                )
-            else:
-                parts.append(
-                    "Private source-use instruction: answer from established general clinical knowledge. "
-                    "Do not claim that evidence was missing or describe retrieval. Give a proportionate "
-                    "disposition and concrete next step where possible."
-                )
+        # No `elif` for the empty-sources case: the caller (ClinicalOrchestrator's
+        # main retrieval method) never reaches this method with combined_sources
+        # empty -- it short-circuits to _build_limited_bundle's graceful refusal
+        # before _build_role_context is called at all, precisely so the answer
+        # LLM never gets a "just answer from general knowledge" instruction.
 
         return "\n\n".join(parts)
 
@@ -1529,6 +1694,100 @@ class ClinicalOrchestrator:
                 if term not in augmented:
                     augmented.append(term)
         return augmented[:5]
+
+    def _run_fallback_retrieval(
+        self,
+        seed_question: str,
+        history_context: str,
+        graph_hints: Optional[List[str]],
+        pathway_context,
+        clinical_decision: Optional[ClinicalDecision],
+        normalized_user: Optional[str],
+        hyde_passage: str,
+    ) -> Tuple[List[Dict], List[Dict], List[str]]:
+        """
+        Direct (non-agentic) NHS + PubMed retrieval, seeded with `seed_question`.
+        Used both as Step 9's fallback (when the agentic loop found nothing) and
+        as Step 11c's retry (when the quality gate rejected everything the agentic
+        loop found) -- passing a different `seed_question` the second time is what
+        makes the retry a genuine second attempt rather than repeating the same
+        search verbatim.
+        """
+        fallback_queries = self._build_search_queries(
+            seed_question, history_context, graph_hints
+        )
+        search_queries = self._augment_queries_with_pathway(
+            fallback_queries, pathway_context, clinical_decision
+        )
+        collected_sources: List[Dict] = []
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            preferred = list(dict.fromkeys(pathway_context.preferred_sources or []))
+            official_future = executor.submit(
+                self.official_guidance.search, search_queries, 1, preferred or None
+            )
+            pubmed_future = executor.submit(
+                self._retrieve_pubmed_for_queries, search_queries, normalized_user
+            )
+            try:
+                collected_sources = official_future.result()
+            except Exception as exc:
+                print(f"[Orchestrator] Fallback NHS search failed: {exc}")
+            try:
+                pubmed_future.result()
+            except Exception as exc:
+                print(f"[Orchestrator] Fallback PubMed search failed: {exc}")
+
+        matches = self.memory.search(
+            query=seed_question,
+            user=normalized_user,
+            hypothetical_passage=hyde_passage,
+        )
+        personal_context, pubmed_matches = self._split_matches(matches)
+        collected_sources.extend(self._build_source_briefings(pubmed_matches))
+        return collected_sources, personal_context, fallback_queries
+
+    def _build_dossier_and_reconcile(
+        self,
+        combined_sources: List[Dict],
+        evidence_quality_report: Dict,
+        retrieval_question: str,
+        user_profile: dict,
+        patient_history,
+        medications: Optional[List[Dict]],
+        conditions: Optional[List[Dict]],
+    ) -> Tuple[List[Dict], Dict, Optional["ExtractedEvidenceDossier"]]:
+        """
+        Runs the evidence dossier (anti-hallucination, per-article extraction) and
+        reconciles any specialty-mismatch exclusions it finds back into
+        combined_sources/evidence_quality_report. Shared by the initial Step 11/11b
+        pass and Step 11c's retry pass so the reconciliation logic isn't duplicated.
+        """
+        evidence_dossier = None
+        if not combined_sources:
+            return combined_sources, evidence_quality_report, evidence_dossier
+
+        try:
+            from backend.evidence_extractor import build_evidence_dossier
+
+            evidence_dossier = build_evidence_dossier(
+                llm=self.llm,
+                sources=combined_sources,
+                question=retrieval_question,
+                user_profile=user_profile,
+                patient_history_ctx=patient_history,
+                medications=medications or [],
+                conditions=conditions or [],
+            )
+        except Exception as exc:
+            print(f"[Orchestrator] Evidence dossier build failed (non-fatal): {exc}")
+
+        if evidence_dossier and evidence_dossier.excluded_source_ids:
+            combined_sources, evidence_quality_report = self._exclude_mismatched_sources(
+                combined_sources,
+                evidence_quality_report,
+                evidence_dossier.excluded_source_ids,
+            )
+        return combined_sources, evidence_quality_report, evidence_dossier
 
     # -- Source processing helpers --------------------------------------------
 

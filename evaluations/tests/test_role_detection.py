@@ -1,15 +1,19 @@
 from evaluations.models import ConversationTurn, EvalCase
-from evaluations.role_detection import detect_stated_role, eval_account_username
+from evaluations.role_detection import (
+    detect_stated_role,
+    eval_account_username,
+    resolve_case_role,
+)
 
 
-def _case(*user_texts: str) -> EvalCase:
+def _case(*user_texts: str, tags=None) -> EvalCase:
     conversation = [ConversationTurn(role="user", content=text) for text in user_texts]
     return EvalCase(
         case_id="case-1",
         source_dataset="healthbench",
         conversation=conversation,
         rubrics=[],
-        tags=[],
+        tags=tags or [],
     )
 
 
@@ -41,6 +45,15 @@ def test_detects_doctor_variants():
         assert detect_stated_role(_case(phrasing)) == "doctor", phrasing
 
 
+def test_detects_informal_doctor_self_identification_from_healthbench():
+    case = _case(
+        "I have a septic shock patient in the ICU. I'm a critical care doc "
+        "and I want to review the evidence."
+    )
+
+    assert detect_stated_role(case) == "doctor"
+
+
 def test_detects_nurse():
     case = _case("I'm a nurse on a busy ward, what's the correct dose?")
     assert detect_stated_role(case) == "nurse"
@@ -61,6 +74,56 @@ def test_detects_physiotherapist():
 def test_defaults_to_patient_with_no_self_identification():
     case = _case("I have a mild headache, what should I do?")
     assert detect_stated_role(case) == "patient"
+
+
+def test_healthbench_professional_audience_tag_routes_to_clinician():
+    case = _case(
+        "What is the recommended blood pressure target for octogenarians?",
+        tags=["physician_agreed_category:health-professional"],
+    )
+
+    resolution = resolve_case_role(case)
+
+    assert resolution.role == "healthcare_professional"
+    assert "audience tag" in resolution.reason
+    assert resolution.confidence == 0.95
+
+
+def test_healthbench_non_professional_tag_keeps_patient_mode():
+    case = _case(
+        "What are the current guidelines for treating my symptoms?",
+        tags=["physician_agreed_category:not-health-professional"],
+    )
+
+    assert resolve_case_role(case).role == "patient"
+
+
+def test_clinician_managed_patient_language_routes_to_clinician():
+    case = _case("My patient started methotrexate. How often should I check LFTs?")
+
+    assert resolve_case_role(case).role == "healthcare_professional"
+
+
+def test_nursing_context_routes_to_nurse():
+    case = _case(
+        "My patient on the psych ward has chest tightness. Act like a senior nurse."
+    )
+
+    assert resolve_case_role(case).role == "nurse"
+
+
+def test_multiple_professional_language_signals_route_to_clinician():
+    case = _case(
+        "What is the latest consensus on perioperative beta-blocker management?"
+    )
+
+    assert resolve_case_role(case).role == "healthcare_professional"
+
+
+def test_personal_clinical_language_remains_patient_mode():
+    case = _case("My eGFR is 35. Should I change my dose?")
+
+    assert resolve_case_role(case).role == "patient"
 
 
 def test_does_not_misdetect_third_party_mentions():

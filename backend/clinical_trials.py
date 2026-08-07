@@ -29,13 +29,17 @@ import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, TYPE_CHECKING
 
 import requests
 from dotenv import load_dotenv
 from openai import OpenAI
+
+if TYPE_CHECKING:
+    from backend.query_expander import QueryExpander
 
 from backend.user_store import compute_current_age
 from backend.clinical_context_guard import (
@@ -743,6 +747,7 @@ def find_matching_trials(
     profile: TrialSearchProfile,
     location_query: str,
     max_results: int = 10,
+    query_expander: Optional["QueryExpander"] = None,
 ) -> Dict:
     """
     Phase 1 -- Extract: LLM reads patient context → individual medical terms.
@@ -752,6 +757,15 @@ def find_matching_trials(
         b) Take top _PRE_FILTER_N candidates.
         c) LLM scores condition alignment (batched) + deterministic age/sex eligibility.
         d) Final ranking: alignment + coverage + location (contact NOT in total).
+
+    Phase 2 is a serial per-term loop with an explicit rate-limit sleep between
+    ClinicalTrials.gov calls, so unlike NHS/PubMed retrieval, adding condition
+    terms here has a direct, non-parallelizable latency cost -- each extra term
+    is one more full API round trip plus the sleep. When query_expander is
+    supplied, at most one extra condition term is added (the single best query
+    variant), and it's generated concurrently with the existing term-extraction
+    LLM call rather than after it, so that part adds no serial latency; only the
+    bounded +1 search term does.
     """
     context_decision = decision_from_dict(profile.clinical_context)
     if context_decision and context_decision.requires_clarification:
@@ -767,10 +781,31 @@ def find_matching_trials(
             "clinical_context": context_decision.as_dict(),
         }
 
-    # Phase 1
-    extracted = _llm_extract_search_terms(profile.raw_context)
+    # Phase 1 -- term extraction and query expansion run concurrently; neither
+    # depends on the other, and the expansion is only asked for one bounded
+    # extra term so Phase 2's serial search loop doesn't grow by more than one.
+    if query_expander is not None:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            extract_future = executor.submit(_llm_extract_search_terms, profile.raw_context)
+            expansion_future = executor.submit(query_expander.expand_with_hyde, profile.raw_context)
+            extracted = extract_future.result()
+            try:
+                hyde_result = expansion_future.result()
+            except Exception as exc:
+                print(f"[clinical_trials] query expansion failed: {exc}")
+                hyde_result = None
+    else:
+        extracted = _llm_extract_search_terms(profile.raw_context)
+        hyde_result = None
+
     condition_terms = extracted.get("conditions", [])
     medication_terms = extracted.get("medications", [])
+
+    if hyde_result and hyde_result.query_variants:
+        best_variant = hyde_result.query_variants[0].strip()
+        existing_lower = {t.strip().lower() for t in condition_terms + medication_terms}
+        if best_variant and best_variant.lower() not in existing_lower:
+            condition_terms = condition_terms + [best_variant]
 
     if context_decision and context_decision.domain:
         condition_terms = [

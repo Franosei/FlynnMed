@@ -16,9 +16,9 @@ from backend.config import psycopg_database_url
 
 load_dotenv()
 
-DATA_DIR = Path("data")
+DATA_DIR = Path(os.getenv("FLYNNMED_DATA_DIR", "data"))
 UPLOAD_ROOT = DATA_DIR / "uploads"
-USER_DB_PATH = Path("users.json")
+USER_DB_PATH = Path(os.getenv("FLYNNMED_USER_DB_PATH", "users.json"))
 USER_TABLE_NAME = "app_user_store"
 _USER_BACKEND = None
 

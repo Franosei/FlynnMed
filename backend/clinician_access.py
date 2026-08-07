@@ -20,6 +20,7 @@ from backend.models.patient import (
     Condition,
     Medication,
     Patient,
+    PreVisitSummary,
     SymptomLog,
     TriageSummary,
     VitalsEntry,
@@ -327,9 +328,19 @@ def _row(item: Any, fields: tuple[str, ...]) -> dict:
     return data
 
 
-def authorized_patient_summary(
-    db: Session, username: str, patient_id: str
-) -> dict:
+def require_active_previsit_access(
+    db: Session, username: str, patient_id: str, *, action: AuditAction
+) -> tuple[Account, Patient, ConsentGrant]:
+    """
+    Validates that `username` is an active clinician holding a live, active
+    consent grant that covers the previsit_summary scope for the patient
+    identified by `patient_id` (MRN). Shared by every read/write path that
+    needs this same gate -- the plain read-only chart, AI summary
+    drafting/regeneration, the patient-scoped chat, draft edits, and release
+    -- each passing its own AuditAction so the audit log distinguishes what
+    kind of access it was, without duplicating the validation logic itself.
+    Raises AccessWorkflowError (denial is audited before raising) if invalid.
+    """
     clinician = _account(db, username)
     if clinician.account_kind != AccountKind.clinician:
         raise AccessWorkflowError("Clinician account required.")
@@ -358,7 +369,7 @@ def authorized_patient_summary(
             db,
             actor=clinician,
             patient=patient,
-            action=AuditAction.clinician_read_previsit_summary,
+            action=action,
             outcome=AuditOutcome.denied,
             resource_id=patient_id,
             grant=grant,
@@ -369,10 +380,19 @@ def authorized_patient_summary(
         db,
         actor=clinician,
         patient=patient,
-        action=AuditAction.clinician_read_previsit_summary,
+        action=action,
         outcome=AuditOutcome.success,
         resource_id=patient.patient_id,
         grant=grant,
+    )
+    return clinician, patient, grant
+
+
+def authorized_patient_summary(
+    db: Session, username: str, patient_id: str
+) -> dict:
+    clinician, patient, grant = require_active_previsit_access(
+        db, username, patient_id, action=AuditAction.clinician_read_previsit_summary
     )
     chat_allowed = ConsentScope.chat_history.value in (grant.scope or [])
     return {
@@ -489,4 +509,33 @@ def authorized_patient_summary(
             else []
         ),
         "chat_history_authorized": chat_allowed,
+        # All rows -- draft and released, across every clinician who has ever
+        # authored one for this patient. This is what makes past summaries
+        # (and the reasoning behind them) visible to any future clinician
+        # granted access, not just the original author -- continuity of care,
+        # gated by the same previsit_summary scope already checked above, no
+        # separate scope/grant type needed.
+        "previsit_summaries": [
+            {
+                **_row(
+                    item,
+                    (
+                        "status",
+                        "generation_trigger",
+                        "summary_text",
+                        "authored_by_display_name",
+                        "authored_by_clinical_role",
+                        "authored_by_organization",
+                        "released_by_display_name",
+                        "released_by_clinical_role",
+                    ),
+                ),
+                "released_at": _iso(item.released_at),
+            }
+            for item in db.execute(
+                select(PreVisitSummary)
+                .where(PreVisitSummary.patient_id == patient.id)
+                .order_by(PreVisitSummary.created_at.desc())
+            ).scalars()
+        ],
     }

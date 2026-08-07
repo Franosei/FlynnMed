@@ -120,6 +120,10 @@ def test_build_evidence_dossier_excludes_explicit_specialty_mismatch_regardless_
     A source the extractor explicitly flags specialty_mismatch=True must be excluded even
     if it scored a middling alignment_confidence and answers_question=True -- the explicit
     flag is a hard signal, not something inferred from the confidence threshold alone.
+
+    This only holds when there's an actual patient profile on record for the article to
+    conflict with (a concrete urology reading here) -- see the companion test below for the
+    no-profile case, where specialty_mismatch must instead be ignored.
     """
     mismatched_but_confident = ArticleEvidence(
         source_id="S1",
@@ -142,11 +146,50 @@ def test_build_evidence_dossier_excludes_explicit_specialty_mismatch_regardless_
         llm=object(),
         sources=[{"source_id": "S1", "title": "x"}],
         question="What does my peak flow of 18 mean?",
-        user_profile={},
+        user_profile={"date_of_birth": "1980-01-01", "biological_sex": "male"},
     )
 
     assert dossier.articles == []
     assert dossier.excluded_source_ids == ["S1"]
+
+
+def test_build_evidence_dossier_ignores_specialty_mismatch_with_no_patient_profile_on_record(monkeypatch):
+    """
+    specialty_mismatch means "conflicts with a concrete fact in the patient's own profile" --
+    with no profile recorded (the common case for a professional evidence-review question with
+    no specific patient in view, e.g. a clinician asking about guidelines in the abstract),
+    there is nothing for an article to conflict with. Honoring the flag anyway was a real bug:
+    an aux-model misfire on this signal silently zeroed out every retrieved source, which then
+    also disabled the downstream claim-alignment gate (guarded on combined_sources being
+    non-empty). The flag must be ignored -- not treated as a hard exclusion -- whenever there's
+    no profile on record, regardless of what the extractor returned.
+    """
+    mismatched_with_no_profile = ArticleEvidence(
+        source_id="S1",
+        title="2023 ACLS Guidelines for Adult Cardiac Arrest",
+        evidence_tier=1,
+        tier_label="Tier 1",
+        answers_question=True,
+        alignment_confidence=0.55,
+        specialty_mismatch=True,
+        specialty_mismatch_reason="Extractor misfire -- no actual conflicting profile fact exists.",
+        patient_relevant_summary="On-topic guideline content.",
+    )
+
+    def fake_extract(llm, source, question, patient_summary, medications, conditions):
+        return mismatched_with_no_profile
+
+    monkeypatch.setattr(evidence_extractor, "_extract_one_article", fake_extract)
+
+    dossier = build_evidence_dossier(
+        llm=object(),
+        sources=[{"source_id": "S1", "title": "x"}],
+        question="Walk me through the current ACLS guidelines for adult cardiac arrest.",
+        user_profile={},
+    )
+
+    assert [a.source_id for a in dossier.articles] == ["S1"]
+    assert dossier.excluded_source_ids == []
 
 
 def test_build_evidence_dossier_keeps_low_but_nonzero_general_context(monkeypatch):

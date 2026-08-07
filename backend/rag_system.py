@@ -593,10 +593,17 @@ class RAGEngine:
         allow_generated_media: bool = True,
         extra_trace_metadata: Optional[Dict] = None,
         require_live_evidence: bool = False,
+        target_patient_data: Optional[Dict] = None,
     ) -> Generator[Dict, None, None]:
         """
         Streams retrieval progress events and final answer tokens so the UI can
         show live search status followed by incremental generation.
+
+        target_patient_data: see _prepare_answer_bundle's docstring -- passes
+        straight through, unused by anything else in this method. `user`
+        keeps meaning the acting/authenticated account throughout (audit,
+        rate-limiting, interaction-trace), never the data source, when this
+        is supplied.
         """
         yield {
             "type": "status",
@@ -619,7 +626,10 @@ class RAGEngine:
             needs_illustration = False
 
         bundle = self._prepare_answer_bundle(
-            question=question, user=user, chat_history=chat_history
+            question=question,
+            user=user,
+            chat_history=chat_history,
+            target_patient_data=target_patient_data,
         )
         if bundle["kind"] == "final":
             payload = self._enrich_prebuilt_payload(
@@ -744,7 +754,6 @@ class RAGEngine:
             question=question,
             raw_answer=raw_answer,
             bundle=bundle,
-            run_claim_check=False,  # skip in streaming path -- audit-only, saves ~0.8 s
         )
         if illustration:
             payload["image_url"] = illustration.image_url
@@ -875,71 +884,111 @@ class RAGEngine:
         question: str,
         user: Optional[str] = None,
         chat_history: Optional[List[dict]] = None,
+        target_patient_data: Optional[Dict] = None,
     ) -> Dict:
+        """
+        target_patient_data: when supplied, sources clinical context from this
+        pre-fetched bundle instead of UserStore.get_*(normalized_user) -- this
+        is what lets a clinician's patient-scoped chat answer using a
+        DIFFERENT patient's data than the acting/authenticated account's own
+        (UserStore/SqlUserStore only ever resolve "the calling account's own
+        Patient row," by design -- see backend/clinician_chat_data.py, which
+        builds this bundle via a consent-checked read). `user` keeps meaning
+        "the acting account" throughout regardless (audit/rate-limit/trace),
+        never the data source. When omitted (every existing call site),
+        behavior is unchanged.
+        """
         normalized_user = user.strip().lower() if user else None
 
-        # Parallelize all UserStore reads + context restoration concurrently.
-        # restore_user_context populates the in-memory embedding store;
-        # the orchestrator's semantic search step happens after PubMed retrieval
-        # (~2-3 s later), so restoration is always complete in time.
-        with ThreadPoolExecutor(max_workers=9) as _pre_exec:
-            _restore_f = _pre_exec.submit(self.restore_user_context, normalized_user)
-            _memory_f = (
-                _pre_exec.submit(self.get_combined_longitudinal_memory, normalized_user)
-                if normalized_user
-                else None
+        if target_patient_data is not None:
+            # restore_user_context is intentionally skipped here: it mutates
+            # a shared, per-engine embedding store keyed by username. Keying
+            # it to the clinician's own account would populate/query nothing
+            # useful; keying it to the patient's real username risks racing
+            # that patient's own concurrent live session against the same
+            # store. This is a documented v1 scope limit, not a bug -- the
+            # clinician chat still gets full grounding from the structured
+            # bundle below via prepare_bundle, just not the long-term
+            # semantic-embedding recall layer patient sessions get.
+            medications = target_patient_data.get("medications", [])
+            symptom_logs = target_patient_data.get("symptom_logs", [])
+            triage_summaries = target_patient_data.get("triage_summaries", [])
+            allergies = target_patient_data.get("allergies", [])
+            conditions = target_patient_data.get("conditions", [])
+            vitals = target_patient_data.get("vitals", [])
+            document_summaries = target_patient_data.get("document_summaries", [])
+            user_profile = target_patient_data.get("user_profile", {})
+            longitudinal_memory_summary = self._compose_longitudinal_memory_summary(
+                base_summary=(target_patient_data.get("longitudinal_memory_base") or "").strip(),
+                symptom_summary=build_symptom_pattern_summary(symptom_logs),
+                condition_summary=self._build_condition_memory_summary(conditions),
+                medication_summary=self._build_medication_memory_summary(medications),
+                vitals_summary=self._build_vitals_memory_summary(vitals),
+                allergies_summary=self._build_allergies_memory_summary(allergies),
             )
-            _profile_f = (
-                _pre_exec.submit(UserStore.get_user_profile, normalized_user)
-                if normalized_user
-                else None
-            )
-            _med_f = (
-                _pre_exec.submit(UserStore.get_medications, normalized_user)
-                if normalized_user
-                else None
-            )
-            _symptom_f = (
-                _pre_exec.submit(UserStore.get_symptom_logs, normalized_user, None)
-                if normalized_user
-                else None
-            )
-            _triage_f = (
-                _pre_exec.submit(UserStore.get_triage_summaries, normalized_user, None)
-                if normalized_user
-                else None
-            )
-            _allergy_f = (
-                _pre_exec.submit(UserStore.get_allergies, normalized_user)
-                if normalized_user
-                else None
-            )
-            _condition_f = (
-                _pre_exec.submit(UserStore.get_conditions, normalized_user)
-                if normalized_user
-                else None
-            )
-            _vitals_f = (
-                _pre_exec.submit(UserStore.get_vitals, normalized_user)
-                if normalized_user
-                else None
-            )
-            _docs_f = (
-                _pre_exec.submit(UserStore.get_document_summaries, normalized_user)
-                if normalized_user
-                else None
-            )
+        else:
+            # Parallelize all UserStore reads + context restoration concurrently.
+            # restore_user_context populates the in-memory embedding store;
+            # the orchestrator's semantic search step happens after PubMed retrieval
+            # (~2-3 s later), so restoration is always complete in time.
+            with ThreadPoolExecutor(max_workers=9) as _pre_exec:
+                _restore_f = _pre_exec.submit(self.restore_user_context, normalized_user)
+                _memory_f = (
+                    _pre_exec.submit(self.get_combined_longitudinal_memory, normalized_user)
+                    if normalized_user
+                    else None
+                )
+                _profile_f = (
+                    _pre_exec.submit(UserStore.get_user_profile, normalized_user)
+                    if normalized_user
+                    else None
+                )
+                _med_f = (
+                    _pre_exec.submit(UserStore.get_medications, normalized_user)
+                    if normalized_user
+                    else None
+                )
+                _symptom_f = (
+                    _pre_exec.submit(UserStore.get_symptom_logs, normalized_user, None)
+                    if normalized_user
+                    else None
+                )
+                _triage_f = (
+                    _pre_exec.submit(UserStore.get_triage_summaries, normalized_user, None)
+                    if normalized_user
+                    else None
+                )
+                _allergy_f = (
+                    _pre_exec.submit(UserStore.get_allergies, normalized_user)
+                    if normalized_user
+                    else None
+                )
+                _condition_f = (
+                    _pre_exec.submit(UserStore.get_conditions, normalized_user)
+                    if normalized_user
+                    else None
+                )
+                _vitals_f = (
+                    _pre_exec.submit(UserStore.get_vitals, normalized_user)
+                    if normalized_user
+                    else None
+                )
+                _docs_f = (
+                    _pre_exec.submit(UserStore.get_document_summaries, normalized_user)
+                    if normalized_user
+                    else None
+                )
 
-            _restore_f.result()
-            longitudinal_memory_summary = _memory_f.result() if _memory_f else ""
-            user_profile = _profile_f.result() if _profile_f else {}
-            medications = _med_f.result() if _med_f else []
-            symptom_logs = _symptom_f.result() if _symptom_f else []
-            triage_summaries = _triage_f.result() if _triage_f else []
-            allergies = _allergy_f.result() if _allergy_f else []
-            conditions = _condition_f.result() if _condition_f else []
-            vitals = _vitals_f.result() if _vitals_f else []
-            document_summaries = _docs_f.result() if _docs_f else []
+                _restore_f.result()
+                longitudinal_memory_summary = _memory_f.result() if _memory_f else ""
+                user_profile = _profile_f.result() if _profile_f else {}
+                medications = _med_f.result() if _med_f else []
+                symptom_logs = _symptom_f.result() if _symptom_f else []
+                triage_summaries = _triage_f.result() if _triage_f else []
+                allergies = _allergy_f.result() if _allergy_f else []
+                conditions = _condition_f.result() if _condition_f else []
+                vitals = _vitals_f.result() if _vitals_f else []
+                document_summaries = _docs_f.result() if _docs_f else []
 
         # Build a fast relevance graph from prior records (< 50 ms, no LLM).
         from backend.context_graph import build_context_graph
@@ -1095,7 +1144,6 @@ class RAGEngine:
         question: str,
         raw_answer: str,
         bundle: Dict,
-        run_claim_check: bool = True,
     ) -> Dict:
         clinical_context: Optional[ClinicalContextDecision] = bundle.get(
             "clinical_context"
@@ -1111,6 +1159,43 @@ class RAGEngine:
             source.get("source_id", "") for source in bundle.get("combined_sources", [])
         ]
         raw_answer = remove_unknown_citations(raw_answer, source_ids)
+
+        # Claim-source alignment gate. Runs before any deterministic banners/
+        # disclaimers/safety-net are appended below, so a rewrite here can only
+        # ever touch the model's own text -- it never risks mangling the
+        # scaffolding that's added fresh afterward regardless of what happened
+        # here. Like the wrong-specialty context gate above, this must run
+        # before the answer is delivered, not after -- there is no streaming
+        # path where the client sees tokens before this function returns (see
+        # stream_user_question_events: the full answer is buffered and this
+        # function's result is what gets yielded, once).
+        combined_sources = bundle.get("combined_sources", [])
+        claim_alignment: List[Dict] = []
+        claim_rewrite_applied = False
+        if combined_sources:
+            try:
+                claim_alignment = self.llm.check_claim_source_alignment(
+                    answer_markdown=raw_answer,
+                    source_briefings=combined_sources,
+                )
+            except Exception as exc:
+                print(f"[Orchestrator] Claim-source alignment check failed: {exc}")
+                claim_alignment = []
+
+            unsupported_claims = [
+                c
+                for c in claim_alignment
+                if c.get("status") == "general_knowledge" and c.get("requires_evidence")
+            ]
+            if unsupported_claims:
+                rewritten = self.llm.rewrite_unsupported_claims(
+                    answer_markdown=raw_answer,
+                    unsupported_claims=unsupported_claims,
+                    source_briefings=combined_sources,
+                )
+                if rewritten and rewritten.strip() and rewritten != raw_answer:
+                    raw_answer = rewritten
+                    claim_rewrite_applied = True
 
         role_config = bundle.get("role_config")
         raw_answer = self._append_clinical_evidence_trail(
@@ -1193,17 +1278,6 @@ class RAGEngine:
         ):
             answer_markdown = answer_markdown + safety_net
 
-        # Claim-source alignment check (post-generation audit; skipped in streaming path)
-        claim_alignment = []
-        if run_claim_check and combined_sources:
-            try:
-                claim_alignment = self.llm.check_claim_source_alignment(
-                    answer_markdown=raw_answer,
-                    source_briefings=combined_sources,
-                )
-            except Exception:
-                claim_alignment = []
-
         trace_id = f"trace-{uuid4().hex[:12]}"
         from backend.evidence_ranker import EvidenceRanker
 
@@ -1251,6 +1325,7 @@ class RAGEngine:
             else [],
             "evidence_quality": evidence_quality_report,
             "claim_alignment": claim_alignment,
+            "claim_rewrite_applied": claim_rewrite_applied,
             "clinical_context": clinical_context.as_dict() if clinical_context else {},
             "clinical_context_validation": context_validation,
             "user_facing_validation": {

@@ -57,7 +57,7 @@ class ImageAnalysisAgent:
         self.llm = llm
         self.model = os.getenv(
             "OPENAI_VISION_MODEL",
-            os.getenv("OPENAI_MODEL", getattr(llm, "ANSWER_MODEL", "gpt-4o")),
+            os.getenv("OPENAI_MODEL", getattr(llm, "ANSWER_MODEL", "gpt-4o-mini")),
         )
 
     def inspect(

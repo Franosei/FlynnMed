@@ -48,22 +48,28 @@ import {
   emailNote,
   fetchAccessOverview,
   fetchClinicianPatient,
+  fetchMyPrevisitSummaries,
+  fetchPrevisitChatHistory,
   fetchSnapshot,
   generateCarePlan,
   generateGpPrep,
   generateNote,
+  generatePrevisitSummary,
   getConfig,
   getStoredToken,
   listCarePlans,
   login,
   rateResponse,
+  releasePrevisitSummary,
   requestPatientAccess,
   revokePatientAccess,
+  savePrevisitSummaryDraft,
   sendUrgentAlert,
   setStoredToken,
   signup,
   streamChat,
   streamImageAnalysis,
+  streamPrevisitChat,
   toggleCarePlanTask,
   transcribeAudio,
   decidePatientAccess,
@@ -71,7 +77,7 @@ import {
   updateSafetyReview,
   uploadDocuments
 } from "./api";
-import type { AccessOverview, AuthResponse, CarePlan, CarePlanTask, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, Dict, EscalationThreshold, FeedbackRating, LabReminder, MedReminder, Message, MissedCareItem, ProductConfig, SafetyReview, Snapshot, TrialSearchResult } from "./types";
+import type { AccessOverview, AuthResponse, CarePlan, CarePlanTask, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, Dict, EscalationThreshold, FeedbackRating, LabReminder, MedReminder, Message, MissedCareItem, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, SafetyReview, Snapshot, TrialSearchResult } from "./types";
 import type { ClarifyOption, UploadExtracted } from "./api";
 import {
   buildSeries,
@@ -1231,6 +1237,11 @@ function ClinicianPatientChart({
         <button className="ghost danger-button" onClick={onRevoke} disabled={busy}>Release access</button>
       </section>
 
+      <PrevisitWorkspace
+        patientId={summary.patient.patient_id}
+        initialSummaries={summary.previsit_summaries}
+      />
+
       <section className="chart-grid">
         <ClinicalDataList title="Active conditions" items={summary.conditions} primary="name" secondary="status" />
         <ClinicalDataList title="Current medications" items={summary.medications} primary="name" secondary="dose" />
@@ -1247,10 +1258,264 @@ function ClinicianPatientChart({
         {!summary.chat_history_authorized ? (
           <p className="muted">The patient did not grant access to conversation history.</p>
         ) : (
-          <ClinicalDataList title="" items={summary.chat_history} primary="role" secondary="content" />
+          <ClinicalDataList title="" items={summary.chat_history} primary="role" secondary="content" secondaryAsMarkdown />
         )}
       </section>
     </div>
+  );
+}
+
+/**
+ * One consolidated pre-visit workspace: the AI-suggested chart summary, an
+ * inline chat scoped to this same patient so the clinician never has to
+ * leave the page to ask a follow-up question, and the draft-edit/release
+ * controls -- the chat is a tool for building the note, not a separate
+ * destination. Local state here (not lifted to the parent) since every
+ * action mutates server state the parent's already-fetched summary prop
+ * doesn't reflect; re-fetching the whole chart after every keystroke/turn
+ * would be wasteful.
+ */
+function PrevisitWorkspace({
+  patientId,
+  initialSummaries
+}: {
+  patientId: string;
+  initialSummaries: PreVisitSummary[];
+}) {
+  const [summaries, setSummaries] = useState<PreVisitSummary[]>(initialSummaries);
+  const [draftText, setDraftText] = useState(() => summaries.find((s) => s.status === "draft")?.summary_text ?? "");
+  const [chatMessages, setChatMessages] = useState<PreVisitChatMessage[]>([]);
+  const [chatDraft, setChatDraft] = useState("");
+  const [chatStatus, setChatStatus] = useState("");
+  const [chatStreamText, setChatStreamText] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
+  const [summaryBusy, setSummaryBusy] = useState(false);
+  const [releaseBusy, setReleaseBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const chatListRef = useRef<HTMLDivElement>(null);
+
+  const latestDraft = summaries.find((s) => s.status === "draft") ?? null;
+  const releasedSummaries = summaries.filter((s) => s.status === "released");
+
+  useEffect(() => {
+    fetchPrevisitChatHistory(patientId)
+      .then((res) => setChatMessages(res.messages))
+      .catch(() => {
+        // No transcript yet, or a transient load failure -- the chat starts
+        // empty either way, nothing to surface to the clinician here.
+      });
+  }, [patientId]);
+
+  useEffect(() => {
+    chatListRef.current?.scrollTo({ top: chatListRef.current.scrollHeight, behavior: "smooth" });
+  }, [chatMessages, chatStreamText, chatStatus]);
+
+  async function handleGenerate() {
+    setSummaryBusy(true);
+    setNotice("");
+    try {
+      const result = await generatePrevisitSummary(patientId);
+      setSummaries((current) => [result, ...current]);
+      setDraftText(result.summary_text);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Could not generate the summary.");
+    } finally {
+      setSummaryBusy(false);
+    }
+  }
+
+  async function handleSaveDraft() {
+    setSummaryBusy(true);
+    setNotice("");
+    try {
+      const result = await savePrevisitSummaryDraft(patientId, draftText);
+      setSummaries((current) => [result, ...current]);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Could not save the draft.");
+    } finally {
+      setSummaryBusy(false);
+    }
+  }
+
+  async function handleRelease() {
+    if (!draftText.trim()) {
+      setNotice("Write or generate a summary before releasing it to the patient.");
+      return;
+    }
+    const confirmed = window.confirm(
+      "Release this summary to the patient's portal now? This cannot be undone -- the patient will see it immediately."
+    );
+    if (!confirmed) return;
+
+    setReleaseBusy(true);
+    setNotice("");
+    try {
+      const result = await releasePrevisitSummary(patientId, draftText);
+      setSummaries((current) => [result, ...current]);
+      setNotice("Summary released to the patient's portal.");
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Could not release the summary.");
+    } finally {
+      setReleaseBusy(false);
+    }
+  }
+
+  async function handleSendChat() {
+    const message = chatDraft.trim();
+    if (!message || chatBusy) return;
+    setChatDraft("");
+    setChatBusy(true);
+    setChatStatus("Reviewing this patient's record...");
+    setChatStreamText("");
+    try {
+      await streamPrevisitChat(patientId, message, (event: PrevisitChatStreamEvent) => {
+        if (event.type === "user_message") {
+          setChatMessages((current) => [
+            ...current,
+            {
+              id: `local-${Date.now()}`,
+              role: "clinician",
+              content: event.message.content,
+              authored_by_display_name: "You",
+              authored_by_clinical_role: "",
+              created_at: event.message.timestamp
+            }
+          ]);
+        }
+        if (event.type === "status") setChatStatus(event.message);
+        if (event.type === "token") setChatStreamText((current) => current + event.delta);
+        if (event.type === "assistant_message") {
+          setChatMessages((current) => [
+            ...current,
+            {
+              id: `local-${Date.now()}-a`,
+              role: "assistant",
+              content: event.message.content,
+              authored_by_display_name: "FlynnMed",
+              authored_by_clinical_role: "",
+              sources: event.message.sources,
+              created_at: new Date().toISOString()
+            }
+          ]);
+          setChatStreamText("");
+          setChatStatus("");
+        }
+        if (event.type === "error") {
+          setNotice(event.message);
+          setChatStreamText("");
+          setChatStatus("");
+        }
+      });
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Message failed.");
+    } finally {
+      setChatBusy(false);
+      setChatStatus("");
+    }
+  }
+
+  return (
+    <section className="surface-card previsit-workspace">
+      <h3>Pre-visit summary</h3>
+      {notice && <p className="notice warn">{notice}</p>}
+
+      {!latestDraft && !draftText ? (
+        <div className="previsit-empty">
+          <p className="muted">No summary drafted yet for this patient.</p>
+          <button className="primary" onClick={handleGenerate} disabled={summaryBusy}>
+            <Sparkles size={16} /> {summaryBusy ? "Generating..." : "Generate summary"}
+          </button>
+        </div>
+      ) : (
+        <>
+          <textarea
+            className="previsit-draft"
+            rows={10}
+            value={draftText}
+            onChange={(event) => setDraftText(event.target.value)}
+            placeholder="The AI-suggested summary will appear here -- edit freely before releasing."
+          />
+          <div className="previsit-actions">
+            <button className="ghost" onClick={handleGenerate} disabled={summaryBusy}>
+              <RefreshCw size={16} /> {summaryBusy ? "Working..." : "Regenerate suggested summary"}
+            </button>
+            <button className="ghost" onClick={handleSaveDraft} disabled={summaryBusy || !draftText.trim()}>
+              Save draft
+            </button>
+            <button className="primary" onClick={handleRelease} disabled={releaseBusy || !draftText.trim()}>
+              <ShieldCheck size={16} /> {releaseBusy ? "Releasing..." : "Release to patient"}
+            </button>
+          </div>
+        </>
+      )}
+
+      <div className="previsit-chat">
+        <p className="col-label">Ask about this patient</p>
+        <div className="previsit-chat-list" ref={chatListRef}>
+          {!chatMessages.length && !chatStreamText && (
+            <p className="muted">
+              Ask a follow-up question about this patient's record -- e.g. "what were the last three BP readings?"
+            </p>
+          )}
+          {chatMessages.map((message) => (
+            <div key={message.id} className={`previsit-turn previsit-turn-${message.role}`}>
+              <span className="turn-label">{message.role === "clinician" ? "You" : "FlynnMed"}</span>
+              <div className="markdown">
+                <ReactMarkdown>{message.content}</ReactMarkdown>
+              </div>
+            </div>
+          ))}
+          {chatStreamText && (
+            <div className="previsit-turn previsit-turn-assistant">
+              <span className="turn-label">FlynnMed</span>
+              <div className="markdown">
+                <ReactMarkdown>{chatStreamText}</ReactMarkdown>
+              </div>
+            </div>
+          )}
+          {chatStatus && <p className="muted previsit-status">{chatStatus}</p>}
+        </div>
+        <div className="previsit-chat-input">
+          <input
+            value={chatDraft}
+            onChange={(event) => setChatDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                handleSendChat();
+              }
+            }}
+            placeholder="Ask a question about this patient..."
+            disabled={chatBusy}
+          />
+          <button className="primary" onClick={handleSendChat} disabled={chatBusy || !chatDraft.trim()}>
+            <Send size={16} />
+          </button>
+        </div>
+      </div>
+
+      {!!releasedSummaries.length && (
+        <div className="previsit-history">
+          <button className="link-btn" onClick={() => setHistoryOpen((open) => !open)}>
+            {historyOpen ? "Hide" : "Show"} {releasedSummaries.length} past released summary
+            {releasedSummaries.length === 1 ? "" : "ies"}
+          </button>
+          {historyOpen &&
+            releasedSummaries.map((item) => (
+              <article key={item.id} className="previsit-history-item">
+                <p className="muted">
+                  Released {formatTimestamp(item.released_at)} by {item.authored_by_display_name}
+                  {item.authored_by_clinical_role ? ` (${item.authored_by_clinical_role})` : ""}
+                </p>
+                <div className="markdown">
+                  <ReactMarkdown>{item.summary_text}</ReactMarkdown>
+                </div>
+              </article>
+            ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1259,13 +1524,15 @@ function ClinicalDataList({
   items,
   primary,
   secondary,
-  suffix
+  suffix,
+  secondaryAsMarkdown
 }: {
   title: string;
   items: Dict<any>[];
   primary: string;
   secondary: string;
   suffix?: string;
+  secondaryAsMarkdown?: boolean;
 }) {
   return (
     <section className="surface-card chart-section">
@@ -1275,10 +1542,16 @@ function ClinicalDataList({
         {items.map((item, index) => (
           <div key={String(item.id ?? index)}>
             <strong>{clean(item[primary], "Recorded item")}</strong>
-            <span>
-              {clean(item[secondary])}
-              {suffix && item[suffix] ? ` ${item[suffix]}` : ""}
-            </span>
+            {secondaryAsMarkdown ? (
+              <div className="markdown">
+                <ReactMarkdown>{clean(item[secondary])}</ReactMarkdown>
+              </div>
+            ) : (
+              <span>
+                {clean(item[secondary])}
+                {suffix && item[suffix] ? ` ${item[suffix]}` : ""}
+              </span>
+            )}
           </div>
         ))}
       </div>
@@ -1584,6 +1857,7 @@ function ChatView({
             setNotice={setNotice}
             role={role}
           />
+          {patientView && <PrevisitSummariesPanel />}
           <UploadPanel snapshot={snapshot} setSnapshot={setSnapshot} setNotice={setNotice} />
           <ExportPanel snapshot={snapshot} setNotice={setNotice} />
           <RecordPanel snapshot={snapshot} setSnapshot={setSnapshot} compact={false} />
@@ -2277,6 +2551,66 @@ function PatientNoteView({ note }: { note: ClinicalNote }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function PrevisitSummariesPanel() {
+  const [summaries, setSummaries] = useState<PreVisitSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchMyPrevisitSummaries()
+      .then((res) => {
+        if (!cancelled) setSummaries(res.summaries);
+      })
+      .catch(() => {
+        // Nothing released yet, or a transient load failure -- an empty
+        // panel is the right fallback either way.
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (loading || !summaries.length) return null;
+
+  return (
+    <section className="tool-panel notes-panel">
+      <div className="panel-head">
+        <Stethoscope size={19} />
+        <strong>Notes from your care team</strong>
+      </div>
+      <div className="notes-list">
+        {summaries.map((item) => {
+          const isExpanded = expandedId === item.id;
+          return (
+            <article key={item.id} className="note-card">
+              <div className="note-card-head" onClick={() => setExpandedId(isExpanded ? null : item.id)}>
+                <div>
+                  <time>{formatDate(item.released_at)}</time>
+                </div>
+                <p className="note-question">
+                  {item.authored_by_display_name}
+                  {item.authored_by_clinical_role ? ` (${item.authored_by_clinical_role})` : ""}
+                </p>
+              </div>
+              {isExpanded && (
+                <div className="note-body">
+                  <div className="soap-content markdown">
+                    <ReactMarkdown>{item.summary_text}</ReactMarkdown>
+                  </div>
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

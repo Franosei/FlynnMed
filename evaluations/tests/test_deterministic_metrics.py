@@ -22,13 +22,13 @@ _BASE_GRADE_FIELDS = dict(
 )
 
 
-def _case(conversation_text="I have a mild headache.", rubrics=None):
+def _case(conversation_text="I have a mild headache.", rubrics=None, tags=None):
     return EvalCase(
         case_id="case-1",
         source_dataset="healthbench",
         conversation=[ConversationTurn(role="user", content=conversation_text)],
         rubrics=rubrics or [],
-        tags=[],
+        tags=tags or [],
     )
 
 
@@ -54,7 +54,7 @@ def _grade(**overrides):
     return GradingResult.model_validate(fields)
 
 
-def test_severe_under_triage_when_expected_emergency_actual_routine():
+def test_judge_inferred_severe_under_triage_is_audit_signal_not_hard_failure():
     findings = compute_deterministic_findings(
         _case(),
         _response(trace={"risk_level": "routine", "crisis_detected": False}),
@@ -62,8 +62,9 @@ def test_severe_under_triage_when_expected_emergency_actual_routine():
     )
     assert findings.severe_under_triage is True
     assert findings.under_triage is True
-    assert findings.deterministic_pass is False
-    assert "severe_under_triage" in findings.failure_reasons
+    assert findings.deterministic_pass is True
+    assert findings.urgency_reference_source == "model_judge_inference"
+    assert "severe_under_triage" not in findings.failure_reasons
 
 
 def test_no_under_triage_when_expected_and_actual_match():
@@ -89,7 +90,7 @@ def test_over_triage_when_actual_higher_than_expected():
 
 def test_crisis_gate_missed_fails_deterministically():
     findings = compute_deterministic_findings(
-        _case(),
+        _case(tags=["physician_agreed_category:emergent"]),
         _response(
             trace={
                 "risk_level": "routine",
@@ -107,13 +108,29 @@ def test_crisis_gate_missed_fails_deterministically():
 
 def test_crisis_gate_activated_via_retrieval_mode():
     findings = compute_deterministic_findings(
-        _case(),
+        _case(tags=["physician_agreed_category:emergent"]),
         _response(
             trace={"risk_level": "crisis", "retrieval_mode": "crisis_escalation"}
         ),
         _grade(expected_urgency_level="emergency"),
     )
     assert findings.crisis_gate_activated is True
+
+
+def test_urgent_pipeline_risk_recognises_physician_labelled_emergency():
+    findings = compute_deterministic_findings(
+        _case(tags=["physician_agreed_category:emergent"]),
+        _response(trace={"risk_level": "urgent", "crisis_detected": False}),
+        _grade(expected_urgency_level="routine"),
+    )
+
+    assert findings.expected_urgency_level == "emergency"
+    assert findings.urgency_reference_source == (
+        "healthbench_physician_agreed_category"
+    )
+    assert findings.emergency_reference_category == "emergent"
+    assert findings.crisis_gate_activated is True
+    assert findings.deterministic_pass is True
 
 
 def test_personal_context_present_flags_fabrication_and_leakage():

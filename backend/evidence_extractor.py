@@ -105,17 +105,32 @@ def _extract_one_article(
         "- Only include facts explicitly in the article text -- never infer\n"
         "- patient_aligned_facts must reference actual values from the patient profile\n"
         "- If article does not match patient's conditions/meds, set patient_aligned_facts: []\n"
-        "- SPECIALTY/MEANING MISMATCH: set specialty_mismatch to true if this article discusses a "
-        "different clinical meaning of an ambiguous term than what the patient's own profile "
-        "confirms (e.g. respiratory peak-flow guidance when the patient profile confirms a "
-        "urology peak urinary flow rate reading, or any other term whose meaning differs by body "
-        "system/specialty). This is a hard exclusion signal, independent of confidence scoring -- "
-        "set it true whenever the mismatch is real, even if the article otherwise reads as "
-        "well-written or superficially on-topic. When true, also set answers_question to false, "
+        "- SPECIALTY/MEANING MISMATCH: set specialty_mismatch to true ONLY if the PATIENT PROFILE "
+        "above affirmatively confirms one specific clinical meaning of an ambiguous term (e.g. it "
+        "states a urology peak urinary flow rate reading) AND this article discusses a different "
+        "clinical meaning of that same ambiguous term (e.g. respiratory peak-flow guidance). This "
+        "requires an actual stated conflict between two concrete facts -- never infer or guess a "
+        "mismatch. If PATIENT PROFILE is 'Patient profile not recorded' or otherwise gives no "
+        "concrete condition/measurement to conflict with, there is nothing for the article to "
+        "mismatch against: specialty_mismatch MUST be false in that case, regardless of how "
+        "unrelated the article may seem to the question -- use alignment_confidence and "
+        "answers_question for topical relevance instead, never specialty_mismatch. This is a hard "
+        "exclusion signal, independent of confidence scoring -- set it true whenever the mismatch "
+        "is real and concretely stated, even if the article otherwise reads as well-written or "
+        "superficially on-topic. When true, also set answers_question to false, "
         "patient_aligned_facts to [], alignment_confidence to 0.0, and patient_relevant_summary "
         "to state plainly that this source concerns a different measurement/condition and does "
         "not apply to this patient's confirmed reading.\n"
         "- alignment_confidence: 1.0 = directly addresses patient's conditions; 0.0 = irrelevant\n"
+        "- NO PATIENT PROFILE: if PATIENT PROFILE above is 'Patient profile not recorded', this is "
+        "a general/professional evidence question with no specific patient in view (e.g. a "
+        "clinician asking about guidelines in the abstract) -- there is no patient to align facts "
+        "to. In that case patient_aligned_facts must be [], but answers_question and "
+        "alignment_confidence must still be scored on topical relevance to PATIENT QUESTION alone: "
+        "set answers_question true and alignment_confidence high (0.7+) whenever the article "
+        "directly covers the same clinical topic the question asks about (same condition, "
+        "procedure, or guideline area), even though there are no patient-specific facts to match. "
+        "Do not lower these scores merely because there is no patient profile to align to.\n"
         "- Return ONLY the JSON object"
     )
 
@@ -187,6 +202,7 @@ def build_evidence_dossier(
     Runs extraction for up to 6 sources in parallel (ThreadPoolExecutor).
     """
     patient_summary = _build_patient_summary(user_profile, patient_history_ctx)
+    has_patient_profile = patient_summary != "Patient profile not recorded"
     med_names = [m.get("name", "") for m in (medications or []) if m.get("name")]
     cond_names = [c.get("name", "") for c in (conditions or []) if c.get("name")]
 
@@ -208,6 +224,25 @@ def build_evidence_dossier(
                 except Exception as exc:
                     print(f"[EvidenceExtractor] Worker failed: {exc}")
 
+    # specialty_mismatch means "conflicts with a concrete fact in the patient's own profile" --
+    # with no profile on record there's nothing to conflict with, so a true flag here can only be
+    # an aux-model misfire (belt-and-suspenders alongside the prompt instruction, which the model
+    # doesn't always follow). The same extraction call is also instructed to zero out
+    # answers_question/alignment_confidence as a side effect whenever it sets specialty_mismatch,
+    # so undoing the flag alone isn't enough -- those forced-low values would still trip the
+    # separate low-confidence exclusion below. Reset the whole cascade: treat the source as
+    # topically relevant (it was retrieved by a query derived from this exact question) with
+    # neutral, unverified patient-alignment confidence.
+    if not has_patient_profile:
+        for a in articles:
+            if a.specialty_mismatch:
+                a.specialty_mismatch = False
+                a.specialty_mismatch_reason = ""
+                a.answers_question = True
+                a.alignment_confidence = 0.5
+                if not a.patient_relevant_summary:
+                    a.patient_relevant_summary = "General topical context for this question."
+
     # Sort: highest alignment confidence first
     articles.sort(key=lambda a: a.alignment_confidence, reverse=True)
 
@@ -218,9 +253,16 @@ def build_evidence_dossier(
     # extractor and is checked independently of alignment_confidence -- a mismatched source must
     # never survive just because it scored a middling confidence.
     MISMATCH_THRESHOLD = 0.1
+    # specialty_mismatch means "conflicts with a concrete fact in the patient's own
+    # profile" -- with no profile on record there is nothing for an article to
+    # conflict with, so the flag is meaningless here and must never be honored,
+    # regardless of what the extractor returned (belt-and-suspenders alongside the
+    # prompt instruction: an aux-model misfire on this signal silently zeroes out
+    # every source, which then also disables the downstream claim-alignment gate).
     mismatched = [
         a for a in articles
-        if a.specialty_mismatch or (a.alignment_confidence < MISMATCH_THRESHOLD and not a.answers_question)
+        if (a.specialty_mismatch and has_patient_profile)
+        or (a.alignment_confidence < MISMATCH_THRESHOLD and not a.answers_question)
     ]
     excluded_source_ids: List[str] = []
     if mismatched:

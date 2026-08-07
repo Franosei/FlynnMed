@@ -16,6 +16,7 @@ import random
 import sys
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Set
@@ -23,6 +24,7 @@ from typing import List, Optional, Set
 from evaluations.config import (
     DATASET_URLS,
     DOWNLOADED_DIR,
+    HEALTHBENCH_GRADING_PROMPT_VERSION,
     NORMALIZED_DIR,
     RAG_METRICS_PROMPT_VERSION,
     EvalConfig,
@@ -77,7 +79,40 @@ def _prepare_cases(dataset_name: str, force_download: bool) -> List[EvalCase]:
     return load_cases(norm_path)
 
 
-def _load_completed_case_ids(raw_path: Path) -> Set[str]:
+def _load_case_manifest(path: Path) -> List[str]:
+    """Load ordered case IDs from a report JSON or a plain JSON list."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    entries = payload.get("cases") if isinstance(payload, dict) else payload
+    if not isinstance(entries, list):
+        raise ValueError(
+            "Case manifest must contain a JSON list or a report 'cases' list."
+        )
+    case_ids = [
+        str(entry.get("case_id") if isinstance(entry, dict) else entry).strip()
+        for entry in entries
+    ]
+    if not case_ids or any(not case_id or case_id == "None" for case_id in case_ids):
+        raise ValueError("Case manifest contains an empty case ID.")
+    if len(case_ids) != len(set(case_ids)):
+        raise ValueError("Case manifest contains duplicate case IDs.")
+    return case_ids
+
+
+def _select_manifest_cases(
+    cases: List[EvalCase], manifest_path: Path
+) -> List[EvalCase]:
+    case_ids = _load_case_manifest(manifest_path)
+    by_id = {case.case_id: case for case in cases}
+    missing = [case_id for case_id in case_ids if case_id not in by_id]
+    if missing:
+        raise ValueError(
+            f"Case manifest contains {len(missing)} IDs absent from this dataset: "
+            + ", ".join(missing[:5])
+        )
+    return [by_id[case_id] for case_id in case_ids]
+
+
+def _load_completed_case_ids(raw_path: Path, generate_only: bool = False) -> Set[str]:
     if not raw_path.exists():
         return set()
     completed = set()
@@ -88,12 +123,20 @@ def _load_completed_case_ids(raw_path: Path) -> Set[str]:
                 continue
             try:
                 payload = json.loads(line)
-                if (
-                    payload.get("rag_metrics")
-                    and payload.get("adjudication")
-                    and payload.get("deterministic")
-                    and payload.get("weighted_score") is not None
-                ):
+                # A generate-only run never populates the grading fields --
+                # "completed" here just means the case has a real generated
+                # answer on record, not that it was graded.
+                done = (
+                    bool(payload.get("pipeline_response"))
+                    if generate_only
+                    else (
+                        payload.get("rag_metrics")
+                        and payload.get("adjudication")
+                        and payload.get("deterministic")
+                        and payload.get("weighted_score") is not None
+                    )
+                )
+                if done:
                     completed.add(payload["case"]["case_id"])
             except Exception:
                 continue
@@ -104,13 +147,15 @@ def dry_run(cases: List[EvalCase], config: EvalConfig) -> None:
     """Validates data and prompts without calling any model. Also reports the
     role each case would be routed as (see resolve_case_user/role_detection.py)
     without actually creating any eval account -- purely informational."""
-    from evaluations.role_detection import detect_stated_role
+    from evaluations.role_detection import resolve_case_role
 
     errors = 0
     role_counts: dict = {}
+    reason_counts: dict = {}
     for case in cases:
-        role = detect_stated_role(case)
-        role_counts[role] = role_counts.get(role, 0) + 1
+        resolution = resolve_case_role(case)
+        role_counts[resolution.role] = role_counts.get(resolution.role, 0) + 1
+        reason_counts[resolution.reason] = reason_counts.get(resolution.reason, 0) + 1
         try:
             case.last_user_turn()
         except Exception as exc:
@@ -122,6 +167,7 @@ def dry_run(cases: List[EvalCase], config: EvalConfig) -> None:
 
     print(f"[dry-run] {len(cases)} cases loaded, {errors} failed validation.")
     print(f"[dry-run] detected roles: {role_counts}")
+    print(f"[dry-run] role reasons: {reason_counts}")
     print(
         f"[dry-run] generator_model={config.generator_model} "
         f"primary_grader_model={config.primary_grader_model} "
@@ -131,25 +177,28 @@ def dry_run(cases: List[EvalCase], config: EvalConfig) -> None:
     print("[dry-run] no models were called.")
 
 
-def resolve_case_user(case: EvalCase) -> tuple[str, Optional[str]]:
-    """Detects a self-stated clinical role in the case's own conversation and
-    resolves the eval account to run it as (None for patient -- FlynnMed's
-    own default for an anonymous/empty profile, so nothing changes for the
-    common case). Returns (role, user). See evaluations/role_detection.py and
-    evaluations/pipeline.py's module docstring for why this exists."""
+def resolve_case_user(case: EvalCase):
+    """Resolve an audited case role and its isolated evaluation account."""
     from evaluations.pipeline import ensure_eval_account
-    from evaluations.role_detection import detect_stated_role
+    from evaluations.role_detection import resolve_case_role
 
-    role = detect_stated_role(case)
-    return role, ensure_eval_account(role, case.case_id)
+    resolution = resolve_case_role(case)
+    return resolution, ensure_eval_account(resolution.role, case.case_id)
 
 
 def run_case_pipeline(case: EvalCase, rag_engine, config: EvalConfig):
     from evaluations.pipeline import run_case
 
-    role, user = resolve_case_user(case)
+    resolution, user = resolve_case_user(case)
     return call_with_retry(
-        lambda: run_case(rag_engine, case, user=user, role=role),
+        lambda: run_case(
+            rag_engine,
+            case,
+            user=user,
+            role=resolution.role,
+            role_reason=resolution.reason,
+            role_confidence=resolution.confidence,
+        ),
         max_retries=config.max_retries,
     )
 
@@ -258,32 +307,57 @@ def evaluate_case(case: EvalCase, rag_engine, config: EvalConfig) -> CaseResult:
     return _attach_rag_metrics(result, config)
 
 
+def generate_case_only(case: EvalCase, rag_engine, config: EvalConfig) -> CaseResult:
+    """
+    Generation-only path: produces the real pipeline_response -- answer,
+    retrieved sources with their evidence-ranking scores/tiers, full trace,
+    role resolution -- with NO LLM grading of any kind (no rubric scoring,
+    no adjudication, no RAG-metrics judge). Used when grading will happen on
+    a separate platform. The grading fields on CaseResult stay None, which
+    is a shape evaluations/models.py's CaseResult already supports (see its
+    "historical raw JSONL readable" comment) rather than a new one.
+    """
+    pipeline_response = run_case_pipeline(case, rag_engine, config)
+    pipeline_response = _add_consistency_repeats(
+        case, pipeline_response, rag_engine, config
+    )
+    return CaseResult(case=case, pipeline_response=pipeline_response)
+
+
 def run_dataset(
     dataset_name: str, args: argparse.Namespace, config: EvalConfig
 ) -> None:
+    if getattr(args, "regrade_healthbench", False):
+        _regrade_saved_healthbench(dataset_name, args, config)
+        return
     if getattr(args, "regrade_rag", False):
         _regrade_saved_rag_metrics(dataset_name, args, config)
         return
     cases = _prepare_cases(dataset_name, force_download=args.force_download)
 
+    case_manifest = getattr(args, "case_manifest", None)
     random_seed = getattr(args, "random_seed", None)
-    if random_seed is not None:
+    if case_manifest:
+        cases = _select_manifest_cases(cases, Path(case_manifest))
+        print(f"[{dataset_name}] selected {len(cases)} cases from {case_manifest}.")
+    elif random_seed is not None:
         random.Random(random_seed).shuffle(cases)
         print(f"[{dataset_name}] randomized case order with seed {random_seed}.")
 
-    if config.sample_limit is not None:
+    if config.sample_limit is not None and not case_manifest:
         cases = cases[: config.sample_limit]
 
     if args.dry_run:
         dry_run(cases, config)
         return
 
+    generate_only = getattr(args, "generate_only", False)
     run_id = args.run_id or f"{dataset_name}_{_utc_timestamp()}"
     raw_path = Path(config.output_path) / "raw" / run_id / "cases.jsonl"
 
     completed_ids: Set[str] = set()
     if args.resume:
-        completed_ids = _load_completed_case_ids(raw_path)
+        completed_ids = _load_completed_case_ids(raw_path, generate_only=generate_only)
         if completed_ids:
             print(
                 f"[resume] {len(completed_ids)} cases already completed for run '{run_id}', skipping them."
@@ -296,8 +370,11 @@ def run_dataset(
         )
         return
 
-    from evaluations.pipeline import build_rag_engine
+    from evaluations.pipeline import build_rag_engine, configure_evaluation_storage
 
+    storage_root = raw_path.parent / "runtime"
+    configure_evaluation_storage(storage_root)
+    print(f"[{dataset_name}] isolated evaluation accounts under {storage_root}")
     rag_engine = build_rag_engine(config)
     raw_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -308,18 +385,36 @@ def run_dataset(
                 line = line.strip()
                 if line:
                     result = CaseResult.model_validate_json(line)
-                    if (
-                        result.rag_metrics
-                        and result.adjudication
-                        and result.deterministic
-                        and result.weighted_score is not None
-                    ):
+                    done = (
+                        bool(result.pipeline_response)
+                        if generate_only
+                        else (
+                            result.rag_metrics
+                            and result.adjudication
+                            and result.deterministic
+                            and result.weighted_score is not None
+                        )
+                    )
+                    if done:
                         results.append(result)
 
     with open(raw_path, "a", encoding="utf-8") as append_fh:
         _run_synchronous(
-            dataset_name, remaining, rag_engine, config, results, append_fh
+            dataset_name, remaining, rag_engine, config, results, append_fh,
+            generate_only=generate_only,
         )
+
+    if generate_only:
+        print(
+            f"[{dataset_name}] generation-only run complete -- "
+            f"{len(results)} case(s) with real answers/sources/ranking metadata, no grading applied."
+        )
+        print(f"[{dataset_name}] wrote raw results to {raw_path}")
+        print(
+            f"[{dataset_name}] no report was generated -- rag_metrics/adjudication/weighted_score "
+            "are intentionally None; grading happens on a separate platform."
+        )
+        return
 
     _, summary_json_path, summary_md_path = write_report(
         results,
@@ -397,6 +492,122 @@ def _regrade_saved_rag_metrics(
     print(f"[{dataset_name}] wrote report to {summary_json_path} and {summary_md_path}")
 
 
+def _safe_model_slug(model: str) -> str:
+    return "".join(character if character.isalnum() else "_" for character in model)
+
+
+def _regrade_saved_healthbench(
+    dataset_name: str, args: argparse.Namespace, config: EvalConfig
+) -> None:
+    """Re-grade saved answers without calling FlynnMed's generation pipeline."""
+    if not args.run_id:
+        raise ValueError("--regrade-healthbench requires --run-id")
+    raw_path = Path(config.output_path) / "raw" / args.run_id / "cases.jsonl"
+    if not raw_path.exists():
+        raise FileNotFoundError(f"Saved run not found: {raw_path}")
+
+    saved: List[CaseResult] = []
+    with open(raw_path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            if line.strip():
+                saved.append(CaseResult.model_validate_json(line))
+    case_ids = [result.case.case_id for result in saved]
+    if len(case_ids) != len(set(case_ids)):
+        raise ValueError("Saved run contains duplicate case ids; refusing to re-grade.")
+
+    model_slug = _safe_model_slug(config.primary_grader_model)
+    regrade_id = (
+        f"{args.run_id}_{HEALTHBENCH_GRADING_PROMPT_VERSION}_{model_slug}"
+    )
+    checkpoint_path = raw_path.parent / f"{regrade_id}_checkpoint.jsonl"
+    completed: dict[str, CaseResult] = {}
+    if checkpoint_path.exists():
+        with open(checkpoint_path, "r", encoding="utf-8") as fh:
+            for line_number, line in enumerate(fh, start=1):
+                if line.strip():
+                    try:
+                        result = CaseResult.model_validate_json(line)
+                    except Exception:
+                        print(
+                            f"[{dataset_name}] ignoring interrupted checkpoint "
+                            f"record at line {line_number}",
+                            file=sys.stderr,
+                        )
+                        continue
+                    if (
+                        result.adjudication.luna_grade.grader_model
+                        != config.primary_grader_model
+                    ):
+                        continue
+                    completed[result.case.case_id] = result
+        if completed:
+            print(
+                f"[{dataset_name}] loaded {len(completed)} completed HealthBench "
+                f"re-grades from {checkpoint_path.name}"
+            )
+
+    regraded_by_id = dict(completed)
+    pending = [
+        (index, result)
+        for index, result in enumerate(saved, start=1)
+        if result.case.case_id not in completed
+    ]
+
+    def regrade_one(saved_result: CaseResult) -> CaseResult:
+        grade = call_with_retry(
+            lambda: grade_with_primary(
+                saved_result.case, saved_result.pipeline_response, config
+            ),
+            max_retries=config.max_retries,
+        )
+        regraded_result = finalize_healthbench_result(
+            saved_result.case, saved_result.pipeline_response, grade, config
+        )
+        regraded_result.rag_metrics = saved_result.rag_metrics
+        return regraded_result
+
+    print(
+        f"[{dataset_name}] re-grading {len(pending)} saved answers with "
+        f"{config.regrade_workers} worker(s)"
+    )
+    # Rewrite only validated, current-model records before resuming. This
+    # removes a partial final line left by process termination and discards
+    # fallback-model grades from a model-specific checkpoint.
+    with open(checkpoint_path, "w", encoding="utf-8") as checkpoint_fh:
+        for result in completed.values():
+            checkpoint_fh.write(result.model_dump_json() + "\n")
+        checkpoint_fh.flush()
+        with ThreadPoolExecutor(max_workers=config.regrade_workers) as executor:
+            futures = {
+                executor.submit(regrade_one, saved_result): (index, saved_result)
+                for index, saved_result in pending
+            }
+            completed_this_run = 0
+            for future in as_completed(futures):
+                index, saved_result = futures[future]
+                regraded = future.result()
+                case_id = saved_result.case.case_id
+                regraded_by_id[case_id] = regraded
+                checkpoint_fh.write(regraded.model_dump_json() + "\n")
+                checkpoint_fh.flush()
+                completed_this_run += 1
+                print(
+                    f"[{dataset_name}] HealthBench re-grade "
+                    f"{len(completed) + completed_this_run}/{len(saved)} "
+                    f"(source position {index}) {case_id}"
+                )
+
+    regraded = [regraded_by_id[result.case.case_id] for result in saved]
+    _, summary_json_path, summary_md_path = write_report(
+        regraded,
+        config,
+        dataset_version=dataset_name,
+        run_id=regrade_id,
+    )
+    print(f"[{dataset_name}] preserved generation and re-graded {len(regraded)} cases")
+    print(f"[{dataset_name}] wrote report to {summary_json_path} and {summary_md_path}")
+
+
 def _run_synchronous(
     dataset_name: str,
     remaining: List[EvalCase],
@@ -404,11 +615,16 @@ def _run_synchronous(
     config: EvalConfig,
     results: List[CaseResult],
     append_fh,
+    generate_only: bool = False,
 ) -> None:
     for index, case in enumerate(remaining, start=1):
         print(f"[{dataset_name}] ({index}/{len(remaining)}) {case.case_id}")
         try:
-            case_result = evaluate_case(case, rag_engine, config)
+            case_result = (
+                generate_case_only(case, rag_engine, config)
+                if generate_only
+                else evaluate_case(case, rag_engine, config)
+            )
         except Exception as exc:
             print(
                 f"[{dataset_name}] case {case.case_id} FAILED: {exc}", file=sys.stderr
@@ -445,6 +661,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="Shuffle cases reproducibly before applying --sample.",
     )
     parser.add_argument(
+        "--case-manifest",
+        type=Path,
+        default=None,
+        help="Use the exact ordered case IDs from a prior summary JSON or JSON list.",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="Resume a previous run, skipping already-completed cases.",
@@ -460,6 +682,14 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="Re-grade only RAG metrics for a saved --run-id without regenerating answers.",
     )
     parser.add_argument(
+        "--regrade-healthbench",
+        action="store_true",
+        help=(
+            "Re-grade saved answers against HealthBench rubrics for a --run-id "
+            "without regenerating answers."
+        ),
+    )
+    parser.add_argument(
         "--force-download",
         action="store_true",
         help="Re-download the dataset even if a local copy exists.",
@@ -470,7 +700,26 @@ def main(argv: Optional[List[str]] = None) -> None:
         default=None,
         help="Additional identical production calls per case for periodic consistency scoring.",
     )
+    parser.add_argument(
+        "--generate-only",
+        action="store_true",
+        help=(
+            "Produce real generated answers, sources, evidence-ranking metadata, and traces "
+            "with NO LLM grading (no rubric scoring, no adjudication, no RAG-metrics judge). "
+            "rag_metrics/adjudication/deterministic/weighted_score stay None on every case. "
+            "Use when grading will happen on a separate platform."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    if args.case_manifest and (args.sample is not None or args.random_seed is not None):
+        parser.error(
+            "--case-manifest cannot be combined with --sample or --random-seed"
+        )
+    if args.generate_only and (args.regrade_rag or args.regrade_healthbench):
+        parser.error("--generate-only cannot be combined with --regrade-rag or --regrade-healthbench")
+    if args.regrade_rag and args.regrade_healthbench:
+        parser.error("--regrade-rag and --regrade-healthbench are mutually exclusive")
 
     config = load_config()
     if args.sample is not None:
@@ -478,15 +727,29 @@ def main(argv: Optional[List[str]] = None) -> None:
     if args.consistency_repeats is not None:
         config.consistency_repeats = max(0, args.consistency_repeats)
 
-    warn_if_adjudication_disabled(config)
+    if not args.generate_only:
+        warn_if_adjudication_disabled(config)
 
     if not args.dry_run:
         from evaluations.grading import EvaluatorAccessError, validate_evaluator_access
 
+        # A generate-only run calls no grading model at all -- check access
+        # to the generator model instead of primary/adjudicator/rag_metrics,
+        # which is what the default (models_to_check=None) would check.
         print("[runner] checking access to configured evaluator models...")
         try:
-            validate_evaluator_access(config)
-        except EvaluatorAccessError as exc:
+            models_to_check = None
+            if args.generate_only:
+                models_to_check = [config.generator_model]
+            elif args.regrade_healthbench:
+                models_to_check = [
+                    config.primary_grader_model,
+                    config.adjudicator_model,
+                ]
+            elif args.regrade_rag:
+                models_to_check = [config.rag_metrics_model]
+            validate_evaluator_access(config, models_to_check=models_to_check)
+        except (EvaluatorAccessError, ValueError) as exc:
             print(f"[runner] evaluator access check FAILED: {exc}", file=sys.stderr)
             raise SystemExit(2) from None
         print("[runner] evaluator model access confirmed.")
