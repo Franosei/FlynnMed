@@ -65,7 +65,7 @@ def test_check_claim_source_alignment_flags_unsupported_specific_claim():
     )
 
 
-def test_rewrite_unsupported_claims_softens_flagged_claim():
+def test_apply_claim_corrections_attributes_unsupported_claim_as_general_knowledge():
     helper = LLMHelper()
     # Synthetic finding, as if check_claim_source_alignment had flagged it --
     # kept independent of that test so each test makes its own bounded set of
@@ -79,7 +79,7 @@ def test_rewrite_unsupported_claims_softens_flagged_claim():
         }
     ]
 
-    revised = helper.rewrite_unsupported_claims(
+    revised = helper.apply_claim_corrections(
         answer_markdown=_UNSUPPORTED_CLAIM_ANSWER,
         unsupported_claims=unsupported_claims,
         source_briefings=_UNSUPPORTED_CLAIM_SOURCES,
@@ -87,12 +87,52 @@ def test_rewrite_unsupported_claims_softens_flagged_claim():
 
     assert revised
     assert "## What To Do Now" in revised, "unrelated sections must survive the rewrite"
+    # A cosmetic hedge swap ("may" for "is") isn't enough -- the specific
+    # fabricated 23%/5-HT2B/90% figures must actually be gone, not just
+    # softened in place (this is the exact failure mode found in the
+    # generate-only evaluation: 77.7% of "corrected" claims still contained
+    # the original wording verbatim).
+    assert "23%" not in revised
+    assert "5-HT2B" not in revised
     print(revised)
 
 
-def test_rewrite_unsupported_claims_is_noop_without_flagged_claims():
+def test_apply_claim_corrections_inserts_missing_citation_for_supported_claim():
     helper = LLMHelper()
-    revised = helper.rewrite_unsupported_claims(
+    answer = (
+        "## Likely Explanation\n"
+        "Resting in a dark, quiet room and staying well hydrated is commonly "
+        "recommended during a migraine attack.\n\n"
+        "## What To Do Now\n"
+        "Track your triggers in a diary."
+    )
+    # Synthetic finding, as if check_claim_source_alignment had confirmed this
+    # claim IS backed by S1 but the model never added the marker.
+    uncited_supported_claims = [
+        {
+            "claim": "Resting in a dark, quiet room and staying well hydrated is commonly recommended during a migraine attack.",
+            "status": "supported",
+            "requires_evidence": True,
+            "source_ids": ["S1"],
+        }
+    ]
+
+    revised = helper.apply_claim_corrections(
+        answer_markdown=answer,
+        unsupported_claims=[],
+        source_briefings=_UNSUPPORTED_CLAIM_SOURCES,
+        uncited_supported_claims=uncited_supported_claims,
+    )
+
+    assert revised
+    assert "[S1]" in revised, "the confirmed citation must be inserted into the text"
+    assert "## What To Do Now" in revised, "unrelated sections must survive the correction"
+    print(revised)
+
+
+def test_apply_claim_corrections_is_noop_without_flagged_claims():
+    helper = LLMHelper()
+    revised = helper.apply_claim_corrections(
         answer_markdown=_UNSUPPORTED_CLAIM_ANSWER,
         unsupported_claims=[],
         source_briefings=_UNSUPPORTED_CLAIM_SOURCES,
@@ -103,5 +143,6 @@ def test_rewrite_unsupported_claims_is_noop_without_flagged_claims():
 if __name__ == "__main__":
     test_answer_generation()
     test_check_claim_source_alignment_flags_unsupported_specific_claim()
-    test_rewrite_unsupported_claims_softens_flagged_claim()
-    test_rewrite_unsupported_claims_is_noop_without_flagged_claims()
+    test_apply_claim_corrections_attributes_unsupported_claim_as_general_knowledge()
+    test_apply_claim_corrections_inserts_missing_citation_for_supported_claim()
+    test_apply_claim_corrections_is_noop_without_flagged_claims()

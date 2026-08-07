@@ -82,8 +82,16 @@ class LLMHelper:
                     "patient-advice instructions below.\n"
                     "1. Use only the supplied evidence dossier and conversation context.\n"
                     "2. Use concise markdown with the role-appropriate section headings provided.\n"
-                    "3. Cite clinical claims that rely on the supplied sources inline with [S1], [S1][S2], etc. "
-                    "Do not force citations onto conversational guidance, questions, or clearly labelled uncertainty.\n"
+                    "3. MANDATORY CITATIONS: every specific clinical claim -- a mechanism, causal explanation, "
+                    "named diagnosis or condition-specific fact, statistic, or actionable recommendation (a "
+                    "treatment, drug, dose, monitoring interval, or timeframe) -- that comes from the evidence "
+                    "dossier MUST carry an inline [S#] marker at the exact sentence it supports, e.g. 'Weekly "
+                    "talking-therapy sessions are recommended for mild postpartum depression [S2].' This applies "
+                    "to every role, including patients -- a patient-facing answer is not exempt from citing its "
+                    "sources. If you cannot point to a specific source for a specific claim, do not state it as "
+                    "established fact: either omit it, or say plainly that it is general clinical knowledge/common "
+                    "practice rather than something the reviewed evidence confirms. Do not force citations onto "
+                    "conversational guidance, questions, or clearly labelled uncertainty.\n"
                     "4. Do not claim diagnostic certainty that the supplied facts cannot support. For a clinician, give one "
                     "prioritized provisional impression or must-not-miss syndrome; never give an unranked list of possibilities.\n"
                     "5. Surface emergency or urgent action first only when supported by the supplied facts.\n"
@@ -393,7 +401,8 @@ class LLMHelper:
             return []
 
         source_block = "\n".join(
-            f"[{s['source_id']}] {s.get('title', '')} -- {s.get('snippet', '')[:200]}"
+            f"[{s['source_id']}] {s.get('title', '')} -- "
+            f"{(s.get('detail_snippet') or s.get('snippet', ''))[:600]}"
             for s in source_briefings[:8]
         )
 
@@ -409,11 +418,25 @@ class LLMHelper:
                         "diagnostic/prognostic fact. Skip purely conversational lines, generic safety-netting "
                         "('seek care if symptoms worsen'), or requests for more information.\n"
                         "For each claim, decide: "
-                        "'supported' (a listed source clearly backs it), or "
-                        "'general_knowledge' (plausible but not directly in any listed source).\n"
-                        "Also set requires_evidence: true if this is the kind of specific clinical claim a "
-                        "reader would reasonably expect to be evidence-backed; false if it's generic safety "
-                        "advice, common-sense self-care, or too vague to need a citation.\n"
+                        "'supported' if a listed source's content reasonably backs or is consistent with this "
+                        "claim -- it does not need to be a verbatim match, the same guidance/finding in different "
+                        "words still counts, and every listed source has already passed a relevance/quality "
+                        "filter before reaching you, so give it a genuine chance to support the claim rather than "
+                        "defaulting to 'general_knowledge' whenever the wording isn't identical; otherwise "
+                        "'general_knowledge' (plausible but not actually consistent with any listed source).\n"
+                        "Also set requires_evidence: true for any specific management or treatment recommendation "
+                        "(e.g. 'start weekly talk-therapy sessions', 'take X twice daily'), a named diagnosis or "
+                        "condition-specific fact, a mechanism, a causal explanation, a statistic, or a specific "
+                        "frequency/dose/timeframe -- these are the claims a reader relies on as clinically "
+                        "specific guidance, and being phrased gently ('consider', 'you might', 'often') does NOT "
+                        "make them generic; a soft tone is not the same as a generic claim. Set requires_evidence: "
+                        "false ONLY for content with no clinical specificity at all -- pure emotional/conversational "
+                        "framing ('this can feel overwhelming'), a request for more information, or truly generic "
+                        "safety-netting that names no specific action, frequency, or treatment ('seek care if "
+                        "symptoms worsen', 'stay hydrated', 'monitor your mood').\n"
+                        "source_ids must only be populated for a 'supported' claim, and must use the exact "
+                        "bracketed id shown before each source above (e.g. 'S1', never '1' or a bare number) -- "
+                        "leave source_ids empty for a 'general_knowledge' claim.\n"
                         "Return a JSON object with one key: claims. "
                         'Each claim is: {"claim": str, "status": str, "requires_evidence": bool, "source_ids": [str]}.'
                     ),
@@ -448,40 +471,87 @@ class LLMHelper:
                 )
         return result
 
-    def rewrite_unsupported_claims(
+    def apply_claim_corrections(
         self,
         answer_markdown: str,
         unsupported_claims: list[dict],
         source_briefings: list[dict],
+        uncited_supported_claims: Optional[list[dict]] = None,
     ) -> str:
         """
-        Revises an answer so that claims flagged by check_claim_source_alignment
-        as evidence-requiring but unsupported read as appropriately hedged
-        general knowledge instead of unqualified fact. Nothing else in the
-        answer should change -- structure, other claims, citations, banners.
-        Falls back to the original answer if the rewrite call fails or returns
-        nothing usable, so a broken correction never blocks delivery.
+        Two corrections in one pass (kept as a single call to avoid a second
+        latency round-trip per correction type):
+
+        1. Claims check_claim_source_alignment confirmed are NOT backed by any
+           retrieved source (status=general_knowledge, requires_evidence=True)
+           must stop reading as evidence-backed fact. Adding a hedge word like
+           "often" or "may" is not enough on its own -- most flagged claims are
+           already phrased that softly, so hedging alone leaves the actual
+           problem (no source backs this) untouched. The sentence must instead
+           make clear it is general clinical knowledge, not something the
+           specific sources reviewed for this answer confirm -- and for a
+           specific/actionable claim (a treatment, dose, or management step),
+           point the reader to confirm it with a clinician rather than
+           presenting it as established.
+        2. Claims check_claim_source_alignment confirmed ARE backed by a
+           specific source, but whose [S#] marker never made it into the
+           text, get that citation inserted at the claim, unchanged otherwise.
+
+        Nothing else in the answer should change -- structure, other claims,
+        other citations, banners. Falls back to the original answer if the
+        call fails or returns nothing usable, so a broken correction never
+        blocks delivery.
         """
-        if not unsupported_claims or not answer_markdown:
+        uncited_supported_claims = uncited_supported_claims or []
+        if (not unsupported_claims and not uncited_supported_claims) or not answer_markdown:
             return answer_markdown
 
-        claims_block = "\n".join(f'- "{c["claim"]}"' for c in unsupported_claims)
         source_block = "\n".join(
             f"[{s['source_id']}] {s.get('title', '')}" for s in source_briefings[:8]
         )
 
+        instruction_sections = []
+        if unsupported_claims:
+            claims_block = "\n".join(f'- "{c["claim"]}"' for c in unsupported_claims)
+            instruction_sections.append(
+                "CORRECTION A -- these claims are NOT backed by any of the listed "
+                "retrieved sources; they are general knowledge at best:\n"
+                f"{claims_block}\n"
+                "Rewrite each so it clearly reads as general clinical knowledge, not "
+                "something the specific sources reviewed for this answer confirm. Do "
+                "not just add a hedge word ('often', 'may', 'can be') -- the sentence "
+                "must stop implying it came from the cited evidence. For a specific, "
+                "actionable claim (a treatment, dose, or management step), say it "
+                "should be confirmed with a clinician rather than presenting it as "
+                "established."
+            )
+        if uncited_supported_claims:
+            claims_block = "\n".join(
+                f'- "{c["claim"]}" -- insert {"".join(f"[{sid}]" for sid in c.get("source_ids", []))} '
+                "immediately after this claim"
+                for c in uncited_supported_claims
+                if c.get("source_ids")
+            )
+            if claims_block:
+                instruction_sections.append(
+                    "CORRECTION B -- these claims ARE backed by the source(s) shown, but "
+                    "the citation marker is missing from the text. Insert exactly the "
+                    "marker shown, at the claim, without changing the claim's wording:\n"
+                    f"{claims_block}"
+                )
+
+        if not instruction_sections:
+            return answer_markdown
+
         prompt = (
-            "You are revising a clinical answer. The following specific claims in it were "
-            "checked and are NOT backed by any of the listed retrieved sources -- they are "
-            "general knowledge at best, not something the retrieved evidence confirms:\n\n"
-            f"{claims_block}\n\n"
+            "You are correcting citation accuracy in a clinical answer, based on a "
+            "claim-by-claim source-alignment check that has already been run.\n\n"
+            + "\n\n".join(instruction_sections) + "\n\n"
             f"Sources available:\n{source_block}\n\n"
-            "Rewrite the answer below so that ONLY these specific claims are softened with "
-            "appropriate hedging (e.g. 'often', 'can be', 'it's possible that' -- or a note "
-            "that it would need clinical confirmation) so they no longer read as confirmed "
-            "fact. Do not change anything else: keep the same structure, headings, other "
-            "claims, citations, banners, and tone. Do not add new claims or remove content "
-            "unrelated to the flagged claims.\n\n"
+            "Make ONLY the corrections described above. Do not change anything else: "
+            "keep the same structure, headings, other claims, other citations, "
+            "banners, and tone. Do not add new claims or remove content unrelated to "
+            "the claims listed above.\n\n"
             f"Original answer:\n{answer_markdown}\n\n"
             "Return only the revised answer text, nothing else."
         )
@@ -495,7 +565,7 @@ class LLMHelper:
             revised = (response.choices[0].message.content or "").strip()
             return revised or answer_markdown
         except Exception as exc:
-            print(f"[LLMHelper] rewrite_unsupported_claims failed, keeping original: {exc}")
+            print(f"[LLMHelper] apply_claim_corrections failed, keeping original: {exc}")
             return answer_markdown
 
     def generate_follow_up_questions(

@@ -1,7 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Read(//tmp/**)",
+      "Bash(python3 -c \"import backend.summarizer; import backend.rag_system\")",
+      "Bash(python3 -m pytest backend/test_summarizer.py -q -s)",
+      "Bash(rm -rf evaluations/results/raw/citation_fix_smoketest2)",
+      "Bash(python3 -m evaluations.runner --dataset healthbench --generate-only --sample 3 --run-id citation_fix_smoketest2)",
+      "Bash(rm -rf evaluations/results/raw/citation_fix_smoketest3)",
+      "Bash(python3 -m evaluations.runner --dataset healthbench --generate-only --sample 3 --run-id citation_fix_smoketest3)"
     ]
   }
 }

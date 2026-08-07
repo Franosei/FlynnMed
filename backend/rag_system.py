@@ -1171,7 +1171,7 @@ class RAGEngine:
         # function's result is what gets yielded, once).
         combined_sources = bundle.get("combined_sources", [])
         claim_alignment: List[Dict] = []
-        claim_rewrite_applied = False
+        claim_correction_applied = False
         if combined_sources:
             try:
                 claim_alignment = self.llm.check_claim_source_alignment(
@@ -1187,15 +1187,29 @@ class RAGEngine:
                 for c in claim_alignment
                 if c.get("status") == "general_knowledge" and c.get("requires_evidence")
             ]
-            if unsupported_claims:
-                rewritten = self.llm.rewrite_unsupported_claims(
+            # A claim the check confirmed IS supported by a specific source, but
+            # whose [S#] marker never made it into the generated text, is the
+            # other half of the same problem: the model drew on the evidence
+            # correctly but didn't attribute it. Only flagged when NONE of the
+            # claim's source_ids appear anywhere in the text yet, so an already-
+            # cited source never gets a redundant second marker inserted.
+            uncited_supported_claims = [
+                c
+                for c in claim_alignment
+                if c.get("status") == "supported"
+                and c.get("source_ids")
+                and not any(f"[{sid}]" in raw_answer for sid in c["source_ids"])
+            ]
+            if unsupported_claims or uncited_supported_claims:
+                rewritten = self.llm.apply_claim_corrections(
                     answer_markdown=raw_answer,
                     unsupported_claims=unsupported_claims,
                     source_briefings=combined_sources,
+                    uncited_supported_claims=uncited_supported_claims,
                 )
                 if rewritten and rewritten.strip() and rewritten != raw_answer:
                     raw_answer = rewritten
-                    claim_rewrite_applied = True
+                    claim_correction_applied = True
 
         role_config = bundle.get("role_config")
         raw_answer = self._append_clinical_evidence_trail(
@@ -1325,7 +1339,7 @@ class RAGEngine:
             else [],
             "evidence_quality": evidence_quality_report,
             "claim_alignment": claim_alignment,
-            "claim_rewrite_applied": claim_rewrite_applied,
+            "claim_correction_applied": claim_correction_applied,
             "clinical_context": clinical_context.as_dict() if clinical_context else {},
             "clinical_context_validation": context_validation,
             "user_facing_validation": {
