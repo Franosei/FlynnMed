@@ -583,6 +583,7 @@ class RAGEngine:
                 response_completion_guidance=bundle.get(
                     "response_completion_guidance", ""
                 ),
+                is_patient_scoped=bundle.get("target_patient_data_provided", False),
             )
         return self._finalize_answer_payload(
             question=question, raw_answer=raw_answer, bundle=bundle
@@ -711,6 +712,7 @@ class RAGEngine:
                 response_completion_guidance=bundle.get(
                     "response_completion_guidance", ""
                 ),
+                is_patient_scoped=bundle.get("target_patient_data_provided", False),
             ):
                 streamed_chunks.append(chunk)
 

@@ -53,6 +53,7 @@ class LLMHelper:
         current_location: str = "",
         task_mode=None,
         response_completion_guidance: str = "",
+        is_patient_scoped: bool = False,
     ) -> str | Generator[str, None, None]:
         """
         Creates a role-aware, evidence-grounded response using the supplied evidence dossier.
@@ -69,6 +70,39 @@ class LLMHelper:
                 "You provide decisive, evidence-grounded guidance with a clear next-step plan."
             )
 
+        # A clinician asking about a specific patient's chart is not the patient --
+        # without an explicit instruction the model defaults to the dominant
+        # "your medications/your BP" patient-voice framing baked into the
+        # SPECIFICITY REQUIREMENTS example below, even though role_config already
+        # says "doctor". This is most visible on short chart-lookup questions
+        # ("what was the recent medication"), which carry no other framing cue.
+        clinician_patient_scoped = bool(
+            role_config
+            and role_config.role_key
+            in ("doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional")
+            and is_patient_scoped
+        )
+        voice_instruction = ""
+        if clinician_patient_scoped:
+            voice_instruction = (
+                "VOICE: You are a clinician reviewing a specific patient's chart -- you are not the "
+                "patient. Refer to the patient in the THIRD PERSON by name or as 'the patient' (e.g. "
+                "'Jane Whitfield is currently taking Metformin 500 mg twice daily'). Never address the "
+                "patient directly as 'you'/'your'. This applies throughout the whole answer, including "
+                "any monitoring, action, or follow-up section.\n\n"
+            )
+            specificity_example = (
+                "- Quote the patient's actual recorded values only where relevant. "
+                "Never write 'the patient's blood pressure appears elevated' without the number; "
+                "write \"Jane's last recorded BP of X/Y mmHg on [date] is Stage 2 hypertension.\"\n"
+            )
+        else:
+            specificity_example = (
+                "- Quote the patient's actual recorded values only where relevant. "
+                "Never write 'your blood pressure appears elevated' when you have the number; "
+                "write 'your last recorded BP of X/Y mmHg on [date] is Stage 2 hypertension'.\n"
+            )
+
         messages = [
             {
                 "role": "system",
@@ -76,6 +110,7 @@ class LLMHelper:
                     f"{persona}\n\n"
                     f"{operating_contract_prompt(selected_skills or ['response_validation'], current_location)}\n\n"
                     f"{task_mode.prompt_block() if task_mode else ''}\n\n"
+                    f"{voice_instruction}"
                     "CORE RULES:\n"
                     "0. Follow the CONTROLLED TASK MODE when one is supplied. For literal documentation, "
                     "translation, or a chart-data lookup, its output constraints override clinical headings, "
@@ -110,9 +145,7 @@ class LLMHelper:
                     "a measurement or test as another specialty, even if the user's wording is commonly "
                     "used elsewhere.\n\n"
                     "SPECIFICITY REQUIREMENTS:\n"
-                    "- Quote the patient's actual recorded values only where relevant. "
-                    "Never write 'your blood pressure appears elevated' when you have the number; "
-                    "write 'your last recorded BP of X/Y mmHg on [date] is Stage 2 hypertension'.\n"
+                    f"{specificity_example}"
                     "- Name each relevant medication, condition, result, or vital by its recorded name; "
                     "do not force unrelated history into the response.\n"
                     "- Give concrete timeframes and thresholds only when the supplied evidence or "

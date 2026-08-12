@@ -1,5 +1,6 @@
 import json
 
+from backend.role_router import RoleRouter
 from backend.summarizer import LLMHelper
 
 
@@ -118,6 +119,49 @@ def test_follow_up_questions_caregiver_role_stays_in_patient_voice_bucket():
 
     system_prompt = completions.last_kwargs["messages"][0]["content"]
     assert "patient's voice" in system_prompt
+
+
+def test_answer_question_uses_third_person_voice_for_clinician_patient_scoped_chart():
+    """
+    Regression test: a clinician asking about a specific patient's chart (e.g.
+    "what was the recent medication" in the per-patient chart-lookup chat) was
+    getting patient-voice "your medications include..." answers, because
+    nothing told the model this was a clinician reading about someone else's
+    chart -- role_config alone ("doctor") doesn't carry that signal.
+    """
+    helper, completions = _helper_with_fake_client()
+    doctor_role = RoleRouter().resolve("doctor")
+
+    helper.answer_question(
+        question="What was the recent medication?",
+        context="Patient: Jane Whitfield. Medications: Metformin 500mg.",
+        role_config=doctor_role,
+        is_patient_scoped=True,
+    )
+
+    system_prompt = completions.last_kwargs["messages"][0]["content"]
+    assert "THIRD PERSON" in system_prompt
+    assert "your blood pressure appears elevated" not in system_prompt
+
+
+def test_answer_question_keeps_second_person_voice_for_clinicians_own_evidence_chat():
+    """
+    Companion test: a clinician's general (not patient-scoped) Evidence Review
+    question must NOT get the third-person patient-chart voice instruction.
+    """
+    helper, completions = _helper_with_fake_client()
+    doctor_role = RoleRouter().resolve("doctor")
+
+    helper.answer_question(
+        question="What is the first-line antibiotic for uncomplicated UTI?",
+        context="",
+        role_config=doctor_role,
+        is_patient_scoped=False,
+    )
+
+    system_prompt = completions.last_kwargs["messages"][0]["content"]
+    assert "THIRD PERSON" not in system_prompt
+    assert "your blood pressure appears elevated" in system_prompt
 
 
 def test_answer_generation():
