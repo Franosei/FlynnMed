@@ -48,11 +48,13 @@ import {
   emailNote,
   fetchAccessOverview,
   fetchClinicianPatient,
+  fetchMyMedicationProposals,
   fetchMyPrevisitSummaries,
   fetchPrevisitChatHistory,
   fetchSnapshot,
   generateCarePlan,
   generateGpPrep,
+  generateMedicationProposal,
   generateNote,
   generatePrevisitSummary,
   getConfig,
@@ -60,14 +62,17 @@ import {
   listCarePlans,
   login,
   rateResponse,
+  releaseMedicationProposal,
   releasePrevisitSummary,
   requestPatientAccess,
   revokePatientAccess,
+  saveMedicationProposalDraft,
   savePrevisitSummaryDraft,
   sendUrgentAlert,
   setStoredToken,
   signup,
   streamChat,
+  streamDocumentAnalysis,
   streamImageAnalysis,
   streamPrevisitChat,
   toggleCarePlanTask,
@@ -77,7 +82,7 @@ import {
   updateSafetyReview,
   uploadDocuments
 } from "./api";
-import type { AccessOverview, AuthResponse, CarePlan, CarePlanTask, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, Dict, EscalationThreshold, FeedbackRating, LabReminder, MedReminder, Message, MissedCareItem, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, SafetyReview, Snapshot, TrialSearchResult } from "./types";
+import type { AccessOverview, AuthResponse, CarePlan, CarePlanTask, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, Dict, EscalationThreshold, FeedbackRating, LabReminder, MedReminder, Message, MissedCareItem, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, ProposedMedication, SafetyReview, Snapshot, TrialSearchResult } from "./types";
 import type { ClarifyOption, UploadExtracted } from "./api";
 import {
   buildSeries,
@@ -163,6 +168,7 @@ const VITAL_OPTIONS = [
 ];
 
 const MAX_IMAGE_UPLOAD_BYTES = 5 * 1024 * 1024;
+const MAX_DOCUMENT_UPLOAD_BYTES = 15 * 1024 * 1024;
 
 function App() {
   const [config, setConfig] = useState<ProductConfig | null>(null);
@@ -1242,6 +1248,11 @@ function ClinicianPatientChart({
         initialSummaries={summary.previsit_summaries}
       />
 
+      <MedicationProposalWorkspace
+        patientId={summary.patient.patient_id}
+        initialProposals={summary.proposed_medications}
+      />
+
       <section className="chart-grid">
         <ClinicalDataList title="Active conditions" items={summary.conditions} primary="name" secondary="status" />
         <ClinicalDataList title="Current medications" items={summary.medications} primary="name" secondary="dose" />
@@ -1361,8 +1372,8 @@ function PrevisitWorkspace({
     }
   }
 
-  async function handleSendChat() {
-    const message = chatDraft.trim();
+  async function handleSendChat(overrideText?: string) {
+    const message = (overrideText ?? chatDraft).trim();
     if (!message || chatBusy) return;
     setChatDraft("");
     setChatBusy(true);
@@ -1395,6 +1406,7 @@ function PrevisitWorkspace({
               authored_by_display_name: "FlynnMed",
               authored_by_clinical_role: "",
               sources: event.message.sources,
+              follow_up_questions: event.message.follow_up_questions,
               created_at: new Date().toISOString()
             }
           ]);
@@ -1429,6 +1441,11 @@ function PrevisitWorkspace({
         </div>
       ) : (
         <>
+          <label className="col-label">Preview</label>
+          <div className="markdown previsit-draft-preview">
+            <ReactMarkdown>{draftText || "*Nothing to preview yet.*"}</ReactMarkdown>
+          </div>
+          <label className="col-label">Edit summary (markdown source)</label>
           <textarea
             className="previsit-draft"
             rows={10}
@@ -1464,6 +1481,19 @@ function PrevisitWorkspace({
               <div className="markdown">
                 <ReactMarkdown>{message.content}</ReactMarkdown>
               </div>
+              {message.role === "assistant" && !!message.follow_up_questions?.length && (
+                <div className="follow-ups">
+                  {message.follow_up_questions.slice(0, 3).map((q, i) => {
+                    const display = typeof q === "string" ? q : q.display;
+                    const prompt = typeof q === "string" ? q : q.prompt;
+                    return (
+                      <button key={i} className="follow-up-btn" onClick={() => handleSendChat(prompt)}>
+                        {display}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           ))}
           {chatStreamText && (
@@ -1489,7 +1519,7 @@ function PrevisitWorkspace({
             placeholder="Ask a question about this patient..."
             disabled={chatBusy}
           />
-          <button className="primary" onClick={handleSendChat} disabled={chatBusy || !chatDraft.trim()}>
+          <button className="primary" onClick={() => handleSendChat()} disabled={chatBusy || !chatDraft.trim()}>
             <Send size={16} />
           </button>
         </div>
@@ -1510,6 +1540,242 @@ function PrevisitWorkspace({
                 </p>
                 <div className="markdown">
                   <ReactMarkdown>{item.summary_text}</ReactMarkdown>
+                </div>
+              </article>
+            ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function medicationProposalHasFlags(proposal: Pick<ProposedMedication, "safety_check">): boolean {
+  const check = proposal.safety_check;
+  if (!check) return false;
+  if (check.allergy_flags?.length) return true;
+  return (check.interaction_flags ?? []).some(
+    (flag) => flag.severity === "high" || flag.severity === "monitor"
+  );
+}
+
+/**
+ * Clinician-only medication-proposal workspace: describe a clinical
+ * situation, get a real evidence-grounded candidate drug + dose back
+ * (never the model's own general knowledge -- see backend/medication_proposal.py),
+ * deterministically checked against this patient's actual allergies/current
+ * medications. Nothing here is visible to the patient until an explicit
+ * release, same gate as PrevisitWorkspace above.
+ */
+function MedicationProposalWorkspace({
+  patientId,
+  initialProposals
+}: {
+  patientId: string;
+  initialProposals: ProposedMedication[];
+}) {
+  const [proposals, setProposals] = useState<ProposedMedication[]>(initialProposals);
+  const latestDraft = proposals.find((p) => p.status === "draft") ?? null;
+  const releasedProposals = proposals.filter((p) => p.status === "released");
+
+  const [situation, setSituation] = useState("");
+  const [medicationName, setMedicationName] = useState(latestDraft?.candidate_medication_name ?? "");
+  const [doseFrequency, setDoseFrequency] = useState(latestDraft?.candidate_dose_frequency ?? "");
+  const [rationale, setRationale] = useState(latestDraft?.rationale_text ?? "");
+  const [overrideReason, setOverrideReason] = useState("");
+  const [generateBusy, setGenerateBusy] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [releaseBusy, setReleaseBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  const activeDraft = proposals.find((p) => p.status === "draft") ?? null;
+  const hasFlags = activeDraft ? medicationProposalHasFlags(activeDraft) : false;
+
+  async function handleGenerate() {
+    if (!situation.trim()) {
+      setNotice("Describe the clinical situation before generating a proposal.");
+      return;
+    }
+    setGenerateBusy(true);
+    setNotice("");
+    try {
+      const result = await generateMedicationProposal(patientId, situation.trim());
+      setProposals((current) => [result, ...current]);
+      setMedicationName(result.candidate_medication_name);
+      setDoseFrequency(result.candidate_dose_frequency);
+      setRationale(result.rationale_text);
+      setOverrideReason("");
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Could not generate a medication proposal.");
+    } finally {
+      setGenerateBusy(false);
+    }
+  }
+
+  async function handleSaveDraft() {
+    if (!activeDraft) return;
+    setSaveBusy(true);
+    setNotice("");
+    try {
+      const result = await saveMedicationProposalDraft(patientId, {
+        clinical_situation_text: activeDraft.clinical_situation_text,
+        candidate_medication_name: medicationName.trim(),
+        candidate_dose_frequency: doseFrequency.trim(),
+        rationale_text: rationale,
+        citations: activeDraft.citations
+      });
+      setProposals((current) => [result, ...current]);
+      setNotice("Draft saved -- safety check re-run against the current candidate.");
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Could not save the draft.");
+    } finally {
+      setSaveBusy(false);
+    }
+  }
+
+  async function handleRelease() {
+    if (!activeDraft) return;
+    if (!medicationName.trim() || !doseFrequency.trim()) {
+      setNotice("Enter a candidate medication and dose/frequency before releasing.");
+      return;
+    }
+    if (hasFlags && !overrideReason.trim()) {
+      setNotice("This candidate has an unresolved allergy or interaction flag -- enter an override reason to release it anyway.");
+      return;
+    }
+    const confirmed = window.confirm(
+      "Release this medication proposal to the patient's portal now? This cannot be undone -- the patient will see it immediately."
+    );
+    if (!confirmed) return;
+
+    setReleaseBusy(true);
+    setNotice("");
+    try {
+      const result = await releaseMedicationProposal(patientId, {
+        clinical_situation_text: activeDraft.clinical_situation_text,
+        candidate_medication_name: medicationName.trim(),
+        candidate_dose_frequency: doseFrequency.trim(),
+        rationale_text: rationale,
+        citations: activeDraft.citations,
+        override_reason: overrideReason.trim()
+      });
+      setProposals((current) => [result, ...current]);
+      setOverrideReason("");
+      setNotice("Medication proposal released to the patient's portal.");
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Could not release the medication proposal.");
+    } finally {
+      setReleaseBusy(false);
+    }
+  }
+
+  return (
+    <section className="surface-card previsit-workspace">
+      <h3>Medication proposal</h3>
+      {notice && <p className="notice warn">{notice}</p>}
+
+      {!activeDraft ? (
+        <div className="previsit-empty">
+          <textarea
+            className="previsit-draft"
+            rows={4}
+            value={situation}
+            onChange={(event) => setSituation(event.target.value)}
+            placeholder="Describe the clinical situation -- e.g. 'Moderate postpartum depression, 8 weeks postpartum, no response to talk therapy after 6 weeks, no contraindications noted.'"
+          />
+          <button className="primary" onClick={handleGenerate} disabled={generateBusy}>
+            <Pill size={16} /> {generateBusy ? "Researching..." : "Generate proposal"}
+          </button>
+        </div>
+      ) : (
+        <>
+          <p className="muted">{activeDraft.clinical_situation_text}</p>
+
+          <label className="col-label">Candidate medication</label>
+          <input value={medicationName} onChange={(event) => setMedicationName(event.target.value)} />
+
+          <label className="col-label">Dose / frequency</label>
+          <input value={doseFrequency} onChange={(event) => setDoseFrequency(event.target.value)} />
+
+          <label className="col-label">Rationale (cited) -- preview</label>
+          <div className="markdown previsit-draft-preview">
+            <ReactMarkdown>{rationale || "*Nothing to preview yet.*"}</ReactMarkdown>
+          </div>
+
+          <label className="col-label">Edit rationale (markdown source)</label>
+          <textarea
+            className="previsit-draft"
+            rows={8}
+            value={rationale}
+            onChange={(event) => setRationale(event.target.value)}
+          />
+
+          {(hasFlags || activeDraft.safety_check?.allergy_flags?.length || activeDraft.safety_check?.interaction_flags?.length) ? (
+            <div className="notice danger medication-safety-flags">
+              <AlertTriangle size={16} />
+              <div>
+                <strong>Safety check flagged possible conflicts -- review before releasing:</strong>
+                <ul>
+                  {(activeDraft.safety_check.allergy_flags ?? []).map((flag, index) => (
+                    <li key={`allergy-${index}`}>{flag.summary}</li>
+                  ))}
+                  {(activeDraft.safety_check.interaction_flags ?? []).map((flag, index) => (
+                    <li key={`interaction-${index}`}>{flag.summary}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          ) : (
+            <p className="notice success">No allergy or interaction conflicts detected against this patient's recorded records.</p>
+          )}
+
+          {hasFlags && (
+            <>
+              <label className="col-label">Override reason (required to release with flags present)</label>
+              <textarea
+                rows={2}
+                value={overrideReason}
+                onChange={(event) => setOverrideReason(event.target.value)}
+                placeholder="Document why this proposal is appropriate despite the flag above."
+              />
+            </>
+          )}
+
+          <div className="previsit-actions">
+            <button className="ghost" onClick={handleGenerate} disabled={generateBusy}>
+              <RefreshCw size={16} /> {generateBusy ? "Working..." : "Regenerate proposal"}
+            </button>
+            <button className="ghost" onClick={handleSaveDraft} disabled={saveBusy || !medicationName.trim()}>
+              Save draft
+            </button>
+            <button className="primary" onClick={handleRelease} disabled={releaseBusy || !medicationName.trim()}>
+              <ShieldCheck size={16} /> {releaseBusy ? "Releasing..." : "Release to patient"}
+            </button>
+          </div>
+        </>
+      )}
+
+      {!!releasedProposals.length && (
+        <div className="previsit-history">
+          <button className="link-btn" onClick={() => setHistoryOpen((open) => !open)}>
+            {historyOpen ? "Hide" : "Show"} {releasedProposals.length} past released proposal
+            {releasedProposals.length === 1 ? "" : "s"}
+          </button>
+          {historyOpen &&
+            releasedProposals.map((item) => (
+              <article key={item.id} className="previsit-history-item">
+                <p className="muted">
+                  Released {formatTimestamp(item.released_at)} by {item.authored_by_display_name}
+                  {item.authored_by_clinical_role ? ` (${item.authored_by_clinical_role})` : ""}
+                </p>
+                <p>
+                  <strong>{item.candidate_medication_name}</strong> -- {item.candidate_dose_frequency}
+                </p>
+                {item.override_reason && (
+                  <p className="muted">Override reason: {item.override_reason}</p>
+                )}
+                <div className="markdown">
+                  <ReactMarkdown>{item.rationale_text}</ReactMarkdown>
                 </div>
               </article>
             ))}
@@ -1593,12 +1859,15 @@ function ChatView({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [streamText, setStreamText] = useState("");
-  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [pendingAttachment, setPendingAttachment] = useState<
+    { kind: "image"; file: File } | { kind: "document"; file: File } | null
+  >(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState("");
   const [feedbackBusy, setFeedbackBusy] = useState<Record<string, boolean>>({});
   const [panelOpen, setPanelOpen] = useState(true);
   const listRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const documentInputRef = useRef<HTMLInputElement>(null);
   const role = snapshot.profile.clinical_role || snapshot.profile.role;
   const patientView = isPatientRole(role);
 
@@ -1613,30 +1882,39 @@ function ChatView({
   }, [messages, streamText, status]);
 
   useEffect(() => {
-    if (!imageFile) {
+    if (pendingAttachment?.kind !== "image") {
       setImagePreviewUrl("");
       return;
     }
-    const url = URL.createObjectURL(imageFile);
+    const url = URL.createObjectURL(pendingAttachment.file);
     setImagePreviewUrl(url);
     return () => URL.revokeObjectURL(url);
-  }, [imageFile]);
+  }, [pendingAttachment]);
 
   async function sendMessage(text = draft) {
     const message = text.trim();
-    if ((!message && !imageFile) || busy) {
+    if ((!message && !pendingAttachment) || busy) {
       return;
     }
-    const pendingImage = imageFile;
+    const attachment = pendingAttachment;
     setDraft("");
-    setImageFile(null);
+    setPendingAttachment(null);
     setBusy(true);
-    setStatus(pendingImage ? "Checking image..." : "Starting evidence review...");
+    setStatus(
+      attachment?.kind === "image"
+        ? "Checking image..."
+        : attachment?.kind === "document"
+        ? "Checking document..."
+        : "Starting evidence review..."
+    );
     setStreamText("");
     try {
-      const stream = pendingImage
-        ? streamImageAnalysis(message, pendingImage, handleStreamEvent)
-        : streamChat(message, handleStreamEvent);
+      const stream =
+        attachment?.kind === "image"
+          ? streamImageAnalysis(message, attachment.file, handleStreamEvent)
+          : attachment?.kind === "document"
+          ? streamDocumentAnalysis(message, attachment.file, handleStreamEvent)
+          : streamChat(message, handleStreamEvent);
 
       function handleStreamEvent(event: ChatStreamEvent) {
         if (event.type === "user_message") {
@@ -1687,7 +1965,22 @@ function ChatView({
       setNotice("Image uploads must be 5 MB or smaller.");
       return;
     }
-    setImageFile(file);
+    setPendingAttachment({ kind: "image", file });
+  }
+
+  function handleDocumentPick(file: File | null) {
+    if (!file) {
+      return;
+    }
+    if (file.type !== "application/pdf") {
+      setNotice("Upload a PDF document.");
+      return;
+    }
+    if (file.size > MAX_DOCUMENT_UPLOAD_BYTES) {
+      setNotice("Document uploads must be 15 MB or smaller.");
+      return;
+    }
+    setPendingAttachment({ kind: "document", file });
   }
 
   async function rateMessage(message: Message, rating: FeedbackRating) {
@@ -1715,7 +2008,7 @@ function ChatView({
   }
 
   return (
-    <div className={`chat-layout${panelOpen ? "" : " panel-closed"}`}>
+    <div className={`chat-layout${panelOpen && patientView ? "" : " panel-closed"}`}>
       <section className="chat-panel">
         <div className="chat-head">
           <div className="chat-head-title">
@@ -1736,7 +2029,7 @@ function ChatView({
             >
               <Trash2 size={15} />
             </button>
-            {!panelOpen && (
+            {patientView && !panelOpen && (
               <button className="ghost icon-btn" onClick={() => setPanelOpen(true)} title="Show panel">
                 <PanelRight size={15} />
               </button>
@@ -1787,18 +2080,22 @@ function ChatView({
         </div>
 
         <div className="composer">
-          {imageFile && (
+          {pendingAttachment && (
             <div className="composer-attachment">
-              {imagePreviewUrl && <img src={imagePreviewUrl} alt="" />}
+              {pendingAttachment.kind === "image" ? (
+                imagePreviewUrl && <img src={imagePreviewUrl} alt="" />
+              ) : (
+                <FileText size={28} />
+              )}
               <div>
-                <strong>{imageFile.name}</strong>
-                <span>{Math.max(1, Math.round(imageFile.size / 1024))} KB</span>
+                <strong>{pendingAttachment.file.name}</strong>
+                <span>{Math.max(1, Math.round(pendingAttachment.file.size / 1024))} KB</span>
               </div>
               <button
                 className="ghost icon-btn"
-                onClick={() => setImageFile(null)}
+                onClick={() => setPendingAttachment(null)}
                 type="button"
-                title="Remove image"
+                title="Remove attachment"
               >
                 <X size={14} />
               </button>
@@ -1808,7 +2105,7 @@ function ChatView({
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-            placeholder="Type a question or attach a medical image…"
+            placeholder="Type a question, or attach a medical image or PDF document…"
             rows={2}
           />
           <div className="composer-actions">
@@ -1823,19 +2120,37 @@ function ChatView({
               }}
             />
             <button
-              className={`ghost icon-btn${imageFile ? " active" : ""}`}
+              className={`ghost icon-btn${pendingAttachment?.kind === "image" ? " active" : ""}`}
               onClick={() => imageInputRef.current?.click()}
               type="button"
               title="Attach medical image"
             >
               <ImageIcon size={16} />
             </button>
+            <input
+              ref={documentInputRef}
+              type="file"
+              accept="application/pdf"
+              className="sr-only"
+              onChange={(event) => {
+                handleDocumentPick(event.target.files?.[0] ?? null);
+                event.target.value = "";
+              }}
+            />
+            <button
+              className={`ghost icon-btn${pendingAttachment?.kind === "document" ? " active" : ""}`}
+              onClick={() => documentInputRef.current?.click()}
+              type="button"
+              title="Attach document (PDF)"
+            >
+              <FileText size={16} />
+            </button>
             <VoiceRecorder onTranscript={(text) => setDraft((current) => `${current}${current ? " " : ""}${text}`)} />
             <div className="composer-spacer" />
-            <button className="ghost icon-btn" onClick={() => { setDraft(""); setImageFile(null); }} type="button" title="Clear input">
+            <button className="ghost icon-btn" onClick={() => { setDraft(""); setPendingAttachment(null); }} type="button" title="Clear input">
               <Trash2 size={14} />
             </button>
-            <button className="primary" onClick={() => sendMessage()} disabled={busy || (!draft.trim() && !imageFile)}>
+            <button className="primary" onClick={() => sendMessage()} disabled={busy || (!draft.trim() && !pendingAttachment)}>
               <Send size={15} />
               Send
             </button>
@@ -1843,7 +2158,7 @@ function ChatView({
         </div>
       </section>
 
-      {panelOpen && (
+      {patientView && panelOpen && (
         <aside className="side-panel">
           <div className="side-panel-header">
             <button className="ghost side-panel-close" onClick={() => setPanelOpen(false)} title="Hide panel">
@@ -1858,6 +2173,7 @@ function ChatView({
             role={role}
           />
           {patientView && <PrevisitSummariesPanel />}
+          {patientView && <MedicationProposalsPanel />}
           <UploadPanel snapshot={snapshot} setSnapshot={setSnapshot} setNotice={setNotice} />
           <ExportPanel snapshot={snapshot} setNotice={setNotice} />
           <RecordPanel snapshot={snapshot} setSnapshot={setSnapshot} compact={false} />
@@ -1913,6 +2229,12 @@ function MessageBubble({
             {uploadedImageSrc && <img src={uploadedImageSrc} alt="" />}
             <figcaption>{clean(metadata.uploaded_image_name, "Uploaded medical image")}</figcaption>
           </figure>
+        )}
+        {isUser && metadata.uploaded_document_name && (
+          <div className="uploaded-document-chip">
+            <FileText size={16} />
+            <span>{clean(metadata.uploaded_document_name, "Uploaded document")}</span>
+          </div>
         )}
         <div className="markdown">
           <ReactMarkdown>{message.content}</ReactMarkdown>
@@ -2603,6 +2925,69 @@ function PrevisitSummariesPanel() {
                 <div className="note-body">
                   <div className="soap-content markdown">
                     <ReactMarkdown>{item.summary_text}</ReactMarkdown>
+                  </div>
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function MedicationProposalsPanel() {
+  const [proposals, setProposals] = useState<ProposedMedication[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchMyMedicationProposals()
+      .then((res) => {
+        if (!cancelled) setProposals(res.proposals);
+      })
+      .catch(() => {
+        // Nothing released yet, or a transient load failure -- an empty
+        // panel is the right fallback either way.
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (loading || !proposals.length) return null;
+
+  return (
+    <section className="tool-panel notes-panel">
+      <div className="panel-head">
+        <Pill size={19} />
+        <strong>Medications from your care team</strong>
+      </div>
+      <div className="notes-list">
+        {proposals.map((item) => {
+          const isExpanded = expandedId === item.id;
+          return (
+            <article key={item.id} className="note-card">
+              <div className="note-card-head" onClick={() => setExpandedId(isExpanded ? null : item.id)}>
+                <div>
+                  <time>{formatDate(item.released_at)}</time>
+                </div>
+                <p className="note-question">
+                  {item.candidate_medication_name} -- {item.candidate_dose_frequency}
+                </p>
+              </div>
+              {isExpanded && (
+                <div className="note-body">
+                  <p className="muted">
+                    Proposed by {item.authored_by_display_name}
+                    {item.authored_by_clinical_role ? ` (${item.authored_by_clinical_role})` : ""}
+                  </p>
+                  <div className="soap-content markdown">
+                    <ReactMarkdown>{item.rationale_text}</ReactMarkdown>
                   </div>
                 </div>
               )}

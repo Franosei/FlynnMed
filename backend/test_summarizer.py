@@ -1,4 +1,123 @@
+import json
+
 from backend.summarizer import LLMHelper
+
+
+class _FakeFollowUpMessage:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+class _FakeFollowUpChoice:
+    def __init__(self, content: str) -> None:
+        self.message = _FakeFollowUpMessage(content)
+
+
+class _FakeFollowUpResponse:
+    def __init__(self, payload: dict) -> None:
+        self.choices = [_FakeFollowUpChoice(json.dumps(payload))]
+
+
+class _FakeFollowUpCompletions:
+    def __init__(self) -> None:
+        self.last_kwargs = {}
+
+    def create(self, **kwargs):
+        self.last_kwargs = kwargs
+        return _FakeFollowUpResponse({"questions": [{"display": "stub", "prompt": "stub"}]})
+
+
+class _FakeFollowUpChat:
+    def __init__(self) -> None:
+        self.completions = _FakeFollowUpCompletions()
+
+
+class _FakeFollowUpClient:
+    def __init__(self) -> None:
+        self.chat = _FakeFollowUpChat()
+
+
+def _helper_with_fake_client() -> tuple[LLMHelper, _FakeFollowUpCompletions]:
+    helper = LLMHelper()
+    fake_client = _FakeFollowUpClient()
+    helper.client = fake_client
+    return helper, fake_client.chat.completions
+
+
+def test_follow_up_questions_patient_role_keeps_first_person_voice_prompt():
+    helper, completions = _helper_with_fake_client()
+
+    helper.generate_follow_up_questions(
+        question="What should I take for a UTI?",
+        answer="Nitrofurantoin is first-line for uncomplicated UTI.",
+        role_key="patient",
+        is_patient_scoped=False,
+    )
+
+    system_prompt = completions.last_kwargs["messages"][0]["content"]
+    user_prompt = completions.last_kwargs["messages"][1]["content"]
+    assert "patient's voice" in system_prompt
+    assert "I also have a fever" in system_prompt
+    assert "Patient health record" in user_prompt
+
+
+def test_follow_up_questions_clinician_general_uses_research_style_and_omits_own_record():
+    helper, completions = _helper_with_fake_client()
+
+    helper.generate_follow_up_questions(
+        question="First-line antibiotic for uncomplicated UTI?",
+        answer="Nitrofurantoin is first-line, working via bacterial enzyme inhibition.",
+        role_key="doctor",
+        is_patient_scoped=False,
+    )
+
+    system_prompt = completions.last_kwargs["messages"][0]["content"]
+    user_prompt = completions.last_kwargs["messages"][1]["content"]
+    assert "NOT about a specific patient" in system_prompt
+    assert "CONFIRM as true about themselves" not in system_prompt
+    # The acting clinician's own health-record data must not leak into a
+    # patient-agnostic research question.
+    assert "Patient health record" not in user_prompt
+    assert "Patient profile" not in user_prompt
+
+
+def test_follow_up_questions_clinician_patient_scoped_uses_third_person_clinical_actions():
+    helper, completions = _helper_with_fake_client()
+
+    helper.generate_follow_up_questions(
+        question="What antibiotic should we use for her UTI?",
+        answer="Nitrofurantoin is appropriate given her records.",
+        role_key="doctor",
+        is_patient_scoped=True,
+        patient_context="Allergies: Penicillin (severe)\nMedications: Warfarin",
+    )
+
+    system_prompt = completions.last_kwargs["messages"][0]["content"]
+    user_prompt = completions.last_kwargs["messages"][1]["content"]
+    assert "SPECIFIC patient's chart" in system_prompt
+    assert "third person" in system_prompt
+    assert "CONFIRM as true about themselves" not in system_prompt
+    assert "Patient health record" in user_prompt
+    assert "Penicillin" in user_prompt
+
+
+def test_follow_up_questions_caregiver_role_stays_in_patient_voice_bucket():
+    """
+    Caregiver is deliberately excluded from the clinician tuple (matching the
+    frontend's isClinicianRole allowlist) -- confirms it still gets the
+    first-person patient-voice prompt, not a clinician one.
+    """
+    helper, completions = _helper_with_fake_client()
+
+    helper.generate_follow_up_questions(
+        question="What should my mother take for a UTI?",
+        answer="Nitrofurantoin is first-line for uncomplicated UTI.",
+        role_key="caregiver",
+        is_patient_scoped=False,
+    )
+
+    system_prompt = completions.last_kwargs["messages"][0]["content"]
+    assert "patient's voice" in system_prompt
 
 
 def test_answer_generation():

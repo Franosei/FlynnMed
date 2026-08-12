@@ -95,6 +95,12 @@ class MedicationInteractionChecker:
             *(openfda.get("substance_name") or []),
         }
         aliases = {alias.strip() for alias in aliases if alias and alias.strip()}
+        pharm_classes = {
+            *(openfda.get("pharm_class_epc") or []),
+            *(openfda.get("pharm_class_cs") or []),
+            *(openfda.get("pharm_class_moa") or []),
+        }
+        pharm_classes = {cls.strip() for cls in pharm_classes if cls and cls.strip()}
 
         sections = []
         for field_name, label in INTERACTION_FIELDS:
@@ -119,6 +125,7 @@ class MedicationInteractionChecker:
                 or [medication_name.strip()]
             )[0],
             "aliases": sorted(aliases),
+            "pharm_classes": sorted(pharm_classes),
             "sections": sections,
             "api_url": response.url,
             "effective_time": result.get("effective_time", ""),
@@ -245,3 +252,75 @@ class MedicationInteractionChecker:
         if any(marker in lowered for marker in MONITOR_MARKERS):
             return "monitor"
         return "mentioned"
+
+
+def check_allergy_conflicts(resolved_candidate: Dict, allergies: list[dict]) -> list[dict]:
+    """
+    Screens a resolved candidate medication (from
+    MedicationInteractionChecker.resolve_medication) against a patient's
+    recorded allergies. This is a best-effort heuristic screen for clinician
+    review, NOT a definitive pharmacological safety determination -- it only
+    catches (a) the candidate's own name/aliases exactly matching a recorded
+    allergy name, and (b) a recorded allergy name appearing inside one of the
+    candidate's openFDA drug-class tags (e.g. an allergy to "penicillin"
+    against a candidate whose pharm_class includes "Penicillin-class
+    Antibacterial"). It cannot reason about cross-reactivity the class tags
+    don't capture, and openFDA's pharm_class_epc/cs/moa fields are sparsely
+    and inconsistently populated across label records in practice -- an empty
+    pharm_classes list on the candidate is common and does not mean "no drug
+    class exists," only that this particular label record didn't carry the
+    tag. The exact-name check has no such gap. The clinician remains the
+    final safety check either way -- this exists to surface likely conflicts
+    prominently, not to make the call.
+    """
+    if not resolved_candidate or not allergies:
+        return []
+
+    candidate_names = {
+        resolved_candidate.get("query_name", ""),
+        resolved_candidate.get("canonical_name", ""),
+        *resolved_candidate.get("aliases", []),
+    }
+    candidate_names = {n.strip().lower() for n in candidate_names if n and n.strip()}
+    pharm_classes = resolved_candidate.get("pharm_classes", []) or []
+
+    flags: list[dict] = []
+    for allergy in allergies:
+        allergy_name = (allergy.get("name") or "").strip()
+        if not allergy_name:
+            continue
+        allergy_lower = allergy_name.lower()
+
+        if allergy_lower in candidate_names:
+            flags.append(
+                {
+                    "allergy_name": allergy_name,
+                    "match_type": "exact_name",
+                    "matched_text": allergy_name,
+                    "severity": allergy.get("severity") or "unknown",
+                    "summary": (
+                        f"Recorded allergy '{allergy_name}' matches the candidate "
+                        f"medication's own name/alias."
+                    ),
+                }
+            )
+            continue
+
+        for pharm_class in pharm_classes:
+            if allergy_lower and allergy_lower in pharm_class.lower():
+                flags.append(
+                    {
+                        "allergy_name": allergy_name,
+                        "match_type": "drug_class",
+                        "matched_text": pharm_class,
+                        "severity": allergy.get("severity") or "unknown",
+                        "summary": (
+                            f"Recorded allergy '{allergy_name}' appears in the candidate "
+                            f"medication's drug class '{pharm_class}' -- possible "
+                            f"cross-reactivity, confirm before prescribing."
+                        ),
+                    }
+                )
+                break
+
+    return flags

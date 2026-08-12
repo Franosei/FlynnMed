@@ -29,12 +29,44 @@ _TRANSLATION_ACTION = re.compile(
 )
 _PROFESSIONAL_EVIDENCE = re.compile(
     r"\b(?:clinical\s+trials?|systematic\s+reviews?|meta[- ]analys(?:is|es)|"
-    r"guidelines?|consensus\s+statement|latest\s+advancements?|recent\s+evidence|"
+    r"guidelines?|guidance|consensus\s+statement|latest\s+advancements?|recent\s+evidence|"
     r"landmark\s+trials?|indications?\s+and\s+contraindications?|"
     r"periprocedural|protocols?|implementation\s+framework)\b",
     re.IGNORECASE,
 )
 _CLINICAL_ROLE_KEYS = {"doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"}
+
+# A pure chart-data-lookup question ("what medication is she on", "does she have any
+# allergies") is fully answerable from data already loaded into the prompt (patient_history) --
+# it needs no external NHS/PubMed retrieval. _CHART_FIELD + _CHART_LOOKUP_ACTION are the
+# positive signal; _ADVISORY_SIGNAL is a deliberately broad negative override, since a false
+# positive here (skipping retrieval on a question that actually needed evidence) is worse than
+# a false negative (an unnecessary search) -- any evaluative/advisory language at all disqualifies
+# the lookup classification, regardless of how strongly the positive signal matched.
+_CHART_FIELD = re.compile(
+    r"\b(?:medications?|meds?|prescriptions?|drugs?|"
+    r"allerg(?:y|ies)|adverse\s+reactions?|"
+    r"conditions?|diagnos(?:is|es)|problem\s+list|comorbidit(?:y|ies)|"
+    r"vitals?|blood\s+pressure|\bBPs?\b|heart\s+rate|\bHR\b|temperature|weight|height|"
+    r"labs?|lab\s+results?|"
+    r"symptoms?|"
+    r"triage\s+(?:history|summary)|"
+    r"care\s+plans?)\b",
+    re.IGNORECASE,
+)
+_CHART_LOOKUP_ACTION = re.compile(
+    r"\b(?:what|which|list|show|recall|remind\s+me|"
+    r"when\s+(?:was|did)|does\s+(?:she|he|the\s+patient)\s+have|"
+    r"is\s+(?:she|he|the\s+patient)\s+(?:on|taking)|"
+    r"am\s+i\s+(?:on|taking)|recent(?:ly)?)\b",
+    re.IGNORECASE,
+)
+_ADVISORY_SIGNAL = re.compile(
+    r"\b(?:should|is\s+it\s+safe|appropriate|contraindicat\w*|interact\w*|"
+    r"adjust\w*|manage\w*|treat\w*|risk\s+of|why|caus\w*|recommend\w*|"
+    r"given\s+(?:her|his|their)|need\s+to|ok\s+to|okay\s+to|change\w*)\b",
+    re.IGNORECASE,
+)
 
 
 def _messages(
@@ -74,6 +106,19 @@ class TaskModeDecision:
                 "Preserve an assessment or plan supplied by the user as their stated content. For a requested field "
                 "that cannot be completed, write a short [Not provided] placeholder instead of guessing. Do not add "
                 "generic health headings, evidence commentary, or a disclaimer.\n"
+                + authorization_guard
+            )
+        if self.mode == "chart_lookup":
+            return (
+                "CONTROLLED TASK MODE: CHART LOOKUP\n"
+                "The user is asking a direct factual question about data already provided below "
+                "(medications, allergies, conditions, vitals, or similar record entries) -- this is "
+                "not a clinical-evidence question, answer only from that data. If the specific fact "
+                "asked for is not present in the data provided, say so plainly rather than guessing "
+                "or inferring it. Do not use [S#] citation markers -- there are no external sources "
+                "for this answer, it is a direct record lookup, not an evidence-grounded claim. You "
+                "may still give brief, relevant clinical context about what the data means, but do "
+                "not turn this into an evidence review or a treatment recommendation.\n"
                 + authorization_guard
             )
         if self.mode == "translation":
@@ -116,7 +161,7 @@ class TaskModeDecision:
     ) -> str:
         """Return a bounded quality checklist that cannot change disposition."""
 
-        if self.is_transformation:
+        if self.is_transformation or self.mode == "chart_lookup":
             return ""
         if self.mode == "professional_evidence_review":
             return (
@@ -211,10 +256,33 @@ def decide_task_mode(
             ),
         )
 
+    authenticated_clinician = authenticated_role_key in _CLINICAL_ROLE_KEYS
+
+    # Must be checked before the authenticated-clinician catch-all just below --
+    # that check alone routes ANY authenticated clinician's question to
+    # professional_evidence_review unconditionally, so chart_lookup could never
+    # fire for a clinician if it were checked after. Two-sided and deliberately
+    # conservative: both a chart-field noun AND lookup phrasing are required, and
+    # any evaluative/advisory language at all disqualifies it -- a false positive
+    # here (skipping retrieval on a question that needed real evidence) is worse
+    # than a false negative (an unnecessary search).
+    is_chart_lookup = bool(
+        _CHART_FIELD.search(current)
+        and _CHART_LOOKUP_ACTION.search(current)
+        and not _ADVISORY_SIGNAL.search(current)
+        and not _PROFESSIONAL_EVIDENCE.search(current)
+    )
+    if is_chart_lookup:
+        return TaskModeDecision(
+            mode="chart_lookup",
+            presentation_audience=("professional" if authenticated_clinician else "patient"),
+            requires_evidence_retrieval=False,
+            reason="direct factual question about already-loaded record data",
+        )
+
     professional_signals = sum(
         1 for text in [*user_history, current] if _PROFESSIONAL_EVIDENCE.search(text)
     )
-    authenticated_clinician = authenticated_role_key in _CLINICAL_ROLE_KEYS
     if (
         authenticated_clinician
         or professional_signals >= 2

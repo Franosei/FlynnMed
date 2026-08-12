@@ -10,6 +10,7 @@
 *.userosscache
 *.sln.docstates
 *.env
+.env.local
 users.json
 data/
 

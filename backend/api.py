@@ -36,9 +36,14 @@ from backend.clinician_access import (
     revoke_access,
 )
 from backend.clinician_chat_data import load_patient_data_bundle
+from backend.medication_proposal import (
+    generate_medication_proposal,
+    has_unresolved_safety_flags,
+    recheck_candidate_safety,
+)
 from backend.models.account import Account, AccountKind
 from backend.models.audit import AuditAction, AuditLogEntry, AuditOutcome
-from backend.models.patient import Patient, PreVisitChatMessage, PreVisitSummary
+from backend.models.patient import Patient, PreVisitChatMessage, PreVisitSummary, ProposedMedication
 from backend.clinical_context_guard import (
     adjudicate_patient_context,
     build_review_required_plan,
@@ -52,6 +57,12 @@ from backend.db import get_db, get_session_factory
 from backend.email_service import send_clinical_note_email, send_urgent_care_alert
 from backend.feedback_store import save_feedback
 from backend.fhir.stub_client import fhir_integration_status
+from backend.document_analysis_agent import (
+    DocumentAnalysisError,
+    MAX_DOCUMENT_BYTES,
+    SUPPORTED_DOCUMENT_MIME_TYPES,
+    normalize_document_mime_type,
+)
 from backend.image_analysis_agent import (
     ImageAnalysisError,
     MAX_IMAGE_BYTES,
@@ -468,6 +479,27 @@ class PrevisitSummaryDraftPayload(BaseModel):
 
 class PrevisitChatPayload(BaseModel):
     message: str
+
+
+class MedicationProposalGeneratePayload(BaseModel):
+    clinical_situation: str
+
+
+class MedicationProposalDraftPayload(BaseModel):
+    clinical_situation_text: str
+    candidate_medication_name: str
+    candidate_dose_frequency: str
+    rationale_text: str
+    citations: List[Dict] = []
+
+
+class MedicationProposalReleasePayload(BaseModel):
+    clinical_situation_text: str
+    candidate_medication_name: str
+    candidate_dose_frequency: str
+    rationale_text: str
+    citations: List[Dict] = []
+    override_reason: str = ""
 
 
 @app.get("/api/health")
@@ -1214,6 +1246,14 @@ def previsit_chat(
     chat_history = [{"role": t.role, "content": t.content} for t in transcript_rows]
 
     role_key = _clinician_role_label(clinician)
+    # The target_patient_data seam sources persona/role resolution from
+    # user_profile.clinical_role, which is the PATIENT's own account role by
+    # default (see rag_system.py's _prepare_answer_bundle docstring) -- wrong
+    # here, this chat is asked by and answered for the clinician. Same fix
+    # already applied in medication_proposal.py's generate_medication_proposal;
+    # load_patient_data_bundle itself is untouched.
+    bundle = dict(bundle)
+    bundle["user_profile"] = {**bundle["user_profile"], "clinical_role": role_key}
     now = _utc_now()
 
     _save_previsit_chat_message(
@@ -1272,6 +1312,7 @@ def previsit_chat(
                         "role": "assistant",
                         "content": assistant_content,
                         "sources": payload_final.get("sources", []),
+                        "follow_up_questions": payload_final.get("follow_up_questions", []),
                     },
                 }
             )
@@ -1280,6 +1321,247 @@ def previsit_chat(
             yield _json_line({"type": "error", "message": str(exc)})
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+
+# ---------------------------------------------------------------------------
+# Clinician medication proposals
+# ---------------------------------------------------------------------------
+
+
+def _proposed_medication_dict(row: ProposedMedication) -> Dict:
+    return {
+        "id": str(row.id),
+        "status": row.status,
+        "generation_trigger": row.generation_trigger,
+        "clinical_situation_text": row.clinical_situation_text,
+        "candidate_medication_name": row.candidate_medication_name,
+        "candidate_dose_frequency": row.candidate_dose_frequency,
+        "rationale_text": row.rationale_text,
+        "citations": row.citations,
+        "safety_check": row.safety_check,
+        "override_reason": row.override_reason or "",
+        "authored_by_display_name": row.authored_by_display_name,
+        "authored_by_clinical_role": row.authored_by_clinical_role,
+        "authored_by_organization": row.authored_by_organization,
+        "released_at": row.released_at.isoformat() if row.released_at else "",
+        "released_by_display_name": row.released_by_display_name,
+        "released_by_clinical_role": row.released_by_clinical_role,
+        "created_at": row.created_at.isoformat(),
+    }
+
+
+@app.post("/api/clinician/patients/{patient_id}/medication-proposals")
+def generate_medication_proposal_endpoint(
+    patient_id: str,
+    payload: MedicationProposalGeneratePayload,
+    username: str = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Dict:
+    """
+    Generates a new AI-drafted medication proposal: real retrieval-grounded
+    candidate + dose, deterministically safety-checked against the patient's
+    actual current medications/allergies. Draft only -- nothing here is ever
+    visible to the patient until an explicit release (see release below).
+    """
+    situation = payload.clinical_situation.strip()
+    if not situation:
+        raise HTTPException(status_code=400, detail="Describe the clinical situation.")
+
+    try:
+        clinician, patient, grant = require_active_previsit_access(
+            db, username, patient_id, action=AuditAction.clinician_generate_medication_proposal
+        )
+    except AccessWorkflowError as exc:
+        raise _access_error(db, exc) from exc
+
+    role_key = _clinician_role_label(clinician)
+    result = generate_medication_proposal(
+        db=db,
+        patient=patient,
+        clinical_situation=situation,
+        rag_engine=_get_rag_engine(),
+        username=username,
+        clinician_role_label=role_key,
+    )
+    if result.get("status") != "ok":
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Could not find evidence supporting a specific medication for this "
+                "situation. Try describing it more specifically, or this may not be "
+                "a case with a clear pharmacological option."
+            ),
+        )
+
+    row = ProposedMedication(
+        id=uuid.uuid4(),
+        patient_id=patient.id,
+        status="draft",
+        generation_trigger="ai_generated",
+        clinical_situation_text=result["clinical_situation_text"],
+        candidate_medication_name=result["candidate_medication_name"],
+        candidate_dose_frequency=result["candidate_dose_frequency"],
+        rationale_text=result["rationale_text"],
+        citations=result["citations"],
+        safety_check=result["safety_check"],
+        trace_id=result.get("trace_id") or None,
+        authored_by_account_id=clinician.id,
+        authored_by_display_name=clinician.display_name,
+        authored_by_clinical_role=role_key,
+        authored_by_organization=clinician.organization,
+        consent_grant_id=grant.id,
+    )
+    db.add(row)
+    db.flush()
+    return _proposed_medication_dict(row)
+
+
+@app.patch("/api/clinician/patients/{patient_id}/medication-proposals/draft")
+def save_medication_proposal_draft(
+    patient_id: str,
+    payload: MedicationProposalDraftPayload,
+    username: str = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Dict:
+    """
+    Persists the clinician's hand-edited draft as a new append-only row.
+    Unlike a plain-text summary edit, an edited candidate_medication_name
+    must be re-checked against the patient's real medications/allergies
+    server-side here -- a stale safety_check computed for the AI's original
+    suggestion must never carry over to a clinician-changed drug name.
+    """
+    try:
+        clinician, patient, grant = require_active_previsit_access(
+            db, username, patient_id, action=AuditAction.clinician_edit_medication_proposal_draft
+        )
+    except AccessWorkflowError as exc:
+        raise _access_error(db, exc) from exc
+
+    role_key = _clinician_role_label(clinician)
+    safety_check = recheck_candidate_safety(db, patient, payload.candidate_medication_name.strip())
+
+    row = ProposedMedication(
+        id=uuid.uuid4(),
+        patient_id=patient.id,
+        status="draft",
+        generation_trigger="clinician_edited",
+        clinical_situation_text=payload.clinical_situation_text,
+        candidate_medication_name=payload.candidate_medication_name.strip(),
+        candidate_dose_frequency=payload.candidate_dose_frequency.strip(),
+        rationale_text=payload.rationale_text,
+        citations=payload.citations,
+        safety_check=safety_check,
+        authored_by_account_id=clinician.id,
+        authored_by_display_name=clinician.display_name,
+        authored_by_clinical_role=role_key,
+        authored_by_organization=clinician.organization,
+        consent_grant_id=grant.id,
+    )
+    db.add(row)
+    db.flush()
+    return _proposed_medication_dict(row)
+
+
+@app.post("/api/clinician/patients/{patient_id}/medication-proposals/release")
+def release_medication_proposal(
+    patient_id: str,
+    payload: MedicationProposalReleasePayload,
+    username: str = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Dict:
+    """
+    The only code path anywhere that writes a status="released" row --
+    nothing reaches the patient's portal until this explicit, separate
+    action is called. Recomputes safety_check fresh from the submitted
+    candidate against the patient's actual current records server-side
+    (never trusts a client-supplied safety_check blob) and requires a
+    documented override_reason if unresolved flags remain.
+    """
+    try:
+        clinician, patient, grant = require_active_previsit_access(
+            db, username, patient_id, action=AuditAction.clinician_release_medication_proposal
+        )
+    except AccessWorkflowError as exc:
+        raise _access_error(db, exc) from exc
+
+    candidate_name = payload.candidate_medication_name.strip()
+    safety_check = recheck_candidate_safety(db, patient, candidate_name)
+    override_reason = payload.override_reason.strip()
+    if has_unresolved_safety_flags(safety_check) and not override_reason:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This candidate has an unresolved allergy or interaction flag. "
+                "Enter an override reason to release it anyway."
+            ),
+        )
+
+    role_key = _clinician_role_label(clinician)
+    now = datetime.now(timezone.utc)
+    row = ProposedMedication(
+        id=uuid.uuid4(),
+        patient_id=patient.id,
+        status="released",
+        generation_trigger="released",
+        clinical_situation_text=payload.clinical_situation_text,
+        candidate_medication_name=candidate_name,
+        candidate_dose_frequency=payload.candidate_dose_frequency.strip(),
+        rationale_text=payload.rationale_text,
+        citations=payload.citations,
+        safety_check=safety_check,
+        override_reason=override_reason or None,
+        authored_by_account_id=clinician.id,
+        authored_by_display_name=clinician.display_name,
+        authored_by_clinical_role=role_key,
+        authored_by_organization=clinician.organization,
+        consent_grant_id=grant.id,
+        released_at=now,
+        released_by_account_id=clinician.id,
+        released_by_display_name=clinician.display_name,
+        released_by_clinical_role=role_key,
+    )
+    db.add(row)
+    db.flush()
+    return _proposed_medication_dict(row)
+
+
+@app.get("/api/my-medication-proposals")
+def list_my_medication_proposals(
+    username: str = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Dict:
+    """Patient-side read -- only ever returns status="released" rows for the
+    caller's own patient record, newest first."""
+    account = db.execute(
+        select(Account).where(Account.username == username.strip().lower())
+    ).scalar_one_or_none()
+    if account is None or account.account_kind != AccountKind.patient:
+        raise HTTPException(status_code=403, detail="Patient account required.")
+    patient = db.execute(
+        select(Patient).where(Patient.account_id == account.id)
+    ).scalar_one_or_none()
+    if patient is None:
+        return {"proposals": []}
+
+    db.add(
+        AuditLogEntry(
+            actor_account_id=account.id,
+            actor_role_at_time=account.account_kind.value,
+            patient_id=patient.id,
+            action=AuditAction.patient_read_self,
+            resource_type="patient",
+            resource_id=patient.patient_id,
+            outcome=AuditOutcome.success,
+        )
+    )
+    db.flush()
+
+    rows = db.execute(
+        select(ProposedMedication)
+        .where(ProposedMedication.patient_id == patient.id, ProposedMedication.status == "released")
+        .order_by(ProposedMedication.created_at.desc())
+    ).scalars().all()
+    return {"proposals": [_proposed_medication_dict(r) for r in rows]}
 
 
 @app.get("/api/previsit-summaries")
@@ -1434,6 +1716,137 @@ def stream_chat(payload: ChatPayload, username: str = Depends(current_user)) -> 
                 "## Response unavailable\n"
                 f"I ran into an issue while building the answer: `{exc}`.\n\n"
                 "Please try again, or narrow the question if the request is very broad."
+            )
+            assistant_entry = {
+                "role": "assistant",
+                "content": error_message,
+                "timestamp": _utc_now(),
+                "sources": [],
+                "metadata": {},
+            }
+            UserStore.append_chat(username, assistant_entry)
+            yield _json_line({"type": "error", "message": str(exc), "assistant_message": assistant_entry})
+            yield _json_line({"type": "snapshot", "snapshot": _snapshot(username)})
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+
+@app.post("/api/chat/document/stream")
+async def stream_document_chat(
+    message: str = Form(""),
+    document: UploadFile = File(...),
+    username: str = Depends(current_user),
+) -> StreamingResponse:
+    user_note = message.strip()
+    filename = _safe_filename(document.filename or "document.pdf")
+    mime_type = normalize_document_mime_type(document.content_type or "", filename)
+    if mime_type not in SUPPORTED_DOCUMENT_MIME_TYPES:
+        raise HTTPException(status_code=400, detail="Upload a PDF document.")
+
+    document_bytes = await document.read()
+    if not document_bytes:
+        raise HTTPException(status_code=400, detail="The uploaded document was empty.")
+    if len(document_bytes) > MAX_DOCUMENT_BYTES:
+        max_mb = max(1, MAX_DOCUMENT_BYTES // (1024 * 1024))
+        raise HTTPException(status_code=400, detail=f"Document uploads must be {max_mb} MB or smaller.")
+
+    display_message = user_note or f"Please analyse uploaded document: {filename}"
+
+    def generate() -> Generator[bytes, None, None]:
+        try:
+            rag_engine = _get_rag_engine()
+            chat_history = UserStore.get_chat_history(username)
+        except Exception as exc:
+            yield _json_line({"type": "error", "message": f"Failed to start the document pipeline: {exc}"})
+            yield _json_line({"type": "done"})
+            return
+
+        now = _utc_now()
+        user_entry = {
+            "role": "user",
+            "content": display_message,
+            "timestamp": now,
+            "sources": [],
+            "metadata": {
+                "document_analysis_request": True,
+                "uploaded_document_name": filename,
+                "uploaded_document_mime": mime_type,
+            },
+        }
+        UserStore.append_chat(username, user_entry)
+        chat_history.append(user_entry)
+        yield _json_line({"type": "user_message", "message": user_entry})
+
+        try:
+            payload_final = None
+            streamed_answer_parts: List[str] = []
+            for event in rag_engine.stream_document_analysis_events(
+                document_bytes=document_bytes,
+                mime_type=mime_type,
+                filename=filename,
+                user_note=user_note,
+                chat_history=chat_history,
+                user=username,
+            ):
+                event_type = event.get("type")
+                if event_type == "status":
+                    yield _json_line({"type": "status", "message": event.get("message", "Working...")})
+                elif event_type == "token":
+                    delta = event.get("delta", "")
+                    streamed_answer_parts.append(delta)
+                    yield _json_line({"type": "token", "delta": delta})
+                elif event_type == "final":
+                    payload_final = event.get("payload")
+
+            if not payload_final:
+                raise RuntimeError("The document analysis pipeline did not return a payload.")
+
+            assistant_entry = {
+                "role": "assistant",
+                "content": payload_final["answer_markdown"],
+                "timestamp": _utc_now(),
+                "sources": payload_final.get("sources", []),
+                "trace_id": payload_final.get("trace", {}).get("trace_id"),
+                "metadata": {
+                    "personal_context": payload_final.get("personal_context", []),
+                    "longitudinal_memory": payload_final.get("longitudinal_memory", ""),
+                    "triage_summary": payload_final.get("triage_summary", {}),
+                    "medication_alerts": payload_final.get("medication_alerts", []),
+                    "resolved_medications": payload_final.get("resolved_medications", []),
+                    "trace": payload_final.get("trace", {}),
+                    "follow_up_questions": payload_final.get("follow_up_questions", []),
+                    "document_analysis": payload_final.get("document_analysis", {}),
+                    "document_original_question": payload_final.get("document_original_question", user_note),
+                    "uploaded_document_name": filename,
+                    "uploaded_document_mime": mime_type,
+                },
+            }
+
+            UserStore.append_chat(username, assistant_entry)
+            yield _json_line({"type": "assistant_message", "message": assistant_entry})
+            yield _json_line({"type": "snapshot", "snapshot": _snapshot(username)})
+            yield _json_line({"type": "done"})
+        except DocumentAnalysisError as exc:
+            error_message = (
+                "## Document Not Analysed\n\n"
+                f"{exc}\n\n"
+                "Please upload a clear PDF medical document."
+            )
+            assistant_entry = {
+                "role": "assistant",
+                "content": error_message,
+                "timestamp": _utc_now(),
+                "sources": [],
+                "metadata": {},
+            }
+            UserStore.append_chat(username, assistant_entry)
+            yield _json_line({"type": "error", "message": str(exc), "assistant_message": assistant_entry})
+            yield _json_line({"type": "snapshot", "snapshot": _snapshot(username)})
+        except Exception as exc:
+            error_message = (
+                "## Document Analysis Unavailable\n\n"
+                f"I ran into an issue while analysing the document: `{exc}`.\n\n"
+                "Please try again with a text-based PDF, or describe the content in text."
             )
             assistant_entry = {
                 "role": "assistant",

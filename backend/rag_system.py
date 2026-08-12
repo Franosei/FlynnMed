@@ -17,6 +17,7 @@ from backend.document_extractor import (
     extract_health_data_from_images,
 )
 from backend.clinical_orchestrator import ClinicalOrchestrator
+from backend.document_analysis_agent import DocumentAnalysisAgent, DocumentAnalysisError
 from backend.image_analysis_agent import ImageAnalysisAgent, ImageAnalysisError
 from backend.image_generator import ImageGenerator
 from backend.medication_checker import MedicationInteractionChecker
@@ -43,6 +44,7 @@ from backend.agentic_health_contract import (
 from backend.utils import (
     build_excerpt,
     extract_text_from_pdf,
+    extract_text_from_pdf_bytes,
     render_pdf_pages_to_images,
     render_vital_for_prompt,
 )
@@ -73,6 +75,7 @@ class RAGEngine:
             moderation=self.moderation,
         )
         self._image_analysis_agent = ImageAnalysisAgent(self.llm)
+        self._document_analysis_agent = DocumentAnalysisAgent(self.llm)
         self._anonymization_agent = AnonymizationAgent(self.llm)
         self._duplicate_agent = DuplicateDetectionAgent(self.llm)
         self._relevance_agent = DocumentRelevanceAgent(self.llm)
@@ -795,6 +798,7 @@ class RAGEngine:
                     user_profile=bundle.get("user_profile", {}),
                     patient_context=follow_up_context,
                     role_key=role_config.role_key if role_config else "patient",
+                    is_patient_scoped=bundle.get("target_patient_data_provided", False),
                 )
                 payload["follow_up_questions"] = follow_up_questions
             except Exception as exc:
@@ -878,6 +882,157 @@ class RAGEngine:
                 yield {"type": "final", "payload": payload}
             else:
                 yield event
+
+    def stream_document_analysis_events(
+        self,
+        document_bytes: bytes,
+        mime_type: str,
+        filename: str,
+        user_note: str = "",
+        chat_history: Optional[List[dict]] = None,
+        user: Optional[str] = None,
+    ) -> Generator[Dict, None, None]:
+        """
+        Streams uploaded-document analysis through the same agentic evidence
+        workflow as chat, after a strict clinical-document intake screen --
+        the text-document counterpart to stream_image_analysis_events. Never
+        touches document_extractor.py's personal-health-record ingestion
+        path (used by the "Documents" upload panel); this is a separate,
+        parallel capability for asking research/analysis questions about an
+        uploaded document in chat.
+        """
+        normalized_user = user.strip().lower() if user else None
+        yield {
+            "type": "status",
+            "message": "Checking whether the document is clinically relevant...",
+        }
+
+        try:
+            raw_text = extract_text_from_pdf_bytes(document_bytes)
+        except Exception as exc:
+            raise DocumentAnalysisError(f"Could not read this PDF: {exc}") from exc
+
+        if not raw_text.strip():
+            yield {
+                "type": "final",
+                "payload": self._build_document_refusal_payload(
+                    user_note=user_note,
+                    normalized_user=normalized_user,
+                    filename=filename,
+                    inspect_result={
+                        "analysis_status": "rejected",
+                        "reason_if_rejected": (
+                            "No readable text was found in this document -- it may be a scanned "
+                            "image rather than a text-based PDF. Try a text-based export, or "
+                            "upload it as an image instead."
+                        ),
+                        "uploaded_document_name": filename,
+                    },
+                ),
+            }
+            return
+
+        profile = UserStore.get_user_profile(normalized_user) if normalized_user else {}
+        try:
+            inspect_result = self._document_analysis_agent.inspect(
+                document_text=raw_text,
+                filename=filename,
+                user_note=user_note,
+                user_profile=profile,
+            )
+        except DocumentAnalysisError:
+            raise
+        except Exception as exc:
+            raise DocumentAnalysisError(f"Document analysis is unavailable: {exc}") from exc
+
+        if inspect_result.get("analysis_status") != "accepted":
+            yield {
+                "type": "final",
+                "payload": self._build_document_refusal_payload(
+                    user_note=user_note,
+                    normalized_user=normalized_user,
+                    filename=filename,
+                    inspect_result=inspect_result,
+                ),
+            }
+            return
+
+        yield {
+            "type": "status",
+            "message": "Searching clinical guidance and research for the document findings...",
+        }
+        clinical_question = self._document_analysis_agent.build_clinical_question(
+            inspect_result=inspect_result,
+            user_note=user_note,
+        )
+        extra_trace = {
+            "document_analysis": inspect_result,
+            "document_original_question": user_note,
+            "document_uploaded_filename": filename,
+            "document_analysis_model": self._document_analysis_agent.model,
+        }
+
+        for event in self.stream_user_question_events(
+            question=clinical_question,
+            chat_history=chat_history,
+            user=user,
+            allow_generated_media=False,
+            extra_trace_metadata=extra_trace,
+            require_live_evidence=True,
+        ):
+            if event.get("type") == "final":
+                payload = event.get("payload", {})
+                payload["document_analysis"] = inspect_result
+                payload["document_original_question"] = user_note
+                payload.setdefault("trace", {}).update(extra_trace)
+                yield {"type": "final", "payload": payload}
+            else:
+                yield event
+
+    def _build_document_refusal_payload(
+        self,
+        user_note: str,
+        normalized_user: Optional[str],
+        filename: str,
+        inspect_result: Dict,
+    ) -> Dict:
+        reason = (
+            inspect_result.get("reason_if_rejected")
+            or "This document does not contain clear medical content that can be safely analysed."
+        )
+        answer = (
+            "## Document Not Analysed\n\n"
+            f"{reason}\n\n"
+            "Please upload a clear medical document, such as a lab or imaging report, clinical "
+            "letter, discharge summary, research paper, or guideline PDF. I can only analyse "
+            "medical documents and will not assess unrelated files."
+        )
+        trace_id = f"trace-{uuid4().hex[:12]}"
+        trace = {
+            "trace_id": trace_id,
+            "created_at": self._utc_now(),
+            "question": user_note or f"Uploaded document for analysis: {filename}",
+            "answer_preview": answer[:280],
+            "sources": [],
+            "personal_context": [],
+            "retrieval_mode": "document_rejected",
+            "risk_level": "routine",
+            "document_analysis": inspect_result,
+        }
+        if normalized_user:
+            UserStore.save_interaction_trace(normalized_user, trace)
+        return {
+            "answer_markdown": answer,
+            "answer_text": answer,
+            "sources": [],
+            "personal_context": [],
+            "longitudinal_memory": "",
+            "triage_summary": {},
+            "medication_alerts": [],
+            "resolved_medications": [],
+            "trace": trace,
+            "document_analysis": inspect_result,
+        }
 
     def _prepare_answer_bundle(
         self,
@@ -1018,6 +1173,11 @@ class RAGEngine:
             context_graph=context_graph,
             chat_history=chat_history,
         )
+        # Sole signal the follow-up-question generator (stream_user_question_events)
+        # has for distinguishing "clinician asking about a specific patient's chart"
+        # from "clinician asking a general, patient-agnostic evidence question" --
+        # see generate_follow_up_questions' is_patient_scoped parameter.
+        bundle["target_patient_data_provided"] = target_patient_data is not None
         if bundle.get("kind") == "answer":
             medication_check = self._build_medication_check(
                 question=question,

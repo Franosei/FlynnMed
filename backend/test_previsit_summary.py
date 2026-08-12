@@ -13,12 +13,12 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
 
 import backend.api as api
 from backend.clinician_access import (
-    AccessWorkflowError,
     decide_access_request,
     request_patient_access,
     revoke_access,
@@ -122,29 +122,36 @@ class _FakeSummaryPayload:
 
 
 def test_no_grant_denies_generate_and_chat(db_session):
+    # These call the FastAPI endpoint functions directly, not the underlying
+    # require_active_previsit_access -- the endpoints catch AccessWorkflowError
+    # and convert it to HTTPException(403) (see api.py's _access_error), so
+    # that's what propagates here, not AccessWorkflowError itself.
     clinician = _account(db_session, AccountKind.clinician, "doctor")
     patient_account = _account(db_session, AccountKind.patient, "patient")
     patient = _patient(db_session, patient_account)
     _condition(db_session, patient)
 
-    with pytest.raises(AccessWorkflowError, match="No active access"):
+    with pytest.raises(HTTPException, match="No active access") as exc_info:
         api.generate_previsit_summary(patient.patient_id, username=clinician.username, db=db_session)
+    assert exc_info.value.status_code == 403
 
-    with pytest.raises(AccessWorkflowError, match="No active access"):
+    with pytest.raises(HTTPException, match="No active access") as exc_info:
         api.save_previsit_summary_draft(
             patient.patient_id,
             _FakeSummaryPayload("edited text"),
             username=clinician.username,
             db=db_session,
         )
+    assert exc_info.value.status_code == 403
 
-    with pytest.raises(AccessWorkflowError, match="No active access"):
+    with pytest.raises(HTTPException, match="No active access") as exc_info:
         api.release_previsit_summary(
             patient.patient_id,
             _FakeSummaryPayload("final text"),
             username=clinician.username,
             db=db_session,
         )
+    assert exc_info.value.status_code == 403
 
 
 def test_generate_populates_authorship_and_defaults_to_draft(db_session):
@@ -270,12 +277,41 @@ def test_audit_rows_recorded_for_generate_and_release(db_session):
             assert row.consent_grant_id is not None
 
 
-def test_previsit_chat_message_persisted_with_authorship(db_session):
+class _NoCommitSessionWrapper:
+    """_save_previsit_chat_message intentionally opens its own DB session
+    (it's called from inside a StreamingResponse generator in production, see
+    its docstring) -- but that means it can't see this test's fixture rows,
+    which live in db_session's own uncommitted transaction. Wrapping db_session
+    itself (with commit() downgraded to flush()) keeps the write in the same
+    transaction so the test's own subsequent read can see it, while the
+    db_session fixture's rollback still discards everything at the end --
+    same test-isolation guarantee as every other test in this file, without
+    ever really committing to the database."""
+
+    def __init__(self, session):
+        self._session = session
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def add(self, obj):
+        self._session.add(obj)
+
+    def commit(self):
+        self._session.flush()
+
+
+def test_previsit_chat_message_persisted_with_authorship(db_session, monkeypatch):
     clinician = _account(db_session, AccountKind.clinician, "doctor")
     patient_account = _account(db_session, AccountKind.patient, "patient")
     patient = _patient(db_session, patient_account)
     _condition(db_session, patient)
     grant_id = _grant_active_access(db_session, clinician, patient)
+
+    monkeypatch.setattr(api, "get_session_factory", lambda: (lambda: _NoCommitSessionWrapper(db_session)))
 
     api._save_previsit_chat_message(
         patient_id=patient.id,

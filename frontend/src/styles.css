@@ -1261,6 +1261,16 @@ label {
   line-height: 1.6;
 }
 
+.previsit-draft-preview {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+  background: var(--surface-2);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
 .markdown h1 { font-size: 1.15rem; margin: 1rem 0 0.4rem; }
 .markdown h2 { font-size: 1.05rem; margin: 0.9rem 0 0.35rem; }
 .markdown h3 { font-size: 0.95rem; margin: 0.8rem 0 0.3rem; }
@@ -1319,6 +1329,18 @@ label {
   margin-top: 0.25rem;
   color: rgba(255, 255, 255, 0.82);
   font-size: 0.78rem;
+}
+
+.uploaded-document-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.55rem;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.92);
 }
 
 .triage-details {

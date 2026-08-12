@@ -213,3 +213,87 @@ def test_other_clinician_is_not_routed_as_a_doctor():
 
     assert role.role_key == "healthcare_professional"
     assert role.display_label == "Other Clinician"
+
+
+def test_chart_lookup_detects_simple_factual_questions_before_clinician_catchall():
+    """
+    The chart_lookup check must run BEFORE the authenticated-clinician
+    catch-all that otherwise routes every clinician question to
+    professional_evidence_review unconditionally -- this is a regression
+    guard for exactly that ordering.
+    """
+    for question in (
+        "What was the recent medication?",
+        "Does she have any allergies?",
+        "What was her last BP reading?",
+        "What are her current medications?",
+    ):
+        decision = decide_task_mode(question, chat_history=None, authenticated_role_key="doctor")
+        assert decision.mode == "chart_lookup", question
+        assert decision.requires_evidence_retrieval is False
+        assert decision.presentation_audience == "professional"
+
+
+def test_chart_lookup_also_fires_for_a_patient_asking_about_their_own_chart():
+    decision = decide_task_mode(
+        "What medications am I on?", chat_history=None, authenticated_role_key="patient"
+    )
+    assert decision.mode == "chart_lookup"
+    assert decision.presentation_audience == "patient"
+
+
+def test_chart_lookup_does_not_fire_for_questions_needing_real_clinical_evidence():
+    """
+    The safety-critical negative cases: a chart field being mentioned is not
+    enough on its own -- any evaluative/advisory/causal-reasoning language
+    must fall through to the normal evidence-retrieval path instead. A false
+    positive here (skipping retrieval on a question that needed real
+    evidence) is worse than the unnecessary search a false negative costs.
+    """
+    for question in (
+        "Is the patient's current dose of metformin appropriate given their eGFR?",
+        "Should we adjust her warfarin given this new medication?",
+        "What does current guidance say about her blood pressure target?",
+        "What is the latest evidence on treating her hypertension?",
+        "What is causing her elevated blood pressure?",
+        "Why does she have recurrent UTIs?",
+        "What treatment would you recommend for her condition?",
+    ):
+        decision = decide_task_mode(question, chat_history=None, authenticated_role_key="doctor")
+        assert decision.mode != "chart_lookup", question
+
+
+def test_chart_lookup_completion_block_is_empty():
+    decision = decide_task_mode(
+        "What was the recent medication?", chat_history=None, authenticated_role_key="doctor"
+    )
+    assert decision.completion_block("administrative") == ""
+
+
+def test_chart_lookup_prompt_suppresses_citations_but_keeps_clinical_commentary():
+    helper = object.__new__(LLMHelper)
+    captured = {}
+
+    def _capture(messages, model=None):
+        captured["messages"] = messages
+        return "answer"
+
+    helper._complete_response = _capture
+    decision = decide_task_mode(
+        "What was the recent medication?", chat_history=None, authenticated_role_key="doctor"
+    )
+
+    helper.answer_question(
+        question="What was the recent medication?",
+        context="Current medications: Metformin, Warfarin",
+        task_mode=decision,
+    )
+
+    system_prompt = captured["messages"][0]["content"]
+    user_prompt = captured["messages"][1]["content"]
+    assert "CONTROLLED TASK MODE: CHART LOOKUP" in system_prompt
+    assert "do not add [S#]" in user_prompt
+    assert "Available role-appropriate headings" not in user_prompt
+    # Unlike transformation mode, chart_lookup does NOT suppress clinical
+    # commentary -- only the is_transformation branch says that.
+    assert "do not append clinical commentary" not in user_prompt

@@ -31,6 +31,9 @@ class AuditAction(str, enum.Enum):
     clinician_edit_previsit_summary_draft = "clinician_edit_previsit_summary_draft"
     clinician_release_previsit_summary = "clinician_release_previsit_summary"
     clinician_chat_previsit = "clinician_chat_previsit"
+    clinician_generate_medication_proposal = "clinician_generate_medication_proposal"
+    clinician_edit_medication_proposal_draft = "clinician_edit_medication_proposal_draft"
+    clinician_release_medication_proposal = "clinician_release_medication_proposal"
 
 
 class AuditOutcome(str, enum.Enum):

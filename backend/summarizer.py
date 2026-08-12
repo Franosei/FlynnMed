@@ -77,9 +77,9 @@ class LLMHelper:
                     f"{operating_contract_prompt(selected_skills or ['response_validation'], current_location)}\n\n"
                     f"{task_mode.prompt_block() if task_mode else ''}\n\n"
                     "CORE RULES:\n"
-                    "0. Follow the CONTROLLED TASK MODE when one is supplied. For literal documentation or "
-                    "translation, its output constraints override clinical headings, evidence, citation, and "
-                    "patient-advice instructions below.\n"
+                    "0. Follow the CONTROLLED TASK MODE when one is supplied. For literal documentation, "
+                    "translation, or a chart-data lookup, its output constraints override clinical headings, "
+                    "evidence, citation, and patient-advice instructions below.\n"
                     "1. Use only the supplied evidence dossier and conversation context.\n"
                     "2. Use concise markdown with the role-appropriate section headings provided.\n"
                     "3. MANDATORY CITATIONS: every specific clinical claim -- a mechanism, causal explanation, "
@@ -146,10 +146,20 @@ class LLMHelper:
             )
 
         is_transformation = bool(task_mode and task_mode.is_transformation)
+        is_chart_lookup = bool(task_mode and task_mode.mode == "chart_lookup")
         if is_transformation:
             response_instructions = (
                 "Follow the controlled transformation mode exactly. Do not use role-oriented health headings, "
                 "do not add citations, and do not append clinical commentary or follow-up questions."
+            )
+        elif is_chart_lookup:
+            response_instructions = (
+                "Answer directly and specifically from the chart data given above -- this is a record lookup, "
+                "not an evidence review, so do not use role-oriented health headings and do not add [S#] "
+                "citations (there are no external sources for this answer). A short, direct answer is "
+                "correct; do not pad it with an emergency, differential, evidence, or monitoring section "
+                "that wasn't asked for. If the specific fact requested isn't present in the data above, say "
+                "so plainly rather than guessing."
             )
         else:
             response_instructions = (
@@ -179,12 +189,12 @@ class LLMHelper:
         banner_instruction = ""
         if escalation_banner:
             banner_instruction = (
-                f"IMPORTANT: Begin your response with this escalation notice verbatim:\n"
-                f"{escalation_banner}\n\n"
-                "Because the escalation notice is already at the top, do NOT repeat or paraphrase "
-                "its criteria anywhere in the body sections. For any 'Escalate Now If' or "
-                "'Get Urgent Help If' heading, write only: 'See escalation notice above.' "
-                "Do not list the same triggers again.\n\n"
+                "IMPORTANT: An escalation notice will be shown automatically directly above your "
+                "response -- do NOT write, repeat, or paraphrase it or its wording anywhere in your "
+                "answer. Do not open your answer with your own escalation/important notice; start "
+                "directly with the substantive content. For any 'Escalate Now If' or 'Get Urgent "
+                "Help If' heading, write only: 'See escalation notice above.' Do not list the same "
+                "triggers again.\n\n"
             )
 
         memory_text = self._render_longitudinal_memory(longitudinal_memory)
@@ -471,6 +481,81 @@ class LLMHelper:
                 )
         return result
 
+    def extract_medication_proposal(
+        self,
+        answer_markdown: str,
+        source_briefings: list[dict],
+    ) -> dict:
+        """
+        Extracts ONE specific candidate medication name + dose/frequency from
+        answer_markdown -- but ONLY if the answer explicitly names a specific
+        drug and dosing/frequency. Never infers or invents a candidate that
+        isn't actually stated. answer_markdown is expected to have already
+        passed check_claim_source_alignment/apply_claim_corrections (i.e. it's
+        the cited, corrected answer_markdown from a real retrieval-backed
+        response), so this is a constrained-extraction step over already-
+        grounded text, not a fresh clinical judgment call of its own.
+
+        Returns {} if the answer doesn't name a specific drug + dose/frequency
+        -- callers must treat that as "no candidate," not retry or guess.
+        Otherwise returns {"medication_name": str, "dose_frequency": str,
+        "source_ids": [str]}.
+        """
+        if not answer_markdown or not source_briefings:
+            return {}
+
+        source_block = "\n".join(
+            f"[{s['source_id']}] {s.get('title', '')}" for s in source_briefings[:8]
+        )
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You extract a single candidate medication proposal from a clinical answer, "
+                        "if one is actually present. Look for a SPECIFIC named drug (generic or brand "
+                        "name) together with a SPECIFIC dose or frequency (e.g. '500mg twice daily', "
+                        "'one tablet at bedtime'). Do not infer a drug class, do not guess a dose that "
+                        "isn't stated, and do not invent a candidate the answer doesn't actually name -- "
+                        "if the answer only discusses non-pharmacological options, defers to a "
+                        "clinician without naming a specific drug, or names a drug with no dose/"
+                        "frequency given, there is no candidate.\n"
+                        "If a candidate is present, set source_ids to the [S#] ids (exact bracketed "
+                        "form, e.g. 'S1') from the sources below that support this specific "
+                        "medication/dose -- leave empty if none directly support it.\n"
+                        "Return a JSON object: {\"has_candidate\": bool, \"medication_name\": str, "
+                        '"dose_frequency": str, "source_ids": [str]}. If has_candidate is false, '
+                        "the other fields should be empty."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Sources:\n{source_block}\n\n"
+                        f"Answer:\n{answer_markdown[:2000]}\n\n"
+                        "Return only valid JSON."
+                    ),
+                },
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        raw = response.choices[0].message.content.strip()
+        payload = json.loads(raw)
+        if not payload.get("has_candidate"):
+            return {}
+        medication_name = str(payload.get("medication_name", "")).strip()
+        dose_frequency = str(payload.get("dose_frequency", "")).strip()
+        if not medication_name or not dose_frequency:
+            return {}
+        return {
+            "medication_name": medication_name,
+            "dose_frequency": dose_frequency,
+            "source_ids": [str(s) for s in payload.get("source_ids", [])],
+        }
+
     def apply_claim_corrections(
         self,
         answer_markdown: str,
@@ -576,7 +661,32 @@ class LLMHelper:
         user_profile: Optional[dict] = None,
         patient_context: Optional[str] = None,
         role_key: str = "patient",
+        is_patient_scoped: bool = False,
     ) -> list[str]:
+        """
+        Three distinct chip styles depending on who's asking and about whom:
+        - patient (and caregiver -- not in the clinician tuple below, same as
+          this codebase's other role checks): first-person "confirm this
+          about yourself" chips, unchanged from the original design.
+        - clinician, general/patient-agnostic chat (Evidence Review, or
+          image/document analysis there -- is_patient_scoped=False): chips
+          about terminology/mechanisms/differentials/evidence quality, never
+          in any patient's voice.
+        - clinician, viewing a specific patient's chart (previsit_chat --
+          is_patient_scoped=True): chips phrased as clinical actions an
+          examining clinician would check next, third-person about the
+          patient, never first-person.
+        """
+        is_clinician = role_key in (
+            "doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"
+        )
+        if not is_clinician:
+            context = "patient"
+        elif is_patient_scoped:
+            context = "clinician_patient_scoped"
+        else:
+            context = "clinician_general"
+
         profile_text = self._render_profile_summary(user_profile)
         patient_data = (
             patient_context or ""
@@ -595,56 +705,123 @@ class LLMHelper:
                     f"{m['role'].title()}: {m['content'].strip()}" for m in turns
                 )
 
+        if context == "patient":
+            system_prompt = (
+                "You generate clickable follow-up chips shown after a clinical answer.\n\n"
+                "A chip is a SHORT STATEMENT in the patient's voice -- something they might "
+                "want to CONFIRM as true about themselves to refine the answer. "
+                "Clicking a chip means the patient is saying 'yes, I have / experience this.'\n\n"
+                "STRICT RULES:\n"
+                "1. Chips must come from what the EVIDENCE AND ANSWER raised -- risk factors, "
+                "associated symptoms, red flags, lifestyle triggers, or family history the "
+                "research identified as relevant. Do NOT invent generic health questions.\n"
+                "2. Never ask something the patient already described in their question.\n"
+                "3. Never include source counts, numbers of papers, or any metadata from the "
+                "answer -- chips are about the PATIENT, not the evidence database.\n"
+                "4. Each chip 'display' must be a short first-person statement, max 8 words:\n"
+                "   GOOD: 'I also have a fever', 'My dad had a heart attack', "
+                "'Pain spreads to my jaw', 'I smoke about 10 a day'\n"
+                "   BAD: 'How long have you had symptoms?', '3 sources reviewed', "
+                "'Have you noticed any other symptoms?'\n"
+                "5. Each chip 'prompt' is what gets sent to the model -- it must:\n"
+                "   a) Start by identifying what the original question was about\n"
+                "   b) State the confirmation as a fact the patient is adding\n"
+                "   c) Ask how this changes or refines the answer\n"
+                "   Example: 'Regarding my sore throat question -- I also have a fever of "
+                "around 38.5°C. Does this change whether I need antibiotics or a GP visit?'\n\n"
+                'Return JSON: {\'questions\': [{"display": str, "prompt": str}, ...]}, '
+                "up to 5 items."
+            )
+        elif context == "clinician_general":
+            system_prompt = (
+                "You generate clickable follow-up chips shown after a clinical evidence-review "
+                "answer for a clinician doing general medical research -- this question is NOT "
+                "about a specific patient.\n\n"
+                "A chip is a SHORT, THIRD-PERSON research question that deepens or extends the "
+                "topic just discussed -- medical terminology, disease mechanisms, differential "
+                "considerations, or evidence quality/strength. NEVER phrase a chip as a patient "
+                "describing their own symptoms, and never address 'you' as if the clinician were "
+                "the patient.\n\n"
+                "STRICT RULES:\n"
+                "1. Chips must come from a term, mechanism, finding, or evidence gap the ANSWER "
+                "actually raised. Do NOT invent generic questions.\n"
+                "2. Never ask something already answered in the question or answer.\n"
+                "3. Each chip 'display' must be a short research question, max 10 words:\n"
+                "   GOOD: 'Explain the mechanism of this interaction', 'What are the differential "
+                "considerations?', 'How strong is this evidence?', 'Compare with an alternative "
+                "treatment'\n"
+                "   BAD: 'I also have a fever', 'Have you noticed other symptoms?' (patient-voice "
+                "or patient-directed phrasing)\n"
+                "4. Each chip 'prompt' is what gets sent to the model -- reference the original "
+                "topic and ask the follow-up research question directly.\n\n"
+                'Return JSON: {\'questions\': [{"display": str, "prompt": str}, ...]}, '
+                "up to 5 items."
+            )
+        else:  # clinician_patient_scoped
+            system_prompt = (
+                "You generate clickable follow-up chips shown after a clinician's chat answer "
+                "about a SPECIFIC patient's chart/record.\n\n"
+                "A chip is a SHORT, THIRD-PERSON clinical action or consideration an examining "
+                "clinician would want to check next about THIS patient -- never in the patient's "
+                "own voice, never first-person ('I have...'), always about the patient in third "
+                "person ('her', 'his', 'the patient').\n\n"
+                "STRICT RULES:\n"
+                "1. Chips must come from what the ANSWER or PATIENT RECORD raised -- a value to "
+                "check, a risk factor, an interaction to screen for, or a trend to review. Do NOT "
+                "invent generic questions.\n"
+                "2. Never ask something already answered.\n"
+                "3. Each chip 'display' must be a short third-person clinical action, max 10 words:\n"
+                "   GOOD: 'Check her renal function before dose escalation', 'Review his last "
+                "three HbA1c readings', 'Screen for interactions with her NSAID use'\n"
+                "   BAD: 'I also have a fever', 'Have you noticed...' (never first or second "
+                "person)\n"
+                "4. Each chip 'prompt' is what gets sent to the model -- reference the patient "
+                "and the original topic, phrased as a clinician's follow-up request.\n\n"
+                'Return JSON: {\'questions\': [{"display": str, "prompt": str}, ...]}, '
+                "up to 5 items."
+            )
+
+        if context == "clinician_general":
+            # The acting clinician's OWN profile/health-record data is irrelevant (and
+            # potentially confusing) for a patient-agnostic research question -- omit
+            # that block entirely rather than injecting the clinician's own vitals/meds.
+            user_content = (
+                f"Role: {role_key}\n"
+                + (
+                    f"Recent conversation:\n{recent_turns}\n\n"
+                    if recent_turns
+                    else ""
+                )
+                + f"Original question:\n{question}\n\n"
+                f"Answer given (read this to find a term, mechanism, or evidence gap "
+                f"raised but not yet explored):\n{answer}\n\n"
+                "Generate up to 5 chips. Each must be grounded in a specific point from "
+                "the answer above. The 'prompt' must reference the original topic so the "
+                "model knows exactly what conversation it is continuing. "
+                "Return only valid JSON."
+            )
+        else:
+            user_content = (
+                f"Role: {role_key}\n"
+                f"Patient profile:\n{profile_text}\n\n"
+                f"Patient health record:\n{patient_data}\n\n"
+                + (
+                    f"Recent conversation:\n{recent_turns}\n\n"
+                    if recent_turns
+                    else ""
+                )
+                + f"Original question:\n{question}\n\n"
+                f"Answer given (read this to find what risk factors, red flags, "
+                f"or associated findings were raised but not yet confirmed):\n{answer}\n\n"
+                "Generate up to 5 chips. Each must be grounded in a specific finding from "
+                "the answer above. The 'prompt' must reference the original topic so the "
+                "model knows exactly what conversation it is continuing. "
+                "Return only valid JSON."
+            )
+
         messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You generate clickable follow-up chips shown after a clinical answer.\n\n"
-                    "A chip is a SHORT STATEMENT in the patient's voice -- something they might "
-                    "want to CONFIRM as true about themselves to refine the answer. "
-                    "Clicking a chip means the patient is saying 'yes, I have / experience this.'\n\n"
-                    "STRICT RULES:\n"
-                    "1. Chips must come from what the EVIDENCE AND ANSWER raised -- risk factors, "
-                    "associated symptoms, red flags, lifestyle triggers, or family history the "
-                    "research identified as relevant. Do NOT invent generic health questions.\n"
-                    "2. Never ask something the patient already described in their question.\n"
-                    "3. Never include source counts, numbers of papers, or any metadata from the "
-                    "answer -- chips are about the PATIENT, not the evidence database.\n"
-                    "4. Each chip 'display' must be a short first-person statement, max 8 words:\n"
-                    "   GOOD: 'I also have a fever', 'My dad had a heart attack', "
-                    "'Pain spreads to my jaw', 'I smoke about 10 a day'\n"
-                    "   BAD: 'How long have you had symptoms?', '3 sources reviewed', "
-                    "'Have you noticed any other symptoms?'\n"
-                    "5. Each chip 'prompt' is what gets sent to the model -- it must:\n"
-                    "   a) Start by identifying what the original question was about\n"
-                    "   b) State the confirmation as a fact the patient is adding\n"
-                    "   c) Ask how this changes or refines the answer\n"
-                    "   Example: 'Regarding my sore throat question -- I also have a fever of "
-                    "around 38.5°C. Does this change whether I need antibiotics or a GP visit?'\n\n"
-                    'Return JSON: {\'questions\': [{"display": str, "prompt": str}, ...]}, '
-                    "up to 5 items."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Role: {role_key}\n"
-                    f"Patient profile:\n{profile_text}\n\n"
-                    f"Patient health record:\n{patient_data}\n\n"
-                    + (
-                        f"Recent conversation:\n{recent_turns}\n\n"
-                        if recent_turns
-                        else ""
-                    )
-                    + f"Original question:\n{question}\n\n"
-                    f"Answer given (read this to find what risk factors, red flags, "
-                    f"or associated findings were raised but not yet confirmed):\n{answer}\n\n"
-                    "Generate up to 5 chips. Each must be grounded in a specific finding from "
-                    "the answer above. The 'prompt' must reference the original topic so the "
-                    "model knows exactly what conversation it is continuing. "
-                    "Return only valid JSON."
-                ),
-            },
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
         ]
         try:
             response = self.client.chat.completions.create(

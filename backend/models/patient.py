@@ -49,6 +49,7 @@ class Patient(Base, TimestampMixin):
     interaction_traces: Mapped[list["InteractionTrace"]] = relationship(back_populates="patient", cascade="all, delete-orphan")
     previsit_summaries: Mapped[list["PreVisitSummary"]] = relationship(back_populates="patient", cascade="all, delete-orphan")
     previsit_chat_messages: Mapped[list["PreVisitChatMessage"]] = relationship(back_populates="patient", cascade="all, delete-orphan")
+    proposed_medications: Mapped[list["ProposedMedication"]] = relationship(back_populates="patient", cascade="all, delete-orphan")
 
 
 class Medication(Base, TimestampMixin):
@@ -348,3 +349,65 @@ class PreVisitChatMessage(Base, TimestampMixin):
     patient: Mapped["Patient"] = relationship(back_populates="previsit_chat_messages")
 
     __table_args__ = (Index("ix_previsit_chat_patient_timestamp", "patient_id", "timestamp"),)
+
+
+class ProposedMedication(Base, TimestampMixin):
+    """
+    Append-only, same shape/philosophy as PreVisitSummary: every generate/
+    edit/release inserts a new row rather than updating one in place, so the
+    full history survives for audit and continuity of care. "Current draft"
+    is the latest status="draft" row; "current released" is the latest
+    status="released" row.
+
+    status stays binary (draft/released) -- safety_check is not a workflow
+    gate state, it's data always computed and attached to every draft row
+    (both ai_generated and clinician_edited), never a separate status value.
+    Deliberately no denormalized "has conflicts" boolean column: that would
+    be able to drift from safety_check itself, which is exactly the kind of
+    footgun a safety feature shouldn't have -- callers derive it from
+    safety_check on the fly instead.
+    """
+    __tablename__ = "proposed_medications"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")  # draft | released
+    generation_trigger: Mapped[str] = mapped_column(String(32), nullable=False, default="ai_generated")
+    # ai_generated | clinician_edited | released
+
+    clinical_situation_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    candidate_medication_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    candidate_dose_frequency: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    rationale_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Source citations (combined_sources shape: source_id, title, url, ...).
+    citations: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # {"allergy_flags": [...], "interaction_flags": [...],
+    #  "unresolved_medications": [...], "checked_at": iso-str}
+    safety_check: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # Populated only when released despite an unresolved safety_check flag.
+    override_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    authored_by_account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    authored_by_display_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    authored_by_clinical_role: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    authored_by_organization: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+    consent_grant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("consent_grants.id", ondelete="SET NULL"), nullable=True
+    )
+
+    released_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    released_by_account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    released_by_display_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    released_by_clinical_role: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+    patient: Mapped["Patient"] = relationship(back_populates="proposed_medications")
+
+    __table_args__ = (Index("ix_proposed_medications_patient_created", "patient_id", "created_at"),)

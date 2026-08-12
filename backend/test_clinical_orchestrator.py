@@ -219,6 +219,41 @@ def test_documentation_mode_short_circuits_clinical_classification_and_retrieval
     assert bundle["policy_decision"].action == "allow"
 
 
+def test_chart_lookup_mode_short_circuits_retrieval_but_keeps_chart_data(monkeypatch):
+    """
+    Distinguishes chart_lookup from documentation/translation: it must skip
+    the same expensive retrieval/classification steps, but -- unlike
+    _build_transformation_bundle, which zeroes longitudinal_memory_summary
+    entirely since documentation/translation don't need patient data -- it
+    must NOT drop the chart data, since answering directly from it is the
+    entire point of this mode.
+    """
+    orchestrator = _build_orchestrator(monkeypatch)
+
+    def _fail(*args, **kwargs):
+        raise AssertionError("clinical classification/retrieval must not run for chart_lookup")
+
+    orchestrator.intent_classifier.classify = _fail
+    monkeypatch.setattr(AgenticRetrievalLoop, "run", _fail)
+
+    bundle = orchestrator.prepare_bundle(
+        question="What was the recent medication?",
+        user="doctor1",
+        user_profile={"clinical_role": "doctor"},
+        longitudinal_memory_summary="Current medication list:\n- Metformin - 500mg, twice daily",
+        medications=[{"name": "Metformin", "dose": "500mg", "schedule": "twice daily"}],
+    )
+
+    assert bundle["kind"] == "answer"
+    assert bundle["role_config"].role_key == "doctor"
+    assert bundle["task_mode"].mode == "chart_lookup"
+    assert bundle["combined_sources"] == []
+    assert bundle["retrieval_mode"] == "chart_lookup"
+    assert bundle["policy_decision"].action == "allow"
+    assert bundle["longitudinal_memory_summary"] != ""
+    assert "Metformin" in bundle["full_context"]
+
+
 def test_translation_continuation_short_circuits_retrieval(monkeypatch):
     orchestrator = _build_orchestrator(monkeypatch)
 

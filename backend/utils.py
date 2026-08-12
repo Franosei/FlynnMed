@@ -26,6 +26,23 @@ def extract_text_from_pdf(file_path: Path) -> str:
     return text
 
 
+def extract_text_from_pdf_bytes(data: bytes) -> str:
+    """
+    Same extraction as extract_text_from_pdf, but for a PDF already in memory
+    (e.g. an uploaded FastAPI UploadFile's bytes) rather than a file on disk --
+    used by the chat document-analysis pipeline, which never writes the upload
+    to disk first.
+    """
+    if not data:
+        raise ValueError("Empty PDF data.")
+
+    text = ""
+    with fitz.open(stream=data, filetype="pdf") as doc:
+        for page in doc:
+            text += page.get_text()
+    return text
+
+
 def render_pdf_pages_to_images(file_path: Path, max_pages: int = 6, dpi: int = 150) -> List[bytes]:
     """
     Renders each page of a PDF to a PNG image.

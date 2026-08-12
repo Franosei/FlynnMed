@@ -664,9 +664,9 @@ class AgenticRetrievalLoop:
         if not medications:
             return {"summary": "No medications provided.", "sources": []}
         try:
-            from backend.medication_checker import MedicationChecker
+            from backend.medication_checker import MedicationInteractionChecker
 
-            checker = MedicationChecker()
+            checker = MedicationInteractionChecker()
             result = checker.check_interactions(medications)
             alerts = result.get("alerts", [])
             sources: List[Dict] = []
@@ -897,6 +897,18 @@ class ClinicalOrchestrator:
                 current_location=current_location,
             )
 
+        if task_mode.mode == "chart_lookup":
+            return self._build_chart_lookup_bundle(
+                question=question,
+                normalized_user=normalized_user,
+                user_profile=user_profile,
+                role_config=role_config,
+                task_mode=task_mode,
+                current_location=current_location,
+                patient_history=patient_history,
+                longitudinal_memory_summary=longitudinal_memory_summary,
+            )
+
         # -- Step 5: Intent classification (needed for policy gate) -----------
         history_context = (
             patient_history.as_prompt_block() if not patient_history.is_empty() else ""
@@ -959,8 +971,28 @@ class ClinicalOrchestrator:
         pathway_context = self._get_pathway_context(intent, role_config)
 
         # -- Step 8: Agentic retrieval loop -----------------------------------
-        # Build a compact patient summary for the agent system prompt
+        # Build a compact patient summary for the agent system prompt.
+        # Recent conversation goes first: query_expander.expand_with_hyde() only
+        # reads the first 500 chars of this string, and a bare follow-up like
+        # "can the antibiotics clear this lump?" carries no searchable clinical
+        # terms of its own -- the drug/condition names live in the prior turns,
+        # so without this the mandatory evidence search runs contextless and
+        # can come back empty even though the conversation already established
+        # what's being asked about.
+        recent_turns = (chat_history or [])[-6:]
+        recent_conversation = " | ".join(
+            f"{item.get('role', 'user')}: {str(item.get('content', ''))[:150]}"
+            for item in recent_turns
+            if item.get("content")
+        )[:500]
+
         patient_summary = history_context or f"Role: {role_config.role_key}"
+        if recent_conversation:
+            patient_summary = (
+                "Recent conversation (resolve references like 'it'/'this'/'the antibiotics' "
+                f"against what was actually discussed here): {recent_conversation}\n\n"
+                + patient_summary
+            )
         patient_summary += "\n\n" + clinical_context.as_prompt_block()
         if graph_hints:
             patient_summary += "\nRelevant health terms: " + ", ".join(graph_hints[:6])
@@ -1241,6 +1273,65 @@ class ClinicalOrchestrator:
             "matches": [],
             "retrieval_mode": "controlled_transformation",
             "full_context": task_mode.prompt_block(),
+            "response_completion_guidance": "",
+            "evidence_quality_report": {},
+            "role_config": role_config,
+            "intent": intent,
+            "policy_decision": PolicyDecision(),
+            "pathway_context": None,
+            "clinical_decision": None,
+            "clinical_context": None,
+            "evidence_dossier": None,
+            "agentic_tool_calls": [],
+            "selected_skills": ["response_validation"],
+            "current_location": current_location,
+            "task_mode": task_mode,
+        }
+
+    @staticmethod
+    def _build_chart_lookup_bundle(
+        question: str,
+        normalized_user: Optional[str],
+        user_profile: dict,
+        role_config: RoleConfig,
+        task_mode: TaskModeDecision,
+        current_location: str,
+        patient_history: PatientHistoryContext,
+        longitudinal_memory_summary: str,
+    ) -> Dict:
+        """
+        Same shape as _build_transformation_bundle (no retrieval, one
+        answer_question call) with one deliberate difference: unlike
+        documentation/translation, this must NOT drop the patient's chart
+        data -- the whole point of chart_lookup mode is answering directly
+        from it. patient_history.as_prompt_block() and
+        longitudinal_memory_summary are already fully computed by this point
+        in prepare_bundle (Step 2, before this branch), so no new
+        chart-rendering code is needed here.
+        """
+        intent = IntentClassification(
+            intent_category="administrative",
+            risk_level="routine",
+            pathway_hint="general_triage",
+            confidence=1.0,
+        )
+        chart_text = "\n\n".join(
+            part for part in [patient_history.as_prompt_block(), longitudinal_memory_summary] if part
+        )
+        full_context = "\n\n".join(
+            part for part in [task_mode.prompt_block(), chart_text] if part
+        )
+        return {
+            "kind": "answer",
+            "normalized_user": normalized_user,
+            "user_profile": user_profile,
+            "combined_sources": [],
+            "personal_context": [],
+            "longitudinal_memory_summary": longitudinal_memory_summary,
+            "expanded_queries": [],
+            "matches": [],
+            "retrieval_mode": "chart_lookup",
+            "full_context": full_context,
             "response_completion_guidance": "",
             "evidence_quality_report": {},
             "role_config": role_config,

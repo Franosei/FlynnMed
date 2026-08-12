@@ -1,4 +1,4 @@
-import type { AccessGrant, AccessOverview, AuthResponse, CarePlan, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, FeedbackRating, FeedbackResponse, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, SafetyReview, Snapshot } from "./types";
+import type { AccessGrant, AccessOverview, AuthResponse, CarePlan, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, FeedbackRating, FeedbackResponse, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, ProposedMedication, SafetyReview, Snapshot } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 const TOKEN_KEY = "flynnmed_token";
@@ -187,6 +187,55 @@ export function fetchMyPrevisitSummaries(): Promise<{ summaries: PreVisitSummary
   return apiRequest("/api/previsit-summaries");
 }
 
+// ── Medication proposals ─────────────────────────────────────────────────────
+
+export function generateMedicationProposal(
+  patientId: string,
+  clinicalSituation: string
+): Promise<ProposedMedication> {
+  return apiRequest<ProposedMedication>(
+    `/api/clinician/patients/${encodeURIComponent(patientId)}/medication-proposals`,
+    { method: "POST", body: JSON.stringify({ clinical_situation: clinicalSituation }) }
+  );
+}
+
+export function saveMedicationProposalDraft(
+  patientId: string,
+  payload: {
+    clinical_situation_text: string;
+    candidate_medication_name: string;
+    candidate_dose_frequency: string;
+    rationale_text: string;
+    citations: unknown[];
+  }
+): Promise<ProposedMedication> {
+  return apiRequest<ProposedMedication>(
+    `/api/clinician/patients/${encodeURIComponent(patientId)}/medication-proposals/draft`,
+    { method: "PATCH", body: JSON.stringify(payload) }
+  );
+}
+
+export function releaseMedicationProposal(
+  patientId: string,
+  payload: {
+    clinical_situation_text: string;
+    candidate_medication_name: string;
+    candidate_dose_frequency: string;
+    rationale_text: string;
+    citations: unknown[];
+    override_reason: string;
+  }
+): Promise<ProposedMedication> {
+  return apiRequest<ProposedMedication>(
+    `/api/clinician/patients/${encodeURIComponent(patientId)}/medication-proposals/release`,
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export function fetchMyMedicationProposals(): Promise<{ proposals: ProposedMedication[] }> {
+  return apiRequest("/api/my-medication-proposals");
+}
+
 /**
  * Shared ndjson stream consumer -- one JSON event per line, tolerant of
  * partial flushes/heartbeats (unparseable lines are dropped rather than
@@ -259,6 +308,26 @@ export async function streamImageAnalysis(
   form.append("image", image);
 
   const response = await fetch(`${API_BASE}/api/chat/image/stream`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`
+    },
+    body: form
+  });
+  return consumeNdjsonStream<ChatStreamEvent>(response, onEvent);
+}
+
+export async function streamDocumentAnalysis(
+  message: string,
+  document: File,
+  onEvent: (event: ChatStreamEvent) => void
+): Promise<void> {
+  const token = getStoredToken();
+  const form = new FormData();
+  form.append("message", message);
+  form.append("document", document);
+
+  const response = await fetch(`${API_BASE}/api/chat/document/stream`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`

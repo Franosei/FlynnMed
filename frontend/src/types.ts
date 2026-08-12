@@ -193,6 +193,7 @@ export type ClinicianPatientSummary = {
   chat_history: Dict<any>[];
   chat_history_authorized: boolean;
   previsit_summaries: PreVisitSummary[];
+  proposed_medications: ProposedMedication[];
 };
 
 // ── Pre-visit summary + patient-scoped clinician chat ───────────────────────
@@ -218,16 +219,62 @@ export type PreVisitChatMessage = {
   authored_by_display_name: string;
   authored_by_clinical_role: string;
   sources?: Source[];
+  // Live-turn only -- not persisted (PreVisitChatMessage has no DB column for
+  // this yet), so absent when a message is loaded from chat history on reload.
+  follow_up_questions?: Array<string | { display: string; prompt: string }>;
   created_at: string;
 };
 
 export type PrevisitChatStreamEvent =
   | { type: "user_message"; message: { role: "clinician"; content: string; timestamp: string } }
-  | { type: "assistant_message"; message: { role: "assistant"; content: string; sources?: Source[] } }
+  | {
+      type: "assistant_message";
+      message: {
+        role: "assistant";
+        content: string;
+        sources?: Source[];
+        follow_up_questions?: Array<string | { display: string; prompt: string }>;
+      };
+    }
   | { type: "status"; message: string }
   | { type: "token"; delta: string }
   | { type: "error"; message: string }
   | { type: "done" };
+
+// ── Medication proposals ─────────────────────────────────────────────────────
+
+export type MedicationSafetyFlag = {
+  severity?: string;
+  summary?: string;
+  [key: string]: any;
+};
+
+export type MedicationSafetyCheck = {
+  allergy_flags: MedicationSafetyFlag[];
+  interaction_flags: MedicationSafetyFlag[];
+  unresolved_medications: string[];
+  checked_at: string;
+};
+
+export type ProposedMedication = {
+  id: string;
+  status: "draft" | "released";
+  generation_trigger: "ai_generated" | "clinician_edited" | "released";
+  clinical_situation_text: string;
+  candidate_medication_name: string;
+  candidate_dose_frequency: string;
+  rationale_text: string;
+  citations: Source[];
+  safety_check: MedicationSafetyCheck;
+  override_reason: string;
+  authored_by_display_name: string;
+  authored_by_clinical_role: string;
+  authored_by_organization: string;
+  released_at: string;
+  released_by_display_name: string;
+  released_by_clinical_role: string;
+  created_at: string;
+};
 
 export type TrialSearchResult = {
   searched_at?: string;

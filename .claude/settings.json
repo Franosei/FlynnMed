@@ -8,7 +8,14 @@
       "Bash(rm -rf evaluations/results/raw/citation_fix_smoketest2)",
       "Bash(python3 -m evaluations.runner --dataset healthbench --generate-only --sample 3 --run-id citation_fix_smoketest2)",
       "Bash(rm -rf evaluations/results/raw/citation_fix_smoketest3)",
-      "Bash(python3 -m evaluations.runner --dataset healthbench --generate-only --sample 3 --run-id citation_fix_smoketest3)"
+      "Bash(python3 -m evaluations.runner --dataset healthbench --generate-only --sample 3 --run-id citation_fix_smoketest3)",
+      "Bash(DATABASE_URL=\"postgresql://user:pass@localhost/dummy\" python3 -m alembic upgrade head --sql)",
+      "Bash(python3 -c \"import backend.api\")",
+      "Bash(python3 -m pytest backend/test_medication_checker.py -q)",
+      "Bash(python3 -m pytest backend/test_medication_proposal.py -v)",
+      "Bash(python3 -m pytest backend/test_summarizer.py::test_apply_claim_corrections_attributes_unsupported_claim_as_general_knowledge -v -s)",
+      "Bash(docker compose *)",
+      "Bash(break)"
     ]
   }
 }

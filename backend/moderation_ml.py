@@ -169,9 +169,17 @@ class ModerationEnsemble:
         if det_scores.get("severe_toxicity", 0.0) >= self.t["severe_toxicity"]:
             return True, "toxicity", SAFE_MESSAGES["toxicity"], self._pack(det_scores, rules)
 
+        # Deliberately not gating on the plain "toxicity" aggregate here (only on
+        # severe_toxicity above, plus the specific categories below). Detoxify's
+        # general toxicity score is trained on Jigsaw/Wikipedia comment data with
+        # essentially no clinical vocabulary, and it spikes on ordinary medical
+        # terms it wasn't trained on -- e.g. "Can I breastfeed my baby while I
+        # have this mastitis" scores toxicity=0.84 (would block) while every
+        # specific, better-calibrated category (obscene, insult, identity_attack)
+        # stays under half its own threshold, unlike genuinely abusive text where
+        # those specific categories spike together with toxicity.
         if (
-            det_scores.get("toxicity", 0.0) >= self.t["toxicity"]
-            or det_scores.get("obscene", 0.0) >= self.t["obscene"]
+            det_scores.get("obscene", 0.0) >= self.t["obscene"]
             or det_scores.get("insult", 0.0) >= self.t["insult"]
             or det_scores.get("identity_attack", 0.0) >= self.t["identity_attack"]
         ):

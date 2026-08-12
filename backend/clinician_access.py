@@ -21,6 +21,7 @@ from backend.models.patient import (
     Medication,
     Patient,
     PreVisitSummary,
+    ProposedMedication,
     SymptomLog,
     TriageSummary,
     VitalsEntry,
@@ -536,6 +537,38 @@ def authorized_patient_summary(
                 select(PreVisitSummary)
                 .where(PreVisitSummary.patient_id == patient.id)
                 .order_by(PreVisitSummary.created_at.desc())
+            ).scalars()
+        ],
+        # Same continuity-of-care rationale as previsit_summaries above: all
+        # rows, draft and released, across every clinician -- gated by the
+        # same previsit_summary scope, no separate scope needed.
+        "proposed_medications": [
+            {
+                **_row(
+                    item,
+                    (
+                        "status",
+                        "generation_trigger",
+                        "clinical_situation_text",
+                        "candidate_medication_name",
+                        "candidate_dose_frequency",
+                        "rationale_text",
+                        "citations",
+                        "safety_check",
+                        "override_reason",
+                        "authored_by_display_name",
+                        "authored_by_clinical_role",
+                        "authored_by_organization",
+                        "released_by_display_name",
+                        "released_by_clinical_role",
+                    ),
+                ),
+                "released_at": _iso(item.released_at),
+            }
+            for item in db.execute(
+                select(ProposedMedication)
+                .where(ProposedMedication.patient_id == patient.id)
+                .order_by(ProposedMedication.created_at.desc())
             ).scalars()
         ],
     }
