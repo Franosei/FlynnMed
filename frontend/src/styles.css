@@ -1271,6 +1271,104 @@ label {
   overflow-y: auto;
 }
 
+/* Per-patient chart chat ("Ask about this patient") -- previously had no
+   styling at all, so clinician/assistant turns ran together as one
+   undifferentiated block of text. Mirrors the bubble treatment already used
+   by the main chat's .user-message/.assistant-message. */
+.previsit-chat {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.9rem;
+  background: var(--surface);
+  margin-top: 1rem;
+}
+
+.previsit-chat-list {
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 0.3rem 0.1rem;
+  margin: 0.5rem 0;
+}
+
+.previsit-turn {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0.9rem;
+}
+
+.previsit-turn:last-child {
+  margin-bottom: 0;
+}
+
+.previsit-turn .turn-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+
+.previsit-turn-clinician {
+  align-items: flex-end;
+}
+
+.previsit-turn-clinician .turn-label {
+  color: var(--primary);
+}
+
+.previsit-turn-clinician .markdown {
+  background: var(--primary);
+  color: #fff;
+  border-radius: 16px 4px 16px 16px;
+  padding: 0.6rem 0.85rem;
+  max-width: 78%;
+}
+
+.previsit-turn-clinician .markdown p {
+  color: #fff;
+  margin: 0;
+}
+
+.previsit-turn-assistant {
+  align-items: flex-start;
+}
+
+.previsit-turn-assistant .markdown {
+  border: 1px solid var(--line);
+  border-radius: 4px 16px 16px 16px;
+  padding: 0.6rem 0.85rem;
+  background: var(--surface-2);
+  max-width: 92%;
+}
+
+.previsit-status {
+  margin: 0.4rem 0;
+}
+
+.previsit-chat-input {
+  display: flex;
+  gap: 0.5rem;
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  padding: 0.4rem 0.4rem 0.4rem 0.75rem;
+  background: #fff;
+}
+
+.previsit-chat-input:focus-within {
+  border-color: var(--primary);
+}
+
+.previsit-chat-input input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 0.9rem;
+  background: transparent;
+}
+
+.previsit-chat-input button {
+  flex-shrink: 0;
+}
+
 .markdown h1 { font-size: 1.15rem; margin: 1rem 0 0.4rem; }
 .markdown h2 { font-size: 1.05rem; margin: 0.9rem 0 0.35rem; }
 .markdown h3 { font-size: 0.95rem; margin: 0.8rem 0 0.3rem; }
