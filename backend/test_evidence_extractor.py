@@ -105,6 +105,46 @@ def test_extract_one_article_keeps_a_verbatim_extracted_passage():
     ]
 
 
+def test_extract_one_article_recovers_a_quote_with_minor_formatting_differences():
+    """
+    Canonicalization: a claimed passage that differs from the source only by
+    whitespace or a smart-vs-straight quote (formatting drift a model
+    introduces while "copying") must still be accepted -- and recovered as
+    the CLEAN source text, not the model's messy variant. This is what turns
+    the strict verbatim gate from "usually finds nothing" into "reliably
+    finds the real passage", without ever accepting a genuine paraphrase
+    (see the companion drop test below).
+    """
+    snippet = "Flucloxacillin can potentiate warfarin's anticoagulant effect in some patients."
+    llm = _FakeLLM(
+        {
+            "answers_question": True,
+            "question_facts": ["Flucloxacillin can affect warfarin."],
+            "patient_aligned_facts": [],
+            "extracted_passages": [
+                "Flucloxacillin can potentiate warfarin’s anticoagulant effect"
+            ],
+            "alignment_confidence": 0.9,
+        }
+    )
+    source = {"snippet": snippet, "title": "Flucloxacillin guidance", "source_id": "S1"}
+
+    result = _extract_one_article(
+        llm=llm,
+        source=source,
+        question="Can I take flucloxacillin with warfarin?",
+        patient_summary="On warfarin.",
+        medications=["Warfarin"],
+        conditions=[],
+    )
+
+    assert len(result.extracted_passages) == 1
+    # Recovered text is genuine source text (straight quote), not the
+    # model's smart-quote variant.
+    assert "'" in result.extracted_passages[0]
+    assert "’" not in result.extracted_passages[0]
+
+
 def test_extract_one_article_drops_a_non_verbatim_extracted_passage():
     """
     Regression/quality-gate test: a claimed passage that is not an exact

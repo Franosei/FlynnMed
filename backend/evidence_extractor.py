@@ -13,11 +13,60 @@ Why this matters:
 from __future__ import annotations
 
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
+from difflib import SequenceMatcher
 from typing import Dict, List, Optional
 
 from backend.evidence_schema import ArticleEvidence, ExtractedEvidenceDossier, PatientAlignmentFact
 from backend.user_store import compute_current_age
+
+
+def _normalize(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip()).casefold()
+
+
+def _canonicalize_passage(quote: str, source_text: str) -> Optional[str]:
+    """
+    Maps a claimed extracted_passages quote back to genuine source text,
+    tolerating whitespace/case differences the model introduces while
+    copying -- never invents or paraphrases text, only recovers verbatim
+    source content the model's quote closely matches. Returns None (reject)
+    rather than a paraphrase when no confident match exists. Ported from
+    evaluations/rag_metrics.py::_canonical_quote, the same proven approach
+    already used for claim-quote validation elsewhere in this codebase --
+    evaluations/ and backend/ don't share utils today, so this is a focused
+    copy, not an import.
+    """
+    if not quote.strip():
+        return None
+    normalized_quote = _normalize(quote)
+    normalized_text = _normalize(source_text)
+    if normalized_quote in normalized_text:
+        # Exact match modulo whitespace/case -- the model's own quote text
+        # is already verbatim, return it as-is.
+        return quote.strip()
+
+    candidates = [
+        unit.strip()
+        for unit in re.split(r"(?<=[.!?])\s+|\n+", source_text)
+        if unit.strip()
+    ]
+    best = ""
+    best_score = 0.0
+    for candidate in candidates:
+        comparable = _normalize(candidate)
+        if normalized_quote in comparable and len(normalized_quote.split()) >= 4:
+            score = 0.95
+        elif comparable in normalized_quote and len(comparable.split()) >= 4:
+            score = 0.9
+        else:
+            score = SequenceMatcher(None, normalized_quote, comparable).ratio()
+        if score > best_score:
+            best, best_score = candidate, score
+    if best and best_score >= 0.82:
+        return best
+    return None
 
 
 def _build_patient_summary(user_profile: dict, patient_history_ctx=None) -> str:
@@ -163,11 +212,14 @@ def _extract_one_article(
         # paraphrased form -- excluded rather than passed through as
         # unverified background text, matching the same principle already
         # applied to specialty_mismatch exclusion above.
-        verified_passages = [
-            quote
-            for quote in data.get("extracted_passages", [])
-            if isinstance(quote, str) and quote.strip() and quote.strip() in snippet
-        ][:6]
+        verified_passages: List[str] = []
+        for quote in data.get("extracted_passages", []):
+            if not isinstance(quote, str):
+                continue
+            canonical = _canonicalize_passage(quote, snippet)
+            if canonical and canonical not in verified_passages:
+                verified_passages.append(canonical)
+        verified_passages = verified_passages[:6]
 
         return ArticleEvidence(
             source_id=source_id,
