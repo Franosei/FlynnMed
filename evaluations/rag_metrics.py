@@ -345,6 +345,17 @@ def _validate_claims(
     conversation = _conversation(case)
     seen_ids: set[str] = set()
     validated: list[ClaimAssessment] = []
+    # All citation markers actually rendered anywhere in the full answer --
+    # a citation almost always sits at the END of a sentence, after the
+    # claim content the judge quotes ("...no single explanation [S3][S4]."),
+    # so scanning only the claim's own short answer_quote for markers (the
+    # narrow-quote-only check this replaces) silently dropped the model's own
+    # citation_ids on nearly every claim, driving citation_accuracy/
+    # citation_completeness to ~0 regardless of whether citations were
+    # actually correct -- confirmed via a real 50-case evaluation run.
+    all_markers_in_answer = {
+        marker.upper() for marker, _ in _CITATION_RE.findall(answer)
+    }
     for claim in claims:
         claim_id = claim.claim_id.upper()
         if claim_id in seen_ids:
@@ -359,11 +370,24 @@ def _validate_claims(
             )
         elif answer_canonicalized:
             warnings.append(f"{claim_id} answer quote was canonicalized to stored text")
+        # Trust the judge's own declared citation_ids (it read the whole
+        # answer, not just this claim's quote) -- rescue-add anything found
+        # directly in the narrow quote too (the original behavior, for a
+        # judge that under-declares), then drop anything that doesn't
+        # correspond to a marker actually present anywhere in the real
+        # answer (anti-hallucination guard).
         quoted_markers = {
             marker.upper() for marker, _ in _CITATION_RE.findall(answer_quote)
         }
         declared_markers = {value.upper() for value in claim.citation_ids}
-        if quoted_markers != declared_markers:
+        final_markers = (declared_markers | quoted_markers) & all_markers_in_answer
+        hallucinated_markers = declared_markers - all_markers_in_answer
+        if hallucinated_markers:
+            warnings.append(
+                f"{claim_id} declared citation id(s) {sorted(hallucinated_markers)} "
+                "do not appear anywhere in the answer and were dropped"
+            )
+        if final_markers != declared_markers:
             warnings.append(f"{claim_id} citation ids were restored from the answer")
         conversation_quote = claim.conversation_evidence
         conversation_valid = not claim.supported_by_conversation
@@ -418,7 +442,7 @@ def _validate_claims(
                     "supported_by_conversation": (
                         claim.supported_by_conversation and conversation_valid
                     ),
-                    "citation_ids": sorted(quoted_markers),
+                    "citation_ids": sorted(final_markers),
                     "source_evidence": evidence,
                     "answer_quote_validated": answer_valid,
                     "conversation_evidence_validated": conversation_valid,

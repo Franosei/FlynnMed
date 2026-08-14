@@ -329,3 +329,119 @@ def test_metric_error_requires_human_review_and_is_excluded(tmp_path):
     )
     report = report_path.read_text(encoding="utf-8")
     assert "metric judge error" in report
+
+
+def _moderation_blocked_result(case_id="case-mod", category="toxicity") -> CaseResult:
+    result = _case_result(case_id=case_id)
+    result.pipeline_response.trace = {
+        "trace_id": "trace-mod",
+        "moderation_category": category,
+    }
+    return result
+
+
+def _insufficient_evidence_result(case_id="case-limited") -> CaseResult:
+    result = _case_result(case_id=case_id)
+    result.pipeline_response.trace = {"trace_id": "trace-limited"}
+    return result
+
+
+def test_moderation_block_is_counted_and_categorised():
+    blocked = _moderation_blocked_result(category="toxicity")
+    normal = _with_healthbench(_case_result(case_id="case-normal"))
+
+    summary = build_report_summary(
+        [blocked, normal], EvalConfig(), dataset_version="healthbench"
+    )
+
+    assert summary.moderation_block_count == 1
+    assert summary.moderation_block_rate == 0.5
+    assert summary.moderation_block_categories == {"toxicity": 1}
+    # A moderation block preempts HealthBench grading entirely, so it must
+    # not be counted in the HealthBench denominator.
+    assert summary.healthbench_graded_cases == 1
+
+
+def test_insufficient_evidence_is_counted():
+    limited = _insufficient_evidence_result()
+    normal = _with_healthbench(_case_result(case_id="case-normal"))
+
+    summary = build_report_summary(
+        [limited, normal], EvalConfig(), dataset_version="healthbench"
+    )
+
+    assert summary.insufficient_evidence_count == 1
+    assert summary.insufficient_evidence_rate == 0.5
+    assert summary.healthbench_graded_cases == 1
+
+
+def test_moderation_and_insufficient_evidence_absent_when_no_cases_trip_them():
+    summary = build_report_summary(
+        [_with_healthbench(_case_result())], EvalConfig(), dataset_version="healthbench"
+    )
+
+    assert summary.moderation_block_count == 0
+    assert summary.moderation_block_rate == 0.0
+    assert summary.moderation_block_categories == {}
+    assert summary.insufficient_evidence_count == 0
+    assert summary.insufficient_evidence_rate == 0.0
+
+
+def test_sanitized_entry_flags_moderation_block_and_insufficient_evidence():
+    blocked_entry = _sanitized_case_entry(
+        _moderation_blocked_result(category="obscene")
+    )
+    assert blocked_entry["moderation_blocked"] is True
+    assert blocked_entry["moderation_category"] == "obscene"
+    assert blocked_entry["insufficient_evidence"] is False
+
+    limited_entry = _sanitized_case_entry(_insufficient_evidence_result())
+    assert limited_entry["moderation_blocked"] is False
+    assert limited_entry["insufficient_evidence"] is True
+
+    normal_entry = _sanitized_case_entry(_with_healthbench(_case_result()))
+    assert normal_entry["moderation_blocked"] is False
+    assert normal_entry["moderation_category"] is None
+    assert normal_entry["insufficient_evidence"] is False
+
+
+def test_response_time_is_aggregated_from_pipeline_response_duration():
+    fast = _with_healthbench(_case_result(case_id="case-fast"))
+    fast.pipeline_response.duration_seconds = 10.0
+    mid = _with_healthbench(_case_result(case_id="case-mid"))
+    mid.pipeline_response.duration_seconds = 20.0
+    slow = _with_healthbench(_case_result(case_id="case-slow"))
+    slow.pipeline_response.duration_seconds = 30.0
+
+    summary = build_report_summary(
+        [fast, mid, slow], EvalConfig(), dataset_version="healthbench"
+    )
+
+    assert summary.average_duration_seconds == 20.0
+    assert summary.median_duration_seconds == 20.0
+    assert summary.max_duration_seconds == 30.0
+
+
+def test_response_time_is_none_when_no_case_recorded_a_duration():
+    summary = build_report_summary(
+        [_with_healthbench(_case_result())], EvalConfig(), dataset_version="healthbench"
+    )
+    assert summary.average_duration_seconds is None
+
+
+def test_markdown_report_includes_short_circuit_section(tmp_path):
+    blocked = _moderation_blocked_result(category="toxicity")
+    limited = _insufficient_evidence_result()
+    normal = _with_healthbench(_case_result(case_id="case-normal"))
+
+    _, _, report_path = write_report(
+        [blocked, limited, normal],
+        EvalConfig(output_path=tmp_path),
+        "healthbench",
+        "short-circuit-run",
+    )
+    markdown = report_path.read_text(encoding="utf-8")
+    assert "Pipeline short-circuit rates" in markdown
+    assert "Moderation blocks: 1/3 (33.3%)" in markdown
+    assert "`toxicity`=1" in markdown
+    assert "Insufficient-evidence refusals: 1/3 (33.3%)" in markdown

@@ -637,6 +637,21 @@ def _run_synchronous(
 
 
 def main(argv: Optional[List[str]] = None) -> None:
+    # Root-cause fix, not a per-callsite patch: on Windows, sys.stdout/stderr
+    # default to the console codepage (cp1252), not UTF-8. Any print() of
+    # LLM-generated or dataset text containing a character outside that range
+    # (an en-dash, curly quote, etc.) raises UnicodeEncodeError -- and in
+    # backend/pubmed_search.py and backend/clinical_orchestrator.py, that
+    # crash was getting caught by a broad `except Exception` and silently
+    # discarding already-successful retrieval results. Found via a real 50-case
+    # run where this happened on ~46% of cases before the pubmed_search.py fix,
+    # and still 4/50 afterward from a second print site in the agentic loop.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
     parser = argparse.ArgumentParser(
         description="Run the FlynnMed HealthBench evaluation harness."
     )

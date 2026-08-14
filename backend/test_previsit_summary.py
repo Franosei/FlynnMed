@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest

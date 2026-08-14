@@ -60,8 +60,18 @@ class PubMedCentralSearcher:
                     }
                 )
 
-            print("PubMed Query:", query)
-            print("PMC IDs:", [record["pmcid"] for record in records])
+            try:
+                print("PubMed Query:", query)
+                print("PMC IDs:", [record["pmcid"] for record in records])
+            except UnicodeEncodeError:
+                # A debug print failing to encode a query's Unicode characters
+                # (e.g. Windows console defaulting to cp1252) must not discard
+                # the records already parsed above -- caught here instead of
+                # letting it fall into the broad except below, which was
+                # silently returning [] and mislabeling this as a "JSON parse
+                # error" even though the API call and parsing had both
+                # already succeeded.
+                pass
             self.search_cache[cache_key] = [dict(record) for record in records]
             return records
 

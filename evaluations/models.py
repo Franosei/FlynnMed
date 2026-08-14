@@ -404,6 +404,23 @@ class ReportSummary(BaseModel):
     physician_labelled_non_emergent_cases: int = 0
     adjudication_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     disagreement_count: int = 0
+    # A moderation block or insufficient-evidence refusal preempts HealthBench
+    # grading entirely, so these are computed over total_cases rather than
+    # healthbench_graded_cases. On a curated dataset of legitimate clinical
+    # questions, either signal is presumptively a false positive worth review
+    # -- see backend/clinical_orchestrator.py's trace_id="trace-mod"/
+    # "trace-limited" markers, which is how these are detected.
+    moderation_block_count: int = 0
+    moderation_block_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    moderation_block_categories: Dict[str, int] = Field(default_factory=dict)
+    insufficient_evidence_count: int = 0
+    insufficient_evidence_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    # Pipeline response-time distribution, from PipelineResponse.duration_seconds
+    # (already recorded per case, previously never aggregated/reported).
+    average_duration_seconds: Optional[float] = None
+    median_duration_seconds: Optional[float] = None
+    p95_duration_seconds: Optional[float] = None
+    max_duration_seconds: Optional[float] = None
     rag_metric_aggregates: Dict[str, MetricAggregate] = Field(default_factory=dict)
     by_tag: Dict[str, TagAggregate] = Field(default_factory=dict)
     relevant_document_count: int = 0

@@ -287,6 +287,67 @@ def test_claim_validation_rejects_uncovered_answer_and_marker_mismatch():
     assert any("uncovered answer unit" in warning for warning in warnings)
 
 
+def test_claim_validation_trusts_declared_citation_outside_the_narrow_quote():
+    """
+    Regression test: a citation marker almost always sits at the end of a
+    sentence, after the claim content the judge quotes -- e.g. the answer is
+    "Fatigue may be complex and may not have a single definitive explanation
+    [S3][S4]." and the judge's answer_quote for the claim is just "Fatigue
+    may be complex and may not have a single definitive explanation" (no
+    trailing markers). The judge's own declared citation_ids=["S3","S4"]
+    (it read the whole answer) must not be discarded just because those
+    markers fall outside the narrow quoted substring -- found via a real
+    50-case evaluation run where this drove citation_accuracy/completeness to
+    ~0 across nearly every case regardless of whether citations were correct.
+    """
+    case = _case()
+    answer = (
+        "Fatigue may be complex and may not have a single definitive "
+        "explanation [S3][S4]."
+    )
+    claims = [
+        ClaimAssessment(
+            claim_id="C1",
+            claim="Fatigue may be complex and may not have a single definitive explanation.",
+            answer_quote="Fatigue may be complex and may not have a single definitive explanation",
+            citation_ids=["S3", "S4"],
+        )
+    ]
+
+    validated, errors, warnings = rag_metrics._validate_claims(
+        claims, case, answer, []
+    )
+
+    assert errors == []
+    assert validated[0].citation_ids == ["S3", "S4"]
+
+
+def test_claim_validation_drops_a_hallucinated_citation_id():
+    """
+    Companion test: a declared citation_id that doesn't correspond to any
+    marker actually rendered anywhere in the answer must still be dropped --
+    the fix above must not become "trust the judge unconditionally."
+    """
+    case = _case()
+    answer = "Fatigue may have several causes [S3]."
+    claims = [
+        ClaimAssessment(
+            claim_id="C1",
+            claim="Fatigue may have several causes.",
+            answer_quote="Fatigue may have several causes",
+            citation_ids=["S3", "S9"],
+        )
+    ]
+
+    validated, errors, warnings = rag_metrics._validate_claims(
+        claims, case, answer, []
+    )
+
+    assert errors == []
+    assert validated[0].citation_ids == ["S3"]
+    assert any("S9" in warning and "dropped" in warning for warning in warnings)
+
+
 def test_claim_validation_canonicalizes_markdown_without_inventing_text():
     claims = [
         ClaimAssessment(

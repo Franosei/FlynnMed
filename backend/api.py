@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 import uuid
 from datetime import datetime, timezone
@@ -93,6 +94,20 @@ from backend.user_store import UserStore
 from backend.voice_transcriber import VoiceTranscriber
 
 load_dotenv()
+
+# On Windows, sys.stdout/stderr default to the console codepage (cp1252), not
+# UTF-8 -- a plain print() of text containing a character outside that range
+# (an en-dash, curly quote, etc.) raises UnicodeEncodeError. In
+# backend/pubmed_search.py and backend/clinical_orchestrator.py that crash was
+# getting caught by a broad `except Exception` and silently discarding
+# already-successful retrieval results (found via a real evaluation run: ~46%
+# of cases hit this before the underlying print sites were also fixed). A
+# no-op on Linux/production, where stdout is already UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 logger = logging.getLogger(__name__)
 

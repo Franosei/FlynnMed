@@ -51,6 +51,15 @@ _RAG_METRIC_TIERS = {
 }
 
 
+def _percentile(sorted_values: List[float], pct: float) -> float | None:
+    """Nearest-rank percentile over an already-sorted list. Not interpolated --
+    fine for the sample sizes this harness runs (tens to low hundreds)."""
+    if not sorted_values:
+        return None
+    idx = min(len(sorted_values) - 1, int(round(pct * (len(sorted_values) - 1))))
+    return sorted_values[idx]
+
+
 def _is_valid_related_link(value: object) -> bool:
     try:
         parts = urlsplit(str(value or "").strip())
@@ -223,9 +232,7 @@ def build_report_summary(
         1 for cr in emergency_expected if cr.deterministic.crisis_gate_activated
     )
     emergency_sensitivity = (
-        emergencies_recognised / len(emergency_expected)
-        if emergency_expected
-        else None
+        emergencies_recognised / len(emergency_expected) if emergency_expected else None
     )
     conditionally_emergent_cases = sum(
         "physician_agreed_category:conditionally-emergent" in cr.case.tags
@@ -302,6 +309,34 @@ def build_report_summary(
         else None
     )
 
+    # Both trace_id markers preempt HealthBench grading entirely (the pipeline
+    # short-circuits before the answer LLM runs), so these cases never appear
+    # in healthbench_results/_healthbench_graded -- rates are over total_cases.
+    moderation_blocked = [
+        cr
+        for cr in case_results
+        if cr.pipeline_response.trace.get("trace_id") == "trace-mod"
+    ]
+    moderation_block_categories = dict(
+        sorted(
+            Counter(
+                cr.pipeline_response.trace.get("moderation_category") or "unknown"
+                for cr in moderation_blocked
+            ).items()
+        )
+    )
+    insufficient_evidence_count = sum(
+        1
+        for cr in case_results
+        if cr.pipeline_response.trace.get("trace_id") == "trace-limited"
+    )
+
+    durations = sorted(
+        cr.pipeline_response.duration_seconds
+        for cr in case_results
+        if cr.pipeline_response.duration_seconds
+    )
+
     review_cases = [
         cr.case.case_id for cr in case_results if cr.requires_human_review()
     ]
@@ -337,11 +372,22 @@ def build_report_summary(
         physician_labelled_emergency_cases=len(emergency_expected),
         physician_labelled_emergencies_recognised=emergencies_recognised,
         conditionally_emergent_cases=conditionally_emergent_cases,
-        physician_labelled_non_emergent_cases=(
-            physician_labelled_non_emergent_cases
-        ),
+        physician_labelled_non_emergent_cases=(physician_labelled_non_emergent_cases),
         adjudication_rate=adjudication_rate,
         disagreement_count=disagreement_count,
+        moderation_block_count=len(moderation_blocked),
+        moderation_block_rate=len(moderation_blocked) / total if total else None,
+        moderation_block_categories=moderation_block_categories,
+        insufficient_evidence_count=insufficient_evidence_count,
+        insufficient_evidence_rate=(
+            insufficient_evidence_count / total if total else None
+        ),
+        average_duration_seconds=(
+            sum(durations) / len(durations) if durations else None
+        ),
+        median_duration_seconds=_percentile(durations, 0.5),
+        p95_duration_seconds=_percentile(durations, 0.95),
+        max_duration_seconds=durations[-1] if durations else None,
         rag_metric_aggregates=rag_metric_aggregates,
         relevant_document_count=relevant_document_count,
         irrelevant_document_count=irrelevant_document_count,
@@ -363,6 +409,8 @@ def build_report_summary(
 
 
 def _sanitized_case_entry(case_result: CaseResult) -> dict:
+    trace_id = case_result.pipeline_response.trace.get("trace_id")
+    moderation_blocked = trace_id == "trace-mod"
     entry = {
         "case_id": case_result.case.case_id,
         "source_dataset": case_result.case.source_dataset,
@@ -371,6 +419,14 @@ def _sanitized_case_entry(case_result: CaseResult) -> dict:
         "role_resolution_reason": case_result.pipeline_response.role_resolution_reason,
         "role_resolution_confidence": case_result.pipeline_response.role_resolution_confidence,
         "requires_human_review": case_result.requires_human_review(),
+        "duration_seconds": round(case_result.pipeline_response.duration_seconds, 2),
+        "moderation_blocked": moderation_blocked,
+        "moderation_category": (
+            case_result.pipeline_response.trace.get("moderation_category")
+            if moderation_blocked
+            else None
+        ),
+        "insufficient_evidence": trace_id == "trace-limited",
     }
     if (
         case_result.adjudication
@@ -546,6 +602,40 @@ def _healthbench_lines(summary: ReportSummary) -> list[str]:
     return lines
 
 
+def _short_circuit_lines(summary: ReportSummary) -> list[str]:
+    lines = ["## Pipeline short-circuit rates", ""]
+    lines.append(
+        "On this curated dataset of legitimate clinical questions (not "
+        "adversarial red-team prompts), a moderation block or an "
+        "insufficient-evidence refusal is presumptively a false positive and "
+        "should be reviewed -- both preempt HealthBench grading entirely, so "
+        "these cases are excluded from the HealthBench section above."
+    )
+    lines.append("")
+    lines.append(
+        f"- Moderation blocks: {summary.moderation_block_count}/{summary.total_cases} "
+        f"({summary.moderation_block_rate:.1%})"
+        if summary.moderation_block_rate is not None
+        else f"- Moderation blocks: {summary.moderation_block_count}/{summary.total_cases}"
+    )
+    if summary.moderation_block_categories:
+        lines.append(
+            "  - By category: "
+            + ", ".join(
+                f"`{category}`={count}"
+                for category, count in summary.moderation_block_categories.items()
+            )
+        )
+    lines.append(
+        f"- Insufficient-evidence refusals: {summary.insufficient_evidence_count}/"
+        f"{summary.total_cases} ({summary.insufficient_evidence_rate:.1%})"
+        if summary.insufficient_evidence_rate is not None
+        else f"- Insufficient-evidence refusals: {summary.insufficient_evidence_count}/{summary.total_cases}"
+    )
+    lines.append("")
+    return lines
+
+
 def _by_tag_lines(summary: ReportSummary) -> list[str]:
     lines = ["## HealthBench scoring by tag", ""]
     graded_tags = {
@@ -594,10 +684,19 @@ def _markdown_report(summary: ReportSummary, case_results: List[CaseResult]) -> 
         f"- Total cases: {summary.total_cases}",
         "- Routed roles: "
         + ", ".join(f"{role}={count}" for role, count in summary.role_counts.items()),
+        (
+            f"- Response time: avg {summary.average_duration_seconds:.1f}s, "
+            f"median {summary.median_duration_seconds:.1f}s, "
+            f"p95 {summary.p95_duration_seconds:.1f}s, "
+            f"max {summary.max_duration_seconds:.1f}s"
+            if summary.average_duration_seconds is not None
+            else "- Response time: n/a"
+        ),
         "",
     ]
 
     lines.extend(_healthbench_lines(summary))
+    lines.extend(_short_circuit_lines(summary))
     lines.extend(_by_tag_lines(summary))
     lines.extend(_rag_metric_lines(summary))
 

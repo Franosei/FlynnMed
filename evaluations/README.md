@@ -193,6 +193,53 @@ primary/secondary adjudication statistics, Tier 1-3 aggregates, assessed-item
 denominators and sufficiency labels, document/claim/citation audit counts,
 judge-error counts, and cases requiring review.
 
+## Response time
+
+Every case already records `duration_seconds` (real wall-clock time through
+the full production pipeline: retrieval, evidence ranking, generation).
+Reports now aggregate this as average/median/p95/max response time, shown in
+the run metadata section and tracked per-case in the sanitised JSON.
+
+## Pipeline short-circuit rates
+
+Two of FlynnMed's pipeline paths return a fixed refusal without ever reaching
+the answer LLM, identified by a distinct `trace_id` on the captured trace
+(`backend/clinical_orchestrator.py`):
+
+- `trace-mod` -- the moderation gate blocked the question (`moderation_category`
+  and the underlying Detoxify/rule scores are recorded).
+- `trace-limited` -- the pipeline could not find enough live evidence and
+  returned the "insufficient evidence" refusal.
+
+Both preempt HealthBench grading entirely, so affected cases are excluded from
+the HealthBench pass rate/weighted score denominators and reported separately
+as `moderation_block_rate` and `insufficient_evidence_rate` (over
+`total_cases`), with a per-category breakdown for moderation blocks. On a
+curated dataset of legitimate clinical questions, either rate being non-zero
+is presumptively a false positive and should be reviewed -- this is exactly
+how a real moderation false-positive bug (Detoxify's aggregate toxicity score
+blocking an ordinary breastfeeding/mastitis question) and a retrieval-context
+bug were found during manual testing before this metric existed.
+
+## Tracking quality over time
+
+Each run above produces one isolated snapshot. To see how headline metrics
+moved across runs:
+
+```powershell
+py -m evaluations.trends
+py -m evaluations.trends --dataset healthbench --limit 10
+```
+
+Purely read-only over the saved `evaluations/results/reports/*_summary.json`
+files -- makes no model calls and does not re-run the pipeline. Writes
+`evaluations/results/trends.md`: one row per run (sorted by `run_date`) with
+HealthBench pass rate/weighted score, the two short-circuit rates above, and
+key Tier 1 RAG averages (faithfulness, context relevance, answer correctness,
+calibration), each with a `▲`/`▼` delta against the previous run and the git
+commit short-SHA (`pipeline_version`) so a regression can be traced to a
+specific change.
+
 ## Limitations
 
 The RAG judges see stored source excerpts, not complete publications, so an
