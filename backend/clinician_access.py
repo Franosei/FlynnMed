@@ -26,6 +26,7 @@ from backend.models.patient import (
     TriageSummary,
     VitalsEntry,
 )
+from backend.relationship_engine import derive_relationships, merge_relationships
 
 
 class AccessWorkflowError(Exception):
@@ -396,7 +397,7 @@ def authorized_patient_summary(
         db, username, patient_id, action=AuditAction.clinician_read_previsit_summary
     )
     chat_allowed = ConsentScope.chat_history.value in (grant.scope or [])
-    return {
+    summary = {
         "patient": {
             "patient_id": patient.patient_id,
             "display_name": patient.account.display_name,
@@ -468,6 +469,7 @@ def authorized_patient_summary(
         ],
         "care_plans": [
             {
+                **(item.body or {}),
                 **_row(item, ("condition", "status")),
                 "title": (item.body or {}).get("title", item.condition),
                 "gp_prep_summary": item.gp_prep_summary or "",
@@ -572,3 +574,17 @@ def authorized_patient_summary(
             ).scalars()
         ],
     }
+    summary["clinical_relationships"] = merge_relationships(
+        (patient.longitudinal_memory or {}).get("clinical_relationships", []) or [],
+        derive_relationships(
+            medications=summary["medications"],
+            allergies=summary["allergies"],
+            conditions=summary["conditions"],
+            symptom_logs=summary["symptoms"],
+            vitals=summary["vitals"],
+            triage_summaries=summary["triage"],
+            care_plans=summary["care_plans"],
+            clinical_notes=summary["clinical_notes"],
+        ),
+    )
+    return summary

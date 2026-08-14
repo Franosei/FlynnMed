@@ -21,6 +21,7 @@ from backend.models.patient import (
 from backend.models.consent import ConsentGrant, ConsentScope, ConsentStatus
 from backend.models.audit import AuditAction, AuditLogEntry, AuditOutcome
 from backend.models.activity import AccountActivityLog
+from backend.models.evidence import EvidencePassage, SourceArtifact
 
 __all__ = [
     "Base",
@@ -50,4 +51,6 @@ __all__ = [
     "AuditAction",
     "AuditOutcome",
     "AccountActivityLog",
+    "SourceArtifact",
+    "EvidencePassage",
 ]

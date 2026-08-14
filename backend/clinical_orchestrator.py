@@ -32,6 +32,7 @@ Agentic retrieval layer (LLM drives this):
 from __future__ import annotations
 
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
@@ -44,6 +45,7 @@ from backend.clinical_context_guard import (
     adjudicate_patient_context,
     source_matches_context,
 )
+from backend.conversation_context import render_verbatim
 from backend.evidence_ranker import EvidenceRanker
 from backend.intent_risk_classifier import IntentClassification, IntentRiskClassifier
 from backend.patient_history import PatientHistoryContext, build_patient_history_context
@@ -231,6 +233,7 @@ class AgenticRetrievalLoop:
         role_key: str,
         pathway_hint: str,
         patient_medications: Optional[List[str]] = None,
+        question_medications: Optional[List[str]] = None,
         current_location: str = "",
         selected_skills: Optional[List[str]] = None,
         max_iterations: int = 5,
@@ -267,9 +270,25 @@ class AgenticRetrievalLoop:
         )
 
         med_hint = ""
+        medicines_to_retrieve = list(
+            dict.fromkeys(
+                name.strip()
+                for name in (question_medications or [])
+                if name and name.strip()
+            )
+        )
+        if medicines_to_retrieve:
+            med_hint += (
+                "\nExact medicine(s) named in the question: "
+                + ", ".join(medicines_to_retrieve[:4])
+                + ". Retrieve the exact medicine page, indications, contraindications, "
+                "allergy warnings, and patient information; do not search the user's whole "
+                "sentence as though it were a guideline title."
+            )
         if patient_medications:
             med_hint = (
-                f"\nPatient's current medications: {', '.join(patient_medications[:8])}. "
+                med_hint
+                + f"\nPatient's current medications: {', '.join(patient_medications[:8])}. "
                 "Consider checking drug interactions if relevant."
             )
 
@@ -333,6 +352,14 @@ class AgenticRetrievalLoop:
                 return None
             return self.query_expander.expand_with_hyde(question, patient_summary)
 
+        evidence_search_question = question
+        if medicines_to_retrieve:
+            evidence_search_question = (
+                f"{', '.join(medicines_to_retrieve[:4])} {question} practical advice "
+                "food timing daily activities alcohol rest side effects contraindications "
+                "allergy warnings official medicine guidance"
+            )
+
         mandatory_tools = (
             ("search_nhs_guidance", self._search_nhs),
             ("search_pubmed", self._search_pubmed),
@@ -340,7 +367,7 @@ class AgenticRetrievalLoop:
         hyde_result = None
         with ThreadPoolExecutor(max_workers=3) as executor:
             search_futures = {
-                executor.submit(search_fn, question): tool_name
+                executor.submit(search_fn, evidence_search_question): tool_name
                 for tool_name, search_fn in mandatory_tools
             }
             expansion_future = executor.submit(_run_expansion)
@@ -354,12 +381,15 @@ class AgenticRetrievalLoop:
                     continue
 
                 sources = result.get("sources") or []
-                print(f"[AgenticLoop] mandatory {tool_name}({question!r}) -> {len(sources)} source(s)")
+                print(
+                    f"[AgenticLoop] mandatory {tool_name}({evidence_search_question!r}) "
+                    f"-> {len(sources)} source(s)"
+                )
                 collected_sources.extend(sources)
                 tool_calls_made.append(
                     {
                         "tool": tool_name,
-                        "args": {"query": question},
+                        "args": {"query": evidence_search_question},
                         "iteration": 0,
                         "mandatory": True,
                     }
@@ -378,6 +408,31 @@ class AgenticRetrievalLoop:
                 hyde_result = expansion_future.result()
             except Exception as exc:
                 print(f"[AgenticLoop] query expansion failed: {exc}")
+
+        # Exact medicine pages are more reliable than asking a general search
+        # endpoint to interpret a full chat sentence. This remains additive:
+        # failure simply falls back to the searches above.
+        if medicines_to_retrieve and hasattr(self.official_guidance, "search_medicine"):
+            for medicine_name in medicines_to_retrieve[:3]:
+                try:
+                    medicine_sources = self.official_guidance.search_medicine(
+                        medicine_name, limit=4
+                    )
+                except Exception as exc:
+                    print(
+                        f"[AgenticLoop] exact medicine lookup failed for "
+                        f"{medicine_name!r}: {exc}"
+                    )
+                    medicine_sources = []
+                collected_sources.extend(medicine_sources)
+                tool_calls_made.append(
+                    {
+                        "tool": "search_medicine_guidance",
+                        "args": {"medicine": medicine_name},
+                        "iteration": 0,
+                        "mandatory": True,
+                    }
+                )
 
         # One bounded follow-up round using the single best variant (not all 3, to
         # keep the added cost small) -- only fires when expansion actually produced
@@ -822,6 +877,9 @@ class ClinicalOrchestrator:
         document_summaries: Optional[List[Dict]] = None,
         context_graph: Optional["ContextGraph"] = None,
         chat_history: Optional[List[Dict]] = None,
+        previous_five_chat: Optional[List[Dict]] = None,
+        conversation_summary: str = "",
+        patient_statement_summary: str = "",
     ) -> Dict:
         """
         Full clinical orchestration pipeline.
@@ -837,6 +895,7 @@ class ClinicalOrchestrator:
         )
         role_config = self.role_router.resolve(clinical_role)
         task_mode = decide_task_mode(question, chat_history, role_config.role_key)
+        verbatim_recent = list(previous_five_chat or (chat_history or [])[-5:])
 
         # -- Step 2: Patient history context ----------------------------------
         patient_history: PatientHistoryContext = build_patient_history_context(
@@ -862,9 +921,11 @@ class ClinicalOrchestrator:
             triage_summaries=triage_summaries or [],
             document_summaries=document_summaries or [],
             longitudinal_memory=longitudinal_memory_summary,
-            chat_summary="\n".join(
-                f"{item.get('role', 'user')}: {item.get('content', '')}"
-                for item in (chat_history or [])[-4:]
+            chat_summary=(
+                "Whole earlier conversation summary:\n"
+                + (conversation_summary or "No earlier conversation.")
+                + "\n\nPrevious five messages verbatim:\n"
+                + render_verbatim(verbatim_recent)
             ),
         )
 
@@ -907,6 +968,7 @@ class ClinicalOrchestrator:
                 current_location=current_location,
                 patient_history=patient_history,
                 longitudinal_memory_summary=longitudinal_memory_summary,
+                context_graph=context_graph,
             )
 
         # -- Step 5: Intent classification (needed for policy gate) -----------
@@ -923,13 +985,87 @@ class ClinicalOrchestrator:
                 user_profile,
                 role_config.role_key,
                 patient_history,
-                chat_history,
+                verbatim_recent,
+                conversation_summary,
             )
         except Exception as exc:
             print(f"[Orchestrator] Intent classification failed: {exc}")
             intent = IntentClassification()
 
         selected_skills = select_skills(intent.intent_category, question)
+
+        # Carry the exact medicine name through retrieval and fallback handling.
+        # The user's full sentence is usually a poor medicine-site search query.
+        question_medications: List[str] = []
+        medicine_reference = bool(
+            re.search(
+                r"\b(?:the\s+)?(?:medication|medicine|antibiotics?|prescription|"
+                r"dose|capsules?|tablets?)\b",
+                question,
+                re.IGNORECASE,
+            )
+        )
+        if (
+            intent.intent_category == "medication_query"
+            or "medication_safety" in selected_skills
+            or (
+                medicine_reference
+                and bool((chat_history or []) or patient_history.known_medications)
+            )
+        ):
+            medication_extraction_text = "\n".join(
+                [
+                    str(item.get("content", "")).strip()
+                    for item in verbatim_recent
+                    if item.get("role") == "user"
+                    and str(item.get("content", "")).strip()
+                ]
+                + (
+                    ["Summary of all prior patient statements:\n" + patient_statement_summary]
+                    if patient_statement_summary
+                    and patient_statement_summary != "No earlier conversation."
+                    else []
+                )
+                + (
+                    ["Saved current medicines: " + ", ".join(patient_history.known_medications)]
+                    if patient_history.known_medications
+                    else []
+                )
+                + [question]
+            )
+            try:
+                question_medications = self.llm.extract_medication_mentions(
+                    medication_extraction_text
+                )
+            except Exception as exc:
+                print(f"[Orchestrator] Medication-name extraction failed: {exc}")
+            question_medications = list(
+                dict.fromkeys(
+                    str(name).strip()
+                    for name in question_medications
+                    if str(name).strip()
+                )
+            )[:6]
+            if (
+                not question_medications
+                and medicine_reference
+                and len(patient_history.known_medications) == 1
+            ):
+                question_medications = patient_history.known_medications[:1]
+            # A short continuation such as "When taking the medication..." can
+            # be misclassified as general information even though the medicine
+            # is explicit in the preceding user turn.  Once we have resolved an
+            # exact medicine, keep the whole request on the medication pathway.
+            if question_medications and medicine_reference and intent.intent_category in {
+                "general_info",
+                "symptom_triage",
+                "maternity",
+                "msk",
+                "chronic_condition",
+            }:
+                intent.intent_category = "medication_query"
+                intent.pathway_hint = "medications"
+                selected_skills = select_skills(intent.intent_category, question)
 
         # -- Step 6: Policy gate (8 hard safety gates) ------------------------
         clinical_decision = self.decision_support.assess(question, intent, role_config)
@@ -967,19 +1103,45 @@ class ClinicalOrchestrator:
                 question, normalized_user, role_config, clinical_context
             )
 
+        # A patient-specific answer is only useful when the facts that change
+        # the decision are known. Ask those exact questions before retrieval
+        # and report generation; do not fill the gap with a generic answer.
+        if (
+            intent.clarification_required
+            and intent.clarifying_questions
+            and intent.risk_level not in ("urgent", "crisis")
+            and policy_decision.action == "allow"
+        ):
+            return self._build_information_clarification_bundle(
+                question=question,
+                normalized_user=normalized_user,
+                role_config=role_config,
+                intent=intent,
+                patient_history=patient_history,
+                question_medications=question_medications,
+                context_graph=context_graph,
+            )
+
         # -- Step 7: Pathway context ------------------------------------------
         pathway_context = self._get_pathway_context(intent, role_config)
 
         # -- Step 8: Agentic retrieval loop -----------------------------------
         # Build a compact patient summary for the agent system prompt.
-        # Recent conversation goes first: query_expander.expand_with_hyde() only
+        # Recent user-supplied conversation goes first:
+        # query_expander.expand_with_hyde() only
         # reads the first 500 chars of this string, and a bare follow-up like
         # "can the antibiotics clear this lump?" carries no searchable clinical
         # terms of its own -- the drug/condition names live in the prior turns,
         # so without this the mandatory evidence search runs contextless and
         # can come back empty even though the conversation already established
         # what's being asked about.
-        recent_turns = (chat_history or [])[-6:]
+        # Assistant prose is not evidence that the patient confirmed a
+        # diagnosis or treatment indication, so keep it out of retrieval.
+        recent_turns = [
+            item
+            for item in verbatim_recent
+            if item.get("role") == "user"
+        ]
         recent_conversation = " | ".join(
             f"{item.get('role', 'user')}: {str(item.get('content', ''))[:150]}"
             for item in recent_turns
@@ -987,6 +1149,13 @@ class ClinicalOrchestrator:
         )[:500]
 
         patient_summary = history_context or f"Role: {role_config.role_key}"
+        if patient_statement_summary and patient_statement_summary != "No earlier conversation.":
+            patient_summary = (
+                "Summary of all prior patient-authored chat (user statements only):\n"
+                + patient_statement_summary
+                + "\n\n"
+                + patient_summary
+            )
         if recent_conversation:
             patient_summary = (
                 "Recent conversation (resolve references like 'it'/'this'/'the antibiotics' "
@@ -994,12 +1163,45 @@ class ClinicalOrchestrator:
                 + patient_summary
             )
         patient_summary += "\n\n" + clinical_context.as_prompt_block()
+        relationship_block = (
+            context_graph.relationship_prompt_block() if context_graph else ""
+        )
+        if relationship_block:
+            patient_summary += "\n\n" + relationship_block
         if graph_hints:
             patient_summary += "\nRelevant health terms: " + ", ".join(graph_hints[:6])
         retrieval_question = task_mode.retrieval_question(question)
+        if question_medications:
+            recent_user_text = " ".join(
+                str(item.get("content") or "")
+                for item in verbatim_recent
+                if item.get("role") == "user"
+            ).lower() + " " + patient_statement_summary.lower()
+            known_condition_names = [
+                re.sub(r"\s+\([^)]*\)$", "", item).strip()
+                for item in patient_history.known_conditions
+                if str(item).strip()
+            ]
+            relevant_conditions = [
+                item for item in known_condition_names
+                if item.lower() in recent_user_text
+            ]
+            if not relevant_conditions and len(known_condition_names) == 1:
+                relevant_conditions = known_condition_names
+            retrieval_question = (
+                f"{question}\n\nExact medicine in this conversation: "
+                + ", ".join(question_medications)
+                + ". Answer the user's current practical question about this exact medicine."
+            )
+            if relevant_conditions:
+                retrieval_question += (
+                    "\nEstablished condition from the patient's own record or prior statements: "
+                    + "; ".join(relevant_conditions[:3])
+                    + ". Treat the current message as a follow-up in that context."
+                )
         if clinical_context.query_terms:
             retrieval_question = (
-                f"{question}\n\nConfirmed clinical search topic: "
+                f"{retrieval_question}\n\nConfirmed clinical search topic: "
                 + "; ".join(clinical_context.query_terms)
             )
 
@@ -1023,6 +1225,7 @@ class ClinicalOrchestrator:
                 role_key=role_config.role_key,
                 pathway_hint=intent.pathway_hint or "general_triage",
                 patient_medications=med_names,
+                question_medications=question_medications,
                 current_location=current_location,
                 selected_skills=selected_skills,
             )
@@ -1079,7 +1282,7 @@ class ClinicalOrchestrator:
         combined_sources, evidence_quality_report = (
             self.evidence_ranker.rank_and_tier_with_report(
                 sources=raw_sources,
-                question=question,
+                question=retrieval_question,
                 role_config=role_config,
                 intent=intent,
                 memory_store=self.memory,
@@ -1141,7 +1344,7 @@ class ClinicalOrchestrator:
             combined_sources, evidence_quality_report = (
                 self.evidence_ranker.rank_and_tier_with_report(
                     sources=retry_raw,
-                    question=question,
+                    question=retrieval_question,
                     role_config=role_config,
                     intent=intent,
                     memory_store=self.memory,
@@ -1196,6 +1399,9 @@ class ClinicalOrchestrator:
                 role_config=role_config,
                 intent=intent,
                 policy_decision=policy_decision,
+                patient_history=patient_history,
+                question_medications=question_medications,
+                context_graph=context_graph,
             )
 
         # -- Step 12: Build role-aware LLM context ----------------------------
@@ -1208,6 +1414,7 @@ class ClinicalOrchestrator:
             evidence_quality_report=evidence_quality_report,
             evidence_dossier=evidence_dossier,
             clinical_context=clinical_context,
+            context_graph=context_graph,
         )
         completion_block = task_mode.completion_block(
             intent.intent_category, intent.vulnerable_flags
@@ -1223,6 +1430,7 @@ class ClinicalOrchestrator:
             "combined_sources": combined_sources,
             "personal_context": personal_context,
             "longitudinal_memory_summary": longitudinal_memory_summary,
+            "patient_history_context": history_context,
             "expanded_queries": expanded_queries,
             "matches": [],
             "retrieval_mode": retrieval_mode,
@@ -1243,6 +1451,7 @@ class ClinicalOrchestrator:
             "selected_skills": selected_skills,
             "current_location": current_location,
             "task_mode": task_mode,
+            "question_medications": question_medications,
         }
 
     # -- Bundle builders ------------------------------------------------------
@@ -1298,6 +1507,7 @@ class ClinicalOrchestrator:
         current_location: str,
         patient_history: PatientHistoryContext,
         longitudinal_memory_summary: str,
+        context_graph: Optional["ContextGraph"] = None,
     ) -> Dict:
         """
         Same shape as _build_transformation_bundle (no retrieval, one
@@ -1316,7 +1526,13 @@ class ClinicalOrchestrator:
             confidence=1.0,
         )
         chart_text = "\n\n".join(
-            part for part in [patient_history.as_prompt_block(), longitudinal_memory_summary] if part
+            part
+            for part in [
+                patient_history.as_prompt_block(),
+                longitudinal_memory_summary,
+                context_graph.relationship_prompt_block() if context_graph else "",
+            ]
+            if part
         )
         full_context = "\n\n".join(
             part for part in [task_mode.prompt_block(), chart_text] if part
@@ -1479,9 +1695,18 @@ class ClinicalOrchestrator:
         role_config: RoleConfig,
         intent: IntentClassification,
         policy_decision: PolicyDecision,
+        patient_history: PatientHistoryContext,
+        question_medications: Optional[List[str]] = None,
+        context_graph: Optional["ContextGraph"] = None,
     ) -> Dict:
         limited_answer = self._build_limited_evidence_response(
-            personal_context, role_config
+            question=question,
+            personal_context=personal_context,
+            role_config=role_config,
+            intent=intent,
+            patient_history=patient_history,
+            question_medications=question_medications or [],
+            context_graph=context_graph,
         )
         return {
             "kind": "final",
@@ -1586,11 +1811,18 @@ class ClinicalOrchestrator:
         evidence_quality_report: Optional[Dict] = None,
         evidence_dossier=None,
         clinical_context: Optional[ClinicalContextDecision] = None,
+        context_graph: Optional["ContextGraph"] = None,
     ) -> str:
         parts = []
 
         if clinical_context and clinical_context.status != "insufficient":
             parts.append(clinical_context.as_prompt_block())
+
+        relationship_block = (
+            context_graph.relationship_prompt_block() if context_graph else ""
+        )
+        if relationship_block:
+            parts.append(relationship_block)
 
         if personal_context:
             personal_lines = "\n".join(
@@ -2054,32 +2286,238 @@ class ClinicalOrchestrator:
                 return key, text
         return "", ""
 
+    def _build_information_clarification_bundle(
+        self,
+        question: str,
+        normalized_user: Optional[str],
+        role_config: RoleConfig,
+        intent: IntentClassification,
+        patient_history: PatientHistoryContext,
+        question_medications: Optional[List[str]] = None,
+        context_graph: Optional["ContextGraph"] = None,
+    ) -> Dict:
+        clinical_roles = {
+            "doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"
+        }
+        is_clinical = role_config.role_key in clinical_roles
+        known_facts: List[str] = []
+        if question_medications:
+            known_facts.append(
+                "The medicine named is " + ", ".join(question_medications[:3]) + "."
+            )
+        if (
+            intent.intent_category == "medication_query"
+            and patient_history.known_allergies
+        ):
+            known_facts.append(
+                "The record lists this allergy: "
+                + "; ".join(patient_history.known_allergies[:5])
+                + "."
+            )
+        if (
+            intent.intent_category == "chronic_condition"
+            and patient_history.known_conditions
+        ):
+            known_facts.append(
+                "The recorded conditions are "
+                + "; ".join(patient_history.known_conditions[:4])
+                + "."
+            )
+        if (
+            intent.intent_category == "medication_query"
+            and patient_history.known_medications
+        ):
+            known_facts.append(
+                "I already have the current medicine list, so you do not need to repeat it."
+            )
+        if context_graph and context_graph.edges:
+            known_facts.append(
+                "Recorded relationships: "
+                + "; ".join(
+                    edge.prompt_line()
+                    for edge in sorted(
+                        context_graph.edges,
+                        key=lambda item: item.relevance_score,
+                        reverse=True,
+                    )[:3]
+                )
+                + ". These remain attributed links, not proof of causation."
+            )
+
+        allergy_is_decision_relevant = bool(
+            patient_history.known_allergies
+            and any(
+                "allerg" in item.lower()
+                for item in intent.clarifying_questions
+            )
+        )
+
+        safety_line = ""
+        if allergy_is_decision_relevant:
+            if is_clinical:
+                safety_line = (
+                    "Reconcile the recorded allergy against the exact product before administration."
+                )
+            else:
+                safety_line = (
+                    "Before taking the first or next dose, ask the prescribing clinic or a pharmacist "
+                    "to confirm that this exact medicine was checked against your recorded allergy."
+                )
+
+        if is_clinical:
+            opening = "I need these facts before giving a patient-specific recommendation."
+        else:
+            opening = "I need these answers before I can tell you what this means for you."
+
+        parts = [item for item in (safety_line, opening) if item]
+        if known_facts:
+            parts.append(" ".join(known_facts))
+        parts.append(
+            "\n".join(
+                f"{index}. {item}"
+                for index, item in enumerate(intent.clarifying_questions[:3], start=1)
+            )
+        )
+        parts.append("Reply with the numbered answers, and I'll give you a direct answer.")
+        answer = "\n\n".join(parts)
+
+        return {
+            "kind": "final",
+            "payload": {
+                "answer_markdown": answer,
+                "answer_text": answer,
+                "sources": [],
+                "personal_context": [],
+                "follow_up_questions": [],
+                "trace": {
+                    "trace_id": "trace-information-clarify",
+                    "created_at": _utc_now(),
+                    "question": question,
+                    "answer_preview": answer[:280],
+                    "sources": [],
+                    "retrieval_mode": "information_clarification_requested",
+                    "role_key": role_config.role_key,
+                    "intent_category": intent.intent_category,
+                    "risk_level": intent.risk_level,
+                    "clarification_reason": intent.clarification_reason,
+                    "clarifying_questions": intent.clarifying_questions[:3],
+                    "escalation_triggered": False,
+                },
+            },
+        }
+
     @staticmethod
     def _build_limited_evidence_response(
-        personal_context: List[Dict], role_config: RoleConfig
+        question: str,
+        personal_context: List[Dict],
+        role_config: RoleConfig,
+        intent: IntentClassification,
+        patient_history: PatientHistoryContext,
+        question_medications: List[str],
+        context_graph: Optional["ContextGraph"] = None,
     ) -> str:
-        personal_note = ""
-        if personal_context:
-            personal_note = "\n\n## Available Personal Context\n" + "\n".join(
-                f"- {item['title']}: {item['snippet']}" for item in personal_context
-            )
-        if role_config.role_key in ("doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"):
+        clinical_roles = {
+            "doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"
+        }
+        is_clinical = role_config.role_key in clinical_roles
+        allergy_text = "; ".join(patient_history.known_allergies[:5])
+        medicine_text = ", ".join(question_medications[:3]) or "the medicine"
+        condition_text = "; ".join(patient_history.known_conditions[:5])
+        relevant_edges = (
+            sorted(
+                context_graph.edges,
+                key=lambda edge: edge.relevance_score,
+                reverse=True,
+            )[:3]
+            if context_graph
+            else []
+        )
+
+        def include_recorded_relationships(answer: str) -> str:
+            if not relevant_edges:
+                return answer
+            lines = "; ".join(edge.prompt_line() for edge in relevant_edges)
             return (
-                "## Evidence Retrieval\n"
-                "Insufficient live evidence was retrieved for this query. "
-                "Please consult current local guidelines, BNF, or NICE CKS directly.\n\n"
-                "## Recommended Action\n"
-                "Use the relevant local pathway or guideline now, or rephrase the query "
-                "with the exact condition, drug, population, or decision point you need."
-                + personal_note
+                answer
+                + "\n\nThe record also contains these attributed relationships: "
+                + lines
+                + ". These are recorded links, not proof of medical causation."
             )
-        return (
-            "## Working Impression\n"
-            "I could not retrieve enough reliable live evidence for this question right now.\n\n"
-            "## What To Do Now\n"
-            "Please narrow the question to a specific symptom, condition, treatment, or population, "
-            "or contact a clinician directly if this affects a decision that needs to be made now."
-            + personal_note
+
+        if intent.intent_category == "medication_query":
+            if is_clinical:
+                opening = (
+                    f"I can't safely confirm current prescribing information for {medicine_text} "
+                    "here, so I would not use this chat response to make the prescribing decision."
+                )
+                if allergy_text:
+                    opening += (
+                        f" The patient record lists {allergy_text}; reconcile that allergy "
+                        "against the exact product before administration."
+                    )
+                return include_recorded_relationships(
+                    opening
+                    + " Please check the current BNF or local formulary, then tell me the indication, "
+                    "patient group, and decision you need help with for a focused review."
+                )
+
+            opening = f"I want to help you check {medicine_text} safely."
+            if allergy_text:
+                opening += (
+                    f" Your health record lists this allergy: {allergy_text}. Before taking "
+                    "the medicine, ask the prescribing clinic or a pharmacist to check the exact "
+                    "product against that allergy."
+                )
+            else:
+                opening += (
+                    " I can't safely confirm its current medicine information here, so please "
+                    "check the label with the prescribing clinic or a pharmacist before changing "
+                    "how you take it."
+                )
+            if condition_text:
+                return include_recorded_relationships(
+                    opening
+                    + f" I understand this is a follow-up in the context of {condition_text}; "
+                    "you do not need to repeat the condition. I could not verify enough current "
+                    "guidance just now, so I will not invent a recovery time or claim that exercise "
+                    "makes the medicine work faster. Tell me only whether you have started it, how "
+                    "long you have taken it, whether the problem is improving or worsening, and "
+                    "whether you have fever or feel generally unwell."
+                )
+            return include_recorded_relationships(
+                opening
+                + " What did the doctor say it was treating, and have you taken any doses yet? "
+                "With that, I can focus on the exact use and explain it in plain language."
+            )
+
+        if is_clinical:
+            return include_recorded_relationships(
+                "I can't safely confirm enough current guidance to support a clinical decision from this "
+                "answer. Please use the relevant local pathway now. If you send the exact condition, "
+                "patient group, and decision point, I can provide a more focused evidence review."
+            )
+
+        if intent.intent_category in {
+            "symptom_triage", "maternity", "msk", "mental_health", "chronic_condition"
+        }:
+            if condition_text:
+                return include_recorded_relationships(
+                    f"I understand this as a follow-up about {condition_text}; you do not need to "
+                    "repeat where the problem is or name the condition again. I could not verify "
+                    "enough current guidance just now, so I will not guess at a recovery time. "
+                    "Tell me only what has changed since the last message, whether it is improving "
+                    "or worsening, and whether any new fever or severe symptoms have appeared."
+                )
+            return include_recorded_relationships(
+                "I can help, but I need a little more detail to give you a useful answer. "
+                "Tell me where the problem is, when it started, how severe it is, and whether it is "
+                "getting worse. If you already have a diagnosis or treatment, include its exact name."
+            )
+
+        return include_recorded_relationships(
+            "I can help with this, but I need the specific health topic or decision you want to make. "
+            "Tell me the symptom, condition, medicine, or report wording, and who the question is about. "
+            "If this affects a decision that must be made now, consult a clinician directly."
         )
 
 

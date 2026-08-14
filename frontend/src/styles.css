@@ -1563,6 +1563,24 @@ label {
   color: var(--primary-strong);
 }
 
+.source-passage {
+  margin: 0.3rem 0 0;
+  padding: 0.4rem 0.55rem;
+  border-left: 3px solid var(--line);
+  background: var(--surface-2);
+  border-radius: 0 6px 6px 0;
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--ink);
+}
+
+.source-passage footer {
+  margin-top: 0.2rem;
+  font-size: 0.7rem;
+  font-style: normal;
+  color: var(--muted);
+}
+
 .follow-ups {
   display: flex;
   flex-wrap: wrap;

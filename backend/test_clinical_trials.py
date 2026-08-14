@@ -2,7 +2,41 @@ import json
 from types import SimpleNamespace
 
 import backend.clinical_trials as clinical_trials
-from backend.clinical_trials import TrialSearchProfile, _exclude_not_relevant, _llm_batch_condition_match
+from backend.clinical_trials import (
+    TrialSearchProfile,
+    _exclude_not_relevant,
+    _llm_batch_condition_match,
+    build_trial_search_profile,
+)
+
+
+def test_trial_profile_contains_all_patient_record_families():
+    profile = build_trial_search_profile(
+        profile={},
+        memory={"summary": "Combined longitudinal summary"},
+        symptom_logs=[{"symptom": "Breast pain"}],
+        medications=[{"name": "Flucloxacillin", "reason": "Mastitis"}],
+        allergies=[{"name": "Penicillin", "reaction": "Hives", "severity": "severe"}],
+        conditions=[{"name": "Mastitis"}],
+        vitals=[{"type": "temperature", "value": "38", "unit": "C"}],
+        triage_summaries=[{"escalation_triggers": ["Worsening fever"]}],
+        document_summaries=[{"summary": "Discharge letter summary"}],
+        clinical_relationships=[{
+            "source_name": "Flucloxacillin", "relation": "taken_for",
+            "target_name": "Mastitis", "certainty": "recorded_association",
+        }],
+        clinical_notes=[{"assessment": "Mastitis", "plan": "Clinical review"}],
+        care_plans=[{"condition": "Mastitis", "status": "active"}],
+        safety_reviews=[{"category": "Medicine safety", "what_changed": "Allergy conflict"}],
+        conversation_summary="Earlier breastfeeding discussion",
+    )
+
+    for expected in (
+        "Combined longitudinal summary", "Breast pain", "Flucloxacillin",
+        "Penicillin", "Discharge letter summary", "taken for", "Clinical review",
+        "Existing care plan", "Allergy conflict", "breastfeeding discussion",
+    ):
+        assert expected.lower() in profile.raw_context.lower()
 
 
 class _FakeCompletions:

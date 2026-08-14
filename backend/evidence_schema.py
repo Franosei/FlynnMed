@@ -51,6 +51,17 @@ class ArticleEvidence(BaseModel):
         description="Facts relevant to this specific patient's conditions, meds, vitals, demographics"
     )
 
+    # Evidence Ledger Phase 1: verbatim quotes from source_snippet, each
+    # validated as an exact substring before being accepted (see
+    # backend/evidence_extractor.py) -- these become EvidencePassage rows
+    # (backend/evidence_ledger.py), so a citation traces to an exact passage
+    # instead of just "this source was used". Not tied 1:1 to individual
+    # facts above -- a flat, verified quote pool for this article.
+    extracted_passages: List[str] = Field(
+        default_factory=list,
+        description="Verbatim substrings of source_snippet backing this article's extracted facts"
+    )
+
     # Safety
     contraindications: List[str] = Field(
         default_factory=list,

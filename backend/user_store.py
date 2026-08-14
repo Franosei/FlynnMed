@@ -13,6 +13,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from backend.config import psycopg_database_url
+from backend.relationship_engine import RELATION_CLASS
 
 load_dotenv()
 
@@ -254,6 +255,7 @@ def _normalize_user_record(username: str, record: Dict) -> Dict:
     normalized.setdefault("triage_summaries", [])
     normalized.setdefault("allergies", [])
     normalized.setdefault("conditions", [])
+    normalized.setdefault("clinical_relationships", [])
     normalized.setdefault("vitals", [])
     normalized.setdefault("clinical_notes", [])
     normalized.setdefault("safety_review_states", {})
@@ -923,6 +925,146 @@ class UserStore:
         allergies = deepcopy(user.get("allergies", [])) if user else []
         allergies.sort(key=lambda item: item.get("name", "").lower())
         return allergies
+
+    @staticmethod
+    def save_clinical_relationships(
+        username: str, relationships: List[Dict]
+    ) -> List[Dict]:
+        """Persist explicit user-reported clinical links without duplicating them."""
+        user = _get_user_record(username)
+        if not user:
+            return []
+        stored = user.setdefault("clinical_relationships", [])
+        changed = False
+        allowed_relations = {
+            "taken_for", "causes", "triggers", "worsens", "improves",
+            "started_after", "allergic_reaction", "associated_with",
+            "led_to", "recorded_in", "recommended_for",
+        }
+        for item in relationships or []:
+            source_name = str(item.get("source_name") or "").strip()
+            target_name = str(item.get("target_name") or "").strip()
+            relation = str(item.get("relation") or "").strip().lower()
+            if not source_name or not target_name or relation not in allowed_relations:
+                continue
+            normalized = {
+                "relationship_id": item.get("relationship_id") or f"rel-{uuid4().hex[:12]}",
+                "source_type": str(item.get("source_type") or "other").strip().lower(),
+                "source_name": source_name,
+                "relation": relation,
+                "relation_class": str(
+                    item.get("relation_class") or RELATION_CLASS.get(relation, "association")
+                ).strip(),
+                "target_type": str(item.get("target_type") or "other").strip().lower(),
+                "target_name": target_name,
+                "certainty": (
+                    str(item.get("certainty") or "user_reported").strip().lower()
+                    if str(item.get("certainty") or "user_reported").strip().lower()
+                    in {"documented", "user_reported", "user_suspected", "recorded_association"}
+                    else "user_reported"
+                ),
+                "evidence": str(item.get("evidence") or "").strip(),
+                "source": str(item.get("source") or "conversation").strip(),
+                "recorded_at": item.get("recorded_at") or _utc_now(),
+            }
+            key = (
+                normalized["source_type"], normalized["source_name"].lower(),
+                normalized["relation"], normalized["target_type"],
+                normalized["target_name"].lower(),
+            )
+            existing_index = next(
+                (
+                    index for index, existing in enumerate(stored)
+                    if (
+                        str(existing.get("source_type") or "").lower(),
+                        str(existing.get("source_name") or "").lower(),
+                        str(existing.get("relation") or "").lower(),
+                        str(existing.get("target_type") or "").lower(),
+                        str(existing.get("target_name") or "").lower(),
+                    ) == key
+                ),
+                None,
+            )
+            if existing_index is None:
+                stored.append(normalized)
+            else:
+                normalized["relationship_id"] = stored[existing_index].get(
+                    "relationship_id", normalized["relationship_id"]
+                )
+                stored[existing_index] = normalized
+            changed = True
+        if changed:
+            _append_audit(
+                user,
+                "clinical_relationships_saved",
+                "Saved user-reported clinical relationships from conversation",
+                metadata={"relationship_count": len(stored)},
+            )
+            _save_user_record(username, user)
+        return deepcopy(stored)
+
+    @staticmethod
+    def get_clinical_relationships(username: str) -> List[Dict]:
+        user = _get_user_record(username)
+        return deepcopy(user.get("clinical_relationships", [])) if user else []
+
+    @staticmethod
+    def delete_clinical_relationship(username: str, relationship_id: str) -> bool:
+        user = _get_user_record(username)
+        if not user:
+            return False
+        stored = user.setdefault("clinical_relationships", [])
+        kept = [
+            item for item in stored
+            if str(item.get("relationship_id") or "") != relationship_id
+        ]
+        if len(kept) == len(stored):
+            return False
+        user["clinical_relationships"] = kept
+        _append_audit(
+            user,
+            "clinical_relationship_deleted",
+            "Removed user-reported clinical relationship",
+            metadata={"relationship_id": relationship_id},
+        )
+        _save_user_record(username, user)
+        return True
+
+    @staticmethod
+    def delete_clinical_relationships_for_entity(
+        username: str, entity_type: str, entity_name: str
+    ) -> int:
+        user = _get_user_record(username)
+        if not user or not entity_name:
+            return 0
+        stored = user.setdefault("clinical_relationships", [])
+        kind = (entity_type or "").strip().lower()
+        name = entity_name.strip().lower()
+        kept = [
+            item
+            for item in stored
+            if not (
+                (
+                    str(item.get("source_type") or "").lower() == kind
+                    and str(item.get("source_name") or "").lower() == name
+                )
+                or (
+                    str(item.get("target_type") or "").lower() == kind
+                    and str(item.get("target_name") or "").lower() == name
+                )
+            )
+        ]
+        removed = len(stored) - len(kept)
+        if removed:
+            user["clinical_relationships"] = kept
+            _append_audit(
+                user,
+                "clinical_relationships_pruned",
+                f"Removed relationships for deleted {kind}: {entity_name}",
+                metadata={"entity_type": kind, "entity_name": entity_name, "removed": removed},
+            )
+            _save_user_record(username, user)
+        return removed
 
     @staticmethod
     def delete_allergy(username: str, allergy_id: str) -> bool:

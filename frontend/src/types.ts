@@ -61,6 +61,14 @@ export type Source = {
   patient_alignment_facts?: string[];
   evidence_quality_reasons?: string[];
   usable_for_patient_specific_guidance?: boolean;
+  // Evidence Ledger Phase 1 -- present only when the source was successfully
+  // persisted with a verified passage; absent (not just empty) for a source
+  // where persistence failed or no exact passage was extracted, so the UI
+  // can distinguish "no passage available" from "not checked yet".
+  exact_passage?: string;
+  passage_locator?: string;
+  source_version?: string;
+  retrieved_at?: string;
 };
 
 export type ClinicalNote = {
@@ -102,6 +110,7 @@ export type Snapshot = {
   medications: Dict<any>[];
   allergies: Dict<any>[];
   conditions: Dict<any>[];
+  clinical_relationships?: Dict<any>[];
   vitals: Dict<any>[];
   triage_summaries: Dict<any>[];
   traces: Dict<any>[];
@@ -190,6 +199,7 @@ export type ClinicianPatientSummary = {
   triage: Dict<any>[];
   care_plans: Dict<any>[];
   clinical_notes: Dict<any>[];
+  clinical_relationships: Dict<any>[];
   chat_history: Dict<any>[];
   chat_history_authorized: boolean;
   previsit_summaries: PreVisitSummary[];

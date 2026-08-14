@@ -76,7 +76,15 @@ _CLINICIAN_CONTEXT = re.compile(
     r"we (?:admitted|prescribed|started|ordered|examined|diagnosed|treated)|"
     r"I (?:prescribed|started|ordered|examined|diagnosed|treated)|"
     r"routine exam|clinical practice|discharge (?:note|summary)|progress note|"
-    r"dialysis team|Dr\.?\s+[A-Z])\b",
+    r"dialysis team|Dr\.?\s+[A-Z]|"
+    # "pt" (bare, clinical-note shorthand for "patient") only counts with a
+    # clinical-verb follow-up -- gated this way so it doesn't false-positive
+    # on "PT" meaning physical therapy. Found via a real HealthBench case
+    # ("pt can't take doxycycline. any other options?") that fell through to
+    # patient-mode role resolution because none of the existing patterns
+    # recognize the abbreviation, only the spelled-out word "patient".
+    r"\bpt (?:can'?t|cannot|won'?t|needs?|has|have|is|was|takes?|presents?|"
+    r"started|denies|reports?))\b",
     re.I,
 )
 _PATIENT_CONTEXT = re.compile(

@@ -656,6 +656,11 @@ def build_trial_search_profile(
     vitals: List[Dict],
     triage_summaries: List[Dict],
     document_summaries: Optional[List[Dict]] = None,
+    clinical_relationships: Optional[List[Dict]] = None,
+    clinical_notes: Optional[List[Dict]] = None,
+    care_plans: Optional[List[Dict]] = None,
+    safety_reviews: Optional[List[Dict]] = None,
+    conversation_summary: str = "",
 ) -> "TrialSearchProfile":
     clinical_context = adjudicate_patient_context(
         conditions=conditions,
@@ -696,6 +701,57 @@ def build_trial_search_profile(
         reason = _clean(m.get("reason", ""))
         if name:
             parts.append(f"Medication: {name}" + (f" (for {reason})" if reason else ""))
+
+    for allergy in allergies[:10]:
+        name = _clean(allergy.get("name", ""))
+        reaction = _clean(allergy.get("reaction", ""))
+        severity = _clean(allergy.get("severity", ""))
+        if name:
+            parts.append(
+                f"Allergy/adverse reaction: {name}"
+                + (f" -- {reaction}" if reaction else "")
+                + (f" [{severity}]" if severity else "")
+            )
+
+    for document in (document_summaries or [])[:10]:
+        summary = _clean(document.get("summary", ""))
+        if summary:
+            parts.append(f"Documented clinical summary: {summary[:700]}")
+
+    for relationship in (clinical_relationships or [])[:20]:
+        source = _clean(relationship.get("source_name", ""))
+        relation = _clean(relationship.get("relation", "")).replace("_", " ")
+        target = _clean(relationship.get("target_name", ""))
+        certainty = _clean(relationship.get("certainty", ""))
+        if source and relation and target:
+            parts.append(
+                f"Recorded relationship [{certainty or 'recorded'}]: "
+                f"{source} {relation} {target}"
+            )
+
+    for note in (clinical_notes or [])[:5]:
+        assessment = _clean(note.get("assessment", ""))
+        plan = _clean(note.get("plan", ""))
+        if assessment or plan:
+            parts.append(f"Clinical note: assessment={assessment}; plan={plan}"[:900])
+
+    for plan in (care_plans or [])[:5]:
+        condition = _clean(plan.get("condition", ""))
+        status = _clean(plan.get("status", ""))
+        if condition:
+            parts.append(f"Existing care plan: {condition} [{status or 'status unknown'}]")
+
+    for review in (safety_reviews or [])[:10]:
+        category = _clean(review.get("category", ""))
+        changed = _clean(review.get("what_changed", ""))
+        if category or changed:
+            parts.append(f"Safety review: {category} -- {changed}"[:900])
+
+    if _clean(conversation_summary):
+        parts.append(
+            "Earlier conversation summary (assistant statements are not eligibility facts): "
+            + _clean(conversation_summary)[:1600]
+        )
 
     vital_lines = [render_vital_for_prompt(v) for v in (vitals or []) if isinstance(v, dict)]
     if vital_lines:

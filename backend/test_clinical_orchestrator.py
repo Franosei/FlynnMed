@@ -551,3 +551,284 @@ def test_no_live_evidence_at_all_also_refuses_instead_of_general_knowledge(monke
 
     assert bundle["kind"] == "final"
     assert bundle["payload"]["trace"]["retrieval_mode"] == "no_evidence_after_retry"
+
+
+def test_medication_outage_response_is_natural_allergy_aware_and_asks_indication(
+    monkeypatch,
+):
+    orchestrator = _build_orchestrator(monkeypatch)
+    medication_intent = IntentClassification(
+        intent_category="medication_query",
+        risk_level="routine",
+        pathway_hint="medications",
+    )
+    orchestrator.intent_classifier.classify = lambda *a, **kw: medication_intent
+    orchestrator.llm = SimpleNamespace(
+        extract_medication_mentions=lambda question: ["flucloxacillin"]
+    )
+
+    monkeypatch.setattr(
+        AgenticRetrievalLoop,
+        "run",
+        lambda self, *a, **kw: {
+            "collected_sources": [],
+            "personal_context": [],
+            "trial_results": [],
+            "tool_calls_made": [],
+            "hyde_passage": "",
+            "query_variants": [],
+        },
+    )
+
+    bundle = orchestrator.prepare_bundle(
+        question="My doctor prescribed flucloxacillin capsules, hard 500mg for me?",
+        user="patient1",
+        user_profile={},
+        longitudinal_memory_summary="",
+        allergies=[
+            {
+                "name": "Penicillin",
+                "reaction": "Hives and facial swelling",
+                "severity": "severe",
+            }
+        ],
+    )
+
+    answer = bundle["payload"]["answer_markdown"]
+    assert bundle["kind"] == "final"
+    assert "flucloxacillin" in answer.lower()
+    assert "penicillin" in answer.lower()
+    assert "what did the doctor say it was treating" in answer.lower()
+    assert "working impression" not in answer.lower()
+    assert "available personal context" not in answer.lower()
+    assert answer.lower().count("known allergies and adverse reactions") == 0
+
+
+def test_underspecified_prescription_asks_patient_aware_questions_before_retrieval(
+    monkeypatch,
+):
+    orchestrator = _build_orchestrator(monkeypatch)
+    medication_intent = IntentClassification(
+        intent_category="medication_query",
+        risk_level="routine",
+        pathway_hint="medications",
+        clarification_required=True,
+        clarification_reason="the prescription indication is unknown",
+        clarifying_questions=[
+            "What did the doctor say the flucloxacillin is treating?",
+            "Have you taken any doses, and did anything happen afterwards?",
+            "Did the doctor know about your recorded penicillin allergy?",
+        ],
+    )
+    orchestrator.intent_classifier.classify = lambda *a, **kw: medication_intent
+    orchestrator.llm = SimpleNamespace(
+        extract_medication_mentions=lambda question: ["flucloxacillin"]
+    )
+
+    def fail_if_retrieval_starts(self, *args, **kwargs):
+        raise AssertionError("retrieval must wait for the patient's answers")
+
+    monkeypatch.setattr(AgenticRetrievalLoop, "run", fail_if_retrieval_starts)
+
+    bundle = orchestrator.prepare_bundle(
+        question="My doctor prescribed flucloxacillin capsules, hard 500mg for me?",
+        user="patient1",
+        user_profile={},
+        longitudinal_memory_summary="",
+        allergies=[
+            {
+                "name": "Penicillin",
+                "reaction": "Hives and facial swelling",
+                "severity": "severe",
+            }
+        ],
+    )
+
+    answer = bundle["payload"]["answer_markdown"]
+    assert bundle["kind"] == "final"
+    assert bundle["payload"]["trace"]["retrieval_mode"] == (
+        "information_clarification_requested"
+    )
+    assert "medicine named is flucloxacillin" in answer.lower()
+    assert "record lists this allergy: penicillin" in answer.lower()
+    assert answer.startswith("Before taking the first or next dose")
+    assert "1. What did the doctor say" in answer
+    assert "2. Have you taken any doses" in answer
+    assert "3. Did the doctor know" in answer
+    assert "more detail" not in answer.lower()
+    assert "working impression" not in answer.lower()
+
+
+def test_medication_lifestyle_follow_up_resolves_prior_user_medicine_without_assistant_diagnosis(
+    monkeypatch,
+):
+    orchestrator = _build_orchestrator(monkeypatch)
+    # The continuation must still recover when the initial classifier treats
+    # this short lifestyle question as generic information.
+    medication_intent = IntentClassification(
+        intent_category="general_info",
+        risk_level="routine",
+        pathway_hint="general_triage",
+    )
+    orchestrator.intent_classifier.classify = lambda *a, **kw: medication_intent
+    extraction_inputs = []
+
+    def extract_medications(text):
+        extraction_inputs.append(text)
+        return ["flucloxacillin"] if "flucloxacillin" in text.lower() else []
+
+    orchestrator.llm = SimpleNamespace(
+        extract_medication_mentions=extract_medications
+    )
+    captured = {}
+
+    def capture_run(self, **kwargs):
+        captured.update(kwargs)
+        source_text = (
+            "Flucloxacillin practical medicine guidance covering how to take it, "
+            "food timing, daily activities, alcohol, and side effects."
+        )
+        return {
+            "collected_sources": [_good_source(source_text)],
+            "personal_context": [],
+            "trial_results": [],
+            "tool_calls_made": [
+                {
+                    "tool": "search_medicine_guidance",
+                    "args": {"medicine": "flucloxacillin"},
+                    "iteration": 0,
+                }
+            ],
+            "hyde_passage": "",
+            "query_variants": [],
+        }
+
+    monkeypatch.setattr(AgenticRetrievalLoop, "run", capture_run)
+
+    bundle = orchestrator.prepare_bundle(
+        question=(
+            "When taking the medication, are there personal activities or "
+            "lifestyle changes I can do to help?"
+        ),
+        user="patient1",
+        user_profile={},
+        longitudinal_memory_summary="",
+        chat_history=[
+            {
+                "role": "user",
+                "content": "My doctor prescribed flucloxacillin capsules, hard 500mg for me?",
+            },
+            {
+                "role": "assistant",
+                "content": "This was prescribed for mastitis.",
+            },
+        ],
+    )
+
+    assert bundle["kind"] == "answer"
+    assert extraction_inputs and "flucloxacillin" in extraction_inputs[0].lower()
+    assert captured["question_medications"] == ["flucloxacillin"]
+    assert bundle["intent"].intent_category == "medication_query"
+    assert bundle["intent"].pathway_hint == "medications"
+    assert "flucloxacillin" in captured["question"].lower()
+    assert "practical question" in captured["question"].lower()
+    assert "mastitis" not in captured["patient_summary"].lower()
+
+
+def test_medicine_follow_up_uses_saved_medicine_and_condition_for_retrieval(monkeypatch):
+    orchestrator = _build_orchestrator(monkeypatch)
+    orchestrator.intent_classifier.classify = lambda *a, **kw: IntentClassification(
+        intent_category="maternity",
+        risk_level="routine",
+        pathway_hint="maternity",
+    )
+    orchestrator.llm = SimpleNamespace(
+        extract_medication_mentions=lambda text: ["flucloxacillin"]
+    )
+    captured = {}
+
+    def capture_run(self, **kwargs):
+        captured.update(kwargs)
+        return {
+            "collected_sources": [
+                _good_source(
+                    "Guidance on mastitis recovery, flucloxacillin treatment, "
+                    "physical activity, and when symptoms need reassessment."
+                )
+            ],
+            "personal_context": [],
+            "trial_results": [],
+            "tool_calls_made": [],
+            "hyde_passage": "",
+            "query_variants": [],
+        }
+
+    monkeypatch.setattr(AgenticRetrievalLoop, "run", capture_run)
+
+    bundle = orchestrator.prepare_bundle(
+        question="How long should I expect it to be there, and can exercise work faster with the medication?",
+        user="patient1",
+        user_profile={},
+        longitudinal_memory_summary="",
+        medications=[{"name": "Flucloxacillin", "dose": "500 mg"}],
+        conditions=[{"name": "Mastitis", "status": "active"}],
+        allergies=[
+            {"name": "Penicillin", "reaction": "Hives and facial swelling", "severity": "severe"}
+        ],
+        chat_history=[
+            {"role": "user", "content": "I have had this mastitis for almost a week."},
+            {"role": "user", "content": "My doctor prescribed flucloxacillin 500 mg."},
+        ],
+    )
+
+    assert bundle["kind"] == "answer"
+    assert bundle["intent"].intent_category == "medication_query"
+    assert captured["question_medications"] == ["flucloxacillin"]
+    assert "mastitis" in captured["question"].lower()
+    assert "follow-up" in captured["question"].lower()
+
+
+def test_follow_up_outage_response_keeps_known_context_and_asks_only_missing_facts(
+    monkeypatch,
+):
+    orchestrator = _build_orchestrator(monkeypatch)
+    orchestrator.intent_classifier.classify = lambda *a, **kw: IntentClassification(
+        intent_category="symptom_triage",
+        risk_level="routine",
+        pathway_hint="general_triage",
+    )
+    orchestrator.llm = SimpleNamespace(
+        extract_medication_mentions=lambda text: ["flucloxacillin"]
+    )
+    monkeypatch.setattr(
+        AgenticRetrievalLoop,
+        "run",
+        lambda self, *a, **kw: {
+            "collected_sources": [],
+            "personal_context": [],
+            "trial_results": [],
+            "tool_calls_made": [],
+            "hyde_passage": "",
+            "query_variants": [],
+        },
+    )
+
+    bundle = orchestrator.prepare_bundle(
+        question="How long will it be there, and can exercise make the medication work faster?",
+        user="patient1",
+        user_profile={},
+        longitudinal_memory_summary="",
+        medications=[{"name": "Flucloxacillin", "dose": "500 mg"}],
+        conditions=[{"name": "Mastitis", "status": "active"}],
+        allergies=[
+            {"name": "Penicillin", "reaction": "Hives and facial swelling", "severity": "severe"}
+        ],
+    )
+
+    answer = bundle["payload"]["answer_markdown"].lower()
+    assert bundle["kind"] == "final"
+    assert "mastitis" in answer
+    assert "you do not need to repeat the condition" in answer
+    assert "whether you have started it" in answer
+    assert "tell me where the problem is" not in answer
+    assert "include its exact name" not in answer

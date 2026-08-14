@@ -69,6 +69,37 @@ def test_generate_system_prompt_instructs_flagging_ambiguous_data(monkeypatch):
     assert "safety_notes" in system_prompt
 
 
+def test_generate_receives_all_patient_record_families(monkeypatch):
+    agent = _build_agent(monkeypatch)
+
+    agent.generate(
+        condition="Mastitis",
+        user_context={
+            "profile": {},
+            "medications": [{"name": "Flucloxacillin"}],
+            "conditions": [{"name": "Mastitis"}],
+            "allergies": [{"name": "Penicillin"}],
+            "symptom_logs": [{"symptom": "Breast pain"}],
+            "document_summaries": [{"summary": "Discharge letter"}],
+            "clinical_relationships": [{"source_name": "Medicine", "relation": "taken_for", "target_name": "Mastitis"}],
+            "clinical_notes": [{"assessment": "Mastitis", "plan": "Review"}],
+            "existing_care_plans": [{"condition": "Mastitis"}],
+            "safety_reviews": [{"category": "Medicine and allergy conflict"}],
+            "longitudinal_memory": "Longitudinal summary",
+            "conversation_summary": "Whole chat summary",
+            "previous_five_chat": [{"role": "user", "content": "Previous exact message"}],
+        },
+    )
+
+    system_prompt = agent._client.chat.completions.calls[0]["messages"][0]["content"]
+    for expected in (
+        "Breast pain", "Discharge letter", "taken_for", "clinical_notes",
+        "Medicine and allergy conflict", "Longitudinal summary", "Whole chat summary",
+        "Previous exact message",
+    ):
+        assert expected in system_prompt
+
+
 def test_generate_gp_prep_instructs_flagging_ambiguous_data(monkeypatch):
     agent = _build_agent(monkeypatch)
     plan = {

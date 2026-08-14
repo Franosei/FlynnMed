@@ -144,6 +144,60 @@ def test_default_ambiguity_fields_are_off():
     assert default.ambiguous_term == ""
     assert default.ambiguity_clarifying_question == ""
     assert default.ambiguity_reply_options == []
+    assert default.clarification_required is False
+    assert default.clarification_reason == ""
+    assert default.clarifying_questions == []
+
+
+def test_personalized_medication_question_can_require_specific_intake(monkeypatch):
+    payload = {
+        **_AMBIGUOUS_PEAK_FLOW_PAYLOAD,
+        "intent_category": "medication_query",
+        "pathway_hint": "medications",
+        "ambiguous_term_detected": False,
+        "ambiguity_clarifying_question": "",
+        "ambiguity_reply_options": [],
+        "clarification_required": True,
+        "clarification_reason": "the prescription indication is unknown",
+        "clarifying_questions": [
+            "What did the prescriber say the flucloxacillin is treating?",
+            "Have you taken any doses, and did anything happen afterwards?",
+            "Did the prescriber know about your recorded penicillin allergy?",
+        ],
+    }
+    classifier = _classifier_with_response(monkeypatch, payload)
+
+    result = classifier.classify(
+        "My doctor prescribed flucloxacillin 500 mg for me?",
+        role_key="patient",
+    )
+
+    assert result.clarification_required is True
+    assert result.clarification_reason == "the prescription indication is unknown"
+    assert len(result.clarifying_questions) == 3
+    assert result.pathway_hint == "medications"
+    sent_prompt = classifier.client.chat.completions.last_messages[0]["content"]
+    assert "do not ask for anything already recorded or answered" in sent_prompt
+
+
+def test_information_clarification_never_delays_urgent_guidance(monkeypatch):
+    payload = {
+        **_AMBIGUOUS_PEAK_FLOW_PAYLOAD,
+        "risk_level": "urgent",
+        "ambiguous_term_detected": False,
+        "ambiguity_clarifying_question": "",
+        "ambiguity_reply_options": [],
+        "clarification_required": True,
+        "clarification_reason": "details are missing",
+        "clarifying_questions": ["What happened?"],
+    }
+    classifier = _classifier_with_response(monkeypatch, payload)
+
+    result = classifier.classify("I need urgent help", role_key="patient")
+
+    assert result.risk_level == "urgent"
+    assert result.clarification_required is False
+    assert result.clarifying_questions == []
 
 
 def test_clinician_guideline_question_does_not_trigger_crisis_prescreen():

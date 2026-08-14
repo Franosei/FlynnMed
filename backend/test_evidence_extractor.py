@@ -76,6 +76,66 @@ def test_extract_one_article_prompt_instructs_specialty_mismatch_detection():
     assert "different clinical meaning" in sent_prompt.lower()
 
 
+def test_extract_one_article_keeps_a_verbatim_extracted_passage():
+    snippet = "Flucloxacillin can potentiate warfarin's anticoagulant effect in some patients."
+    llm = _FakeLLM(
+        {
+            "answers_question": True,
+            "question_facts": ["Flucloxacillin can affect warfarin."],
+            "patient_aligned_facts": [],
+            "extracted_passages": [
+                "Flucloxacillin can potentiate warfarin's anticoagulant effect"
+            ],
+            "alignment_confidence": 0.9,
+        }
+    )
+    source = {"snippet": snippet, "title": "Flucloxacillin guidance", "source_id": "S1"}
+
+    result = _extract_one_article(
+        llm=llm,
+        source=source,
+        question="Can I take flucloxacillin with warfarin?",
+        patient_summary="On warfarin.",
+        medications=["Warfarin"],
+        conditions=[],
+    )
+
+    assert result.extracted_passages == [
+        "Flucloxacillin can potentiate warfarin's anticoagulant effect"
+    ]
+
+
+def test_extract_one_article_drops_a_non_verbatim_extracted_passage():
+    """
+    Regression/quality-gate test: a claimed passage that is not an exact
+    substring of the article text must be dropped, not kept in paraphrased
+    form -- excluded rather than passed through as unverified text.
+    """
+    snippet = "Flucloxacillin can potentiate warfarin's anticoagulant effect in some patients."
+    llm = _FakeLLM(
+        {
+            "answers_question": True,
+            "question_facts": ["Flucloxacillin can affect warfarin."],
+            "patient_aligned_facts": [],
+            # Paraphrased, NOT a verbatim substring of snippet.
+            "extracted_passages": ["Flucloxacillin increases warfarin's effect"],
+            "alignment_confidence": 0.9,
+        }
+    )
+    source = {"snippet": snippet, "title": "Flucloxacillin guidance", "source_id": "S1"}
+
+    result = _extract_one_article(
+        llm=llm,
+        source=source,
+        question="Can I take flucloxacillin with warfarin?",
+        patient_summary="On warfarin.",
+        medications=["Warfarin"],
+        conditions=[],
+    )
+
+    assert result.extracted_passages == []
+
+
 def test_build_evidence_dossier_excludes_confirmed_mismatched_sources(monkeypatch):
     mismatched = ArticleEvidence(
         source_id="S1",

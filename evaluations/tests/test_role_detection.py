@@ -153,6 +153,34 @@ def test_only_scans_user_turns_not_assistant_turns():
     assert detect_stated_role(case) == "patient"
 
 
+def test_recognizes_pt_abbreviation_as_clinician_managed_patient_language():
+    """
+    Regression test: found via a real HealthBench case
+    ("pt can't take doxycycline. any other options?") that fell through to
+    patient-mode role resolution -- the existing clinician-context patterns
+    only recognized the spelled-out word "patient" ("patient has", "patient
+    is", ...), not the extremely common clinical-note abbreviation "pt".
+    """
+    case = _case("pt can't take doxycycline. any other options?")
+    assert resolve_case_role(case).role == "healthcare_professional"
+
+    case2 = _case("pt has a fever and cough, what should we start?")
+    assert resolve_case_role(case2).role == "healthcare_professional"
+
+
+def test_pt_abbreviation_does_not_misdetect_physical_therapy_mentions():
+    """
+    Companion test: "pt" is also the common abbreviation for physical
+    therapy, so the pattern must require a clinical-verb follow-up
+    ("pt can't/has/is...") rather than matching the bare token anywhere.
+    """
+    case = _case("Should I be referred for PT and some rehab exercises?")
+    assert detect_stated_role(case) == "patient"
+
+    case2 = _case("My PT/INR came back elevated, is that a problem?")
+    assert detect_stated_role(case2) == "patient"
+
+
 def test_eval_account_username_is_namespaced_and_deterministic():
     username = eval_account_username("doctor", "abc-123-def")
     assert username.startswith("eval-harness-doctor-")

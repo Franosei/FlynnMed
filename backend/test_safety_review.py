@@ -93,6 +93,27 @@ def test_medicine_allergy_conflict_uses_exact_saved_facts():
     assert review["approver"] == "A qualified clinician"
 
 
+def test_safety_review_records_the_complete_context_it_considered():
+    reviews = build_safety_reviews(
+        vitals=[],
+        symptoms=[],
+        medications=[{"medication_id": "m1", "name": "Penicillin"}],
+        allergies=[{"allergy_id": "a1", "name": "Penicillin"}],
+        conditions=[{"name": "Mastitis"}],
+        triage_summaries=[{"urgency_level": "routine"}],
+        document_summaries=[{"file": "letter.pdf", "summary": "Clinical letter"}],
+        clinical_relationships=[{"relation": "taken_for"}],
+        longitudinal_memory="Patient longitudinal summary",
+    )
+
+    considered = reviews[0]["context_considered"]
+    assert considered["conditions"] == ["Mastitis"]
+    assert considered["triage_record_count"] == 1
+    assert considered["document_summary_count"] == 1
+    assert considered["clinical_relationship_count"] == 1
+    assert considered["longitudinal_summary_available"] is True
+
+
 def test_warfarin_and_ibuprofen_never_tells_patient_to_stop_warfarin():
     review = _build(medications=[
         {"medication_id": "m1", "name": "Warfarin"},

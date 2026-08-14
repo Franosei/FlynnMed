@@ -17,6 +17,7 @@ from typing import Callable, Dict, List, Optional
 import openai
 
 from backend.evidence_extractor import _extract_one_article
+from backend.conversation_context import render_verbatim
 from backend.clinical_context_guard import (
     ClinicalContextDecision,
     build_review_required_plan,
@@ -296,10 +297,26 @@ class CarePlanAgent:
             vitals=user_context.get("vitals") or [],
         )
         history_block = patient_history.as_prompt_block() or "No recorded patient history."
+        complete_record_context = json.dumps(
+            {
+                "symptoms": user_context.get("symptom_logs") or [],
+                "documents": user_context.get("document_summaries") or [],
+                "clinical_relationships": user_context.get("clinical_relationships") or [],
+                "clinical_notes": user_context.get("clinical_notes") or [],
+                "existing_care_plans": user_context.get("existing_care_plans") or [],
+                "safety_reviews": user_context.get("safety_reviews") or [],
+            },
+            ensure_ascii=False,
+            default=str,
+        )[:12000]
+        conversation_summary = str(
+            user_context.get("conversation_summary") or "No earlier conversation."
+        )[:6000]
+        previous_five = render_verbatim(user_context.get("previous_five_chat") or [])
 
         self._extraction_context = {
             "question": f"Care plan for {condition}",
-            "patient_summary": history_block,
+            "patient_summary": history_block + "\n" + complete_record_context,
             "medications": [m.get("name", "") for m in meds if isinstance(m, dict) and m.get("name")],
             "conditions": [c.get("name", "") for c in existing_conditions if isinstance(c, dict) and c.get("name")],
         }
@@ -311,6 +328,13 @@ Build a comprehensive, personalised care plan for: **{condition}**
 Patient context:
 - Account role: {role}
 {history_block}
+- Longitudinal record summary: {(user_context.get("longitudinal_memory") or "No longitudinal summary recorded.")[:6000]}
+- Additional structured records (symptoms, documents, relationships, notes, existing plans, and safety reviews):
+{complete_record_context}
+- Whole earlier conversation summary:
+{conversation_summary}
+- Previous five messages verbatim:
+{previous_five}
 - Recent health chat context: {chat_summary if chat_summary else "none"}
 
 {clinical_context.as_prompt_block() if clinical_context else "Clinical context adjudication: no specialty conflict detected; do not infer a diagnosis from a request alone."}
@@ -325,7 +349,8 @@ AGENT RULES:
 7. Safety notes must flag medication interactions, red flags, and safeguarding concerns specific to this condition.
 8. After gathering evidence, generate the final plan JSON only -- no prose outside the JSON.
 9. Treat the clinical context adjudication above as binding. Do not reinterpret a measurement, unit, or test as another specialty. If the requested topic is not established as a diagnosis, describe it as a concern to review rather than a confirmed condition; record unresolved ambiguity in safety_notes.
-10. If evidence is insufficient for a task, target, medication, or screening interval, omit it and say that it needs clinician confirmation. When data is ambiguous, preserve that ambiguity instead of guessing."""
+10. If evidence is insufficient for a task, target, medication, or screening interval, omit it and say that it needs clinician confirmation. When data is ambiguous, preserve that ambiguity instead of guessing.
+11. Treat prior assistant replies as conversation context only. Patient facts must come from user statements or structured records."""
 
         messages: List[Dict] = [
             {"role": "system", "content": system_prompt},
@@ -489,11 +514,25 @@ AGENT RULES:
             vitals=user_context.get("vitals") or [],
         )
         history_block = patient_history.as_prompt_block() or "No recorded patient history."
+        extended_context = json.dumps(
+            {
+                "symptoms": user_context.get("symptom_logs") or [],
+                "documents": user_context.get("document_summaries") or [],
+                "clinical_relationships": user_context.get("clinical_relationships") or [],
+                "clinical_notes": user_context.get("clinical_notes") or [],
+                "safety_reviews": user_context.get("safety_reviews") or [],
+            },
+            ensure_ascii=False,
+            default=str,
+        )[:10000]
 
         prompt = (
             f"You are FlynnMed helping {name} prepare for their GP appointment about "
             f"{plan.get('condition', 'their condition')}.\n\n"
             f"Patient history:\n{history_block}\n\n"
+            f"Longitudinal record summary:\n{(user_context.get('longitudinal_memory') or 'None recorded.')[:6000]}\n\n"
+            f"Additional structured records:\n{extended_context}\n\n"
+            f"Earlier conversation summary:\n{(user_context.get('conversation_summary') or 'None recorded.')[:4000]}\n\n"
             f"{clinical_context.as_prompt_block() if clinical_context else 'Clinical context adjudication: do not infer a diagnosis from the plan title alone.'}\n\n"
             f"Care plan summary:\n"
             f"Goals: {json.dumps(plan.get('goals', []))}\n"

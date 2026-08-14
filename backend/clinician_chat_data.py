@@ -41,6 +41,7 @@ from backend.repositories.sql_user_store import (
     _triage_summary_to_dict,
     _vitals_to_dict,
 )
+from backend.relationship_engine import derive_relationships, merge_relationships
 
 
 def _document_summaries_for(db: Session, patient: Patient) -> List[Dict]:
@@ -141,35 +142,59 @@ def load_patient_data_bundle(db: Session, patient: Patient) -> Dict:
         .limit(10)
     ).scalars().all()
 
+    medication_dicts = [_medication_to_dict(m) for m in medications]
+    symptom_dicts = [_symptom_log_to_dict(s) for s in symptom_logs]
+    triage_dicts = [_triage_summary_to_dict(t) for t in triage_summaries]
+    allergy_dicts = [_allergy_to_dict(a) for a in allergies]
+    condition_dicts = [_condition_to_dict(c) for c in conditions]
+    vital_dicts = [_vitals_to_dict(v) for v in vitals]
+    care_plan_dicts = [
+        {
+            **(cp.body or {}),
+            "condition": cp.condition,
+            "status": cp.status,
+            "title": (cp.body or {}).get("title", cp.condition),
+            "gp_prep_summary": cp.gp_prep_summary or "",
+            "created_at": _iso(cp.created_at),
+        }
+        for cp in care_plans
+    ]
+    clinical_note_dicts = [
+        {
+            "subjective": cn.subjective,
+            "objective": cn.objective,
+            "assessment": cn.assessment,
+            "plan": cn.plan,
+            "urgency_level": cn.urgency_level,
+            "created_at": _iso(cn.created_at),
+        }
+        for cn in clinical_notes
+    ]
+    clinical_relationships = merge_relationships(
+        (patient.longitudinal_memory or {}).get("clinical_relationships", []) or [],
+        derive_relationships(
+            medications=medication_dicts,
+            allergies=allergy_dicts,
+            conditions=condition_dicts,
+            symptom_logs=symptom_dicts,
+            vitals=vital_dicts,
+            triage_summaries=triage_dicts,
+            care_plans=care_plan_dicts,
+            clinical_notes=clinical_note_dicts,
+        ),
+    )
+
     return {
         "user_profile": _user_profile_for(patient),
-        "medications": [_medication_to_dict(m) for m in medications],
-        "symptom_logs": [_symptom_log_to_dict(s) for s in symptom_logs],
-        "triage_summaries": [_triage_summary_to_dict(t) for t in triage_summaries],
-        "allergies": [_allergy_to_dict(a) for a in allergies],
-        "conditions": [_condition_to_dict(c) for c in conditions],
-        "vitals": [_vitals_to_dict(v) for v in vitals],
+        "medications": medication_dicts,
+        "symptom_logs": symptom_dicts,
+        "triage_summaries": triage_dicts,
+        "allergies": allergy_dicts,
+        "conditions": condition_dicts,
+        "vitals": vital_dicts,
         "document_summaries": _document_summaries_for(db, patient),
         "longitudinal_memory_base": (patient.longitudinal_memory or {}).get("summary", ""),
-        "care_plans": [
-            {
-                "condition": cp.condition,
-                "status": cp.status,
-                "title": (cp.body or {}).get("title", cp.condition),
-                "gp_prep_summary": cp.gp_prep_summary or "",
-                "created_at": _iso(cp.created_at),
-            }
-            for cp in care_plans
-        ],
-        "clinical_notes": [
-            {
-                "subjective": cn.subjective,
-                "objective": cn.objective,
-                "assessment": cn.assessment,
-                "plan": cn.plan,
-                "urgency_level": cn.urgency_level,
-                "created_at": _iso(cn.created_at),
-            }
-            for cn in clinical_notes
-        ],
+        "clinical_relationships": clinical_relationships,
+        "care_plans": care_plan_dicts,
+        "clinical_notes": clinical_note_dicts,
     }

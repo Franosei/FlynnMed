@@ -8,6 +8,7 @@ from openai import OpenAI
 from backend.product_config import PRODUCT_NAME
 from backend.user_store import compute_current_age
 from backend.agentic_health_contract import operating_contract_prompt
+from backend.conversation_context import render_verbatim
 
 if TYPE_CHECKING:
     from backend.role_router import RoleConfig
@@ -45,6 +46,9 @@ class LLMHelper:
         user_profile: Optional[dict] = None,
         source_briefings: Optional[list[dict]] = None,
         longitudinal_memory: Optional[str] = None,
+        conversation_summary: str = "",
+        patient_history_context: str = "",
+        evidence_dossier=None,
         role_config: Optional["RoleConfig"] = None,
         escalation_banner: str = "",
         policy_context_note: str = "",
@@ -103,6 +107,55 @@ class LLMHelper:
                 "write 'your last recorded BP of X/Y mmHg on [date] is Stage 2 hypertension'.\n"
             )
 
+        # A clinician asking to "compile a flowsheet/checklist/template" wants a
+        # complete, exhaustive reference artifact, not a fast answer to a
+        # question -- the normal decision-format constraints below (~120 words,
+        # "one leading working impression") are right for the common case but
+        # actively wrong here, and were confirmed (via a real HealthBench case,
+        # "compile everything into a single standardized flowsheet for daily
+        # rounding") to produce a partial prose description instead of the
+        # requested artifact.
+        requests_structured_compilation = bool(
+            task_mode and getattr(task_mode, "requests_structured_compilation", False)
+        )
+        if requests_structured_compilation:
+            professional_decision_format_block = (
+                "STRUCTURED DOCUMENT COMPILATION FORMAT (doctor, nurse, midwife, physiotherapist, or "
+                "other clinician only):\n"
+                "- This is a request to compile a complete reference artifact (flowsheet, checklist, "
+                "template), not to answer a quick clinical question -- there is no length or "
+                "section-count ceiling; length follows completeness.\n"
+                "- Render the requested artifact directly as a markdown table or checklist with "
+                "fillable fields/columns. Do not describe in prose what the artifact could contain.\n"
+                "- Be systematically exhaustive: cover every standard category relevant to the topic. "
+                "Do not silently drop a whole domain for brevity.\n"
+                "- Include structural/tracking fields real clinical use of this artifact implies (e.g. "
+                "date, time, examiner name and training level) even though these are not "
+                "literature-cited facts.\n"
+                "- Citation discipline is unchanged for specific facts (named scales, staging systems, "
+                "drug thresholds) -- these still need an inline [S#] per the MANDATORY CITATIONS rule. "
+                "Naming or organizing standard categories to track is structural scaffolding, not a "
+                "factual claim, and does not itself need a citation. Where evidence does not cover a "
+                "specific standard sub-item, say so explicitly (e.g. 'confirm against local protocol') "
+                "rather than omitting the category.\n\n"
+            )
+        else:
+            professional_decision_format_block = (
+                "HEALTHCARE-PROFESSIONAL DECISION FORMAT (doctor, nurse, midwife, physiotherapist, or "
+                "other clinician only):\n"
+                "- Put the decision in the first sentence: one leading working impression or one "
+                "must-not-miss syndrome, plus disposition.\n"
+                "- When essential facts are missing, do not guess a diagnosis. State 'Diagnosis not "
+                "established' and ask at most one compact discriminator question (it may contain "
+                "tightly related items such as onset, weakness, speech, or facial signs).\n"
+                "- Mention at most two alternative diagnoses, and only if they would change the "
+                "immediate action. Rank them.\n"
+                "- Keep routine clinician answers to about 120 words unless complexity or an emergency "
+                "requires more.\n"
+                "- Cite the decision and recommended action inline. Prefer a direct formal-guidance "
+                "link represented by the supplied [S#] source.\n\n"
+            )
+
         messages = [
             {
                 "role": "system",
@@ -116,7 +169,10 @@ class LLMHelper:
                     "translation, or a chart-data lookup, its output constraints override clinical headings, "
                     "evidence, citation, and patient-advice instructions below.\n"
                     "1. Use only the supplied evidence dossier and conversation context.\n"
-                    "2. Use concise markdown with the role-appropriate section headings provided.\n"
+                    "2. Match the structure to the question. For patients and caregivers, default to "
+                    "a natural conversational reply; use headings only when they make a multi-part or "
+                    "triage answer easier to follow. For clinical users, use compact decision-oriented "
+                    "structure when it helps. Never turn a simple question into a templated report.\n"
                     "3. MANDATORY CITATIONS: every specific clinical claim -- a mechanism, causal explanation, "
                     "named diagnosis or condition-specific fact, statistic, or actionable recommendation (a "
                     "treatment, drug, dose, monitoring interval, or timeframe) -- that comes from the evidence "
@@ -140,6 +196,17 @@ class LLMHelper:
                     "10. Do not infer age, sex, medicines, diagnoses, allergies, pregnancy status, or test results. "
                     "Mention a missing fact only when it is necessary for the requested decision; do not imply a "
                     "record exists or was reviewed unless actual personal context was supplied.\n"
+                    "10a. Prior assistant messages are conversation context, not confirmed patient facts. A "
+                    "diagnosis, treatment indication, symptom, or history item is confirmed only when it comes "
+                    "from the user's messages or structured patient record. Never infer the condition being "
+                    "treated from a medicine or from the topic of a retrieved source. If the indication is not "
+                    "confirmed, say so and ask the specific indication question.\n"
+                    "10b. Use relevant recorded clinical relationships throughout the answer, but preserve "
+                    "their relationship class and certainty. Phrase user_reported or user_suspected links as "
+                    "the patient's report or suspicion, never as proven causation. Do not relabel a documented "
+                    "treatment indication, adverse reaction, temporal link, association, provenance link, or "
+                    "triage decision as a causal mechanism. Attributing a link to the patient record does not "
+                    "need an external citation; claiming it is medically established still does.\n"
                     "11. Do NOT add a disclaimer footer -- one is appended automatically.\n"
                     "12. If a clinical-context adjudication is supplied, it is binding. Do not reinterpret "
                     "a measurement or test as another specialty, even if the user's wording is commonly "
@@ -154,14 +221,13 @@ class LLMHelper:
                     "otherwise say exactly what is still unknown.\n"
                     "- For clinical users: include specific investigation targets, drug doses where the "
                     "evidence explicitly supports them, and escalation criteria.\n\n"
-                    "HEALTHCARE-PROFESSIONAL DECISION FORMAT (doctor, nurse, midwife, physiotherapist, or other clinician only):\n"
-                    "- Put the decision in the first sentence: one leading working impression or one must-not-miss syndrome, plus disposition.\n"
-                    "- When essential facts are missing, do not guess a diagnosis. State 'Diagnosis not established' and ask at most one "
-                    "compact discriminator question (it may contain tightly related items such as onset, weakness, speech, or facial signs).\n"
-                    "- Mention at most two alternative diagnoses, and only if they would change the immediate action. Rank them.\n"
-                    "- Keep routine clinician answers to about 120 words unless complexity or an emergency requires more.\n"
-                    "- Cite the decision and recommended action inline. Prefer a direct formal-guidance link represented by the supplied [S#] source.\n\n"
-                    "Write naturally and directly. Avoid filler, repeated warnings, and generic lists. "
+                    f"{professional_decision_format_block}"
+                    "Write naturally and directly. Avoid filler, repeated warnings, generic lists, and "
+                    "vague phrases such as 'seek advice' or 'more information is needed' without naming "
+                    "the exact action or missing fact. If essential facts are missing, ask the precise "
+                    "decision-changing questions instead of producing a speculative report. Once those "
+                    "facts are present in the current message, record, or conversation, answer directly "
+                    "and do not ask for them again. "
                     "Answer in the user's language unless they request another language. "
                     "If the next step depends on a clinician confirming the test or diagnosis, say that "
                     "plainly and explain exactly what information the patient should bring."
@@ -194,10 +260,23 @@ class LLMHelper:
                 "that wasn't asked for. If the specific fact requested isn't present in the data above, say "
                 "so plainly rather than guessing."
             )
+        elif requests_structured_compilation:
+            response_instructions = (
+                "This is a request to compile a complete reference artifact -- follow the STRUCTURED "
+                "DOCUMENT COMPILATION FORMAT rule above. Render the artifact directly as a markdown "
+                "table or checklist, exhaustively covering every standard category for the topic; do "
+                "not compress it into one or two short paragraphs or a fixed number of sections.\n"
+                "Cite claims drawn from evidence; omit a citation if direct support is unavailable and narrow "
+                "or omit the specific claim instead -- but keep the surrounding structural category, noting "
+                "that it needs local-protocol confirmation, rather than dropping it.\n"
+                "Where multiple sources agree, synthesize into one statement with combined citations."
+            )
         else:
             response_instructions = (
-                f"Available role-appropriate headings:\n{headings_text}\n"
-                "Use only helpful sections; for a simple request, answer in one or two short paragraphs. "
+                f"Optional role-appropriate headings for complex answers:\n{headings_text}\n"
+                "Use only helpful sections. For a simple request, answer in one or two short, natural "
+                "paragraphs with no heading. Do not open with 'Working Impression' or 'Likely Explanation' "
+                "unless the user is actually asking for an assessment or triage decision. "
                 "Do not force an emergency, differential, evidence, disclaimer, or monitoring section.\n\n"
                 "Cite claims drawn from evidence; omit a citation if direct support is unavailable and narrow "
                 "or omit the claim instead.\n"
@@ -205,6 +284,17 @@ class LLMHelper:
                 "Label evidence tier (Tier 1 / Tier 2 / Tier 3) when it helps assess recommendation strength.\n"
                 "Give specific routes, thresholds, and timeframes only when supported."
             )
+
+            if role_config and role_config.role_key in ("patient", "caregiver"):
+                response_instructions += (
+                    "\nSpeak as a responsive health assistant in an ongoing conversation, not as a report "
+                    "generator. Lead with the answer or the safety issue that matters. If the user's exact "
+                    "reason for a medicine or treatment is unknown, explain only the common uses supported "
+                    "by the supplied evidence, say that the prescription alone does not reveal their exact "
+                    "diagnosis, and ask one focused question about what it was prescribed to treat. "
+                    "Never print a separate 'Available Personal Context' section; weave only the one or two "
+                    "recorded facts that change the answer into the relevant sentence."
+                )
 
             if role_config and role_config.role_key in (
                 "doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"
@@ -240,9 +330,13 @@ class LLMHelper:
                 "role": "user",
                 "content": (
                     f"User profile:\n{self._render_profile_summary(user_profile)}\n\n"
+                    f"Structured patient history (recorded facts):\n{patient_history_context or 'No structured patient history recorded.'}\n\n"
                     f"Longitudinal patient memory (use these specific values in your answer):\n{memory_text}\n\n"
-                    f"Recent conversation:\n{self._render_chat_history(chat_history)}\n\n"
-                    f"Evidence dossier:\n{self._render_evidence_dossier(source_briefings, context)}\n\n"
+                    "Summary of the whole earlier conversation (role-labelled; assistant statements "
+                    "are context, not confirmed patient facts):\n"
+                    f"{conversation_summary or 'No earlier conversation.'}\n\n"
+                    f"Previous five chat messages verbatim (most recent last):\n{self._render_chat_history(chat_history)}\n\n"
+                    f"Evidence dossier:\n{self._render_evidence_dossier(source_briefings, context, evidence_dossier)}\n\n"
                     f"Clinical context gate:\n{clinical_context or 'No cross-specialty context decision was needed.'}\n\n"
                     + (
                         "Controlled response requirements:\n"
@@ -385,6 +479,82 @@ class LLMHelper:
             return []
         return [str(item).strip() for item in medications if str(item).strip()][:6]
 
+    def extract_explicit_chat_record_facts(self, text: str) -> dict:
+        """Extract only patient-asserted facts that can safely enter the chart.
+
+        The caller still validates and normalizes this payload before writing it.
+        Keeping this separate from longitudinal-memory summarization prevents a
+        question, hypothetical, assistant statement, or inferred diagnosis from
+        silently becoming a structured patient record.
+        """
+        cleaned_text = (text or "").strip()
+        empty = {
+            "medications": [],
+            "allergies": [],
+            "conditions": [],
+            "symptoms": [],
+            "vitals": [],
+            "relationships": [],
+        }
+        if not cleaned_text:
+            return empty
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You extract structured health-record facts from ONE current user message. "
+                        "Include a fact only when the user clearly states it about themself as current "
+                        "or historically confirmed. Never extract questions (for example 'can I take X?'), "
+                        "hypotheticals, possibilities, planned medicines, general information, quoted text, "
+                        "another person's history, negated facts, or an inferred diagnosis. A medicine may be "
+                        "included when the user says they take it, started it, or it was prescribed to them. "
+                        "Do not interpret an assistant's earlier wording because it is not supplied here.\n\n"
+                        "Extract explicit relationships only when the user states the link. Use one of these "
+                        "relations: taken_for, causes, triggers, worsens, improves, started_after, "
+                        "allergic_reaction, associated_with, led_to, recorded_in, or recommended_for. A sequence such as "
+                        "'after starting X' is temporal/user-reported, "
+                        "not proof that X medically caused the outcome. Set certainty to user_reported or "
+                        "user_suspected. Return JSON only."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Current user message:\n{cleaned_text}\n\n"
+                        "Return exactly this shape:\n"
+                        '{"medications":[{"name":"","dose":"","schedule":"","reason":"",'
+                        '"started_on":""}],"allergies":[{"name":"","reaction":"",'
+                        '"severity":"unknown|mild|moderate|severe","allergy_type":"drug|food|'
+                        'environmental|other"}],"conditions":[{"name":"","status":"active|past|'
+                        'resolved|unknown","recorded_on":"","notes":""}],"symptoms":'
+                        '[{"symptom":"","severity":0,"triggers":"","notes":"",'
+                        '"logged_for":""}],"vitals":[{"type":"","value":"","unit":"",'
+                        '"recorded_on":"","notes":""}],"relationships":[{"source_type":'
+                        '"medication|allergy|condition|symptom|vital|factor|triage|document",'
+                        '"source_name":"",'
+                        '"relation":"taken_for|causes|triggers|worsens|improves|started_after|'
+                        'allergic_reaction|associated_with|led_to|recorded_in|recommended_for","target_type":'
+                        '"medication|allergy|condition|symptom|vital|factor|care_action|document",'
+                        '"target_name":"","certainty":"user_reported|user_suspected",'
+                        '"evidence":"short exact-user-meaning paraphrase"}]}'
+                    ),
+                },
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        raw = response.choices[0].message.content.strip()
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            return empty
+        return {
+            key: value if isinstance(value := payload.get(key), list) else []
+            for key in empty
+        }
+
     def build_structured_triage(
         self,
         question: str,
@@ -433,19 +603,34 @@ class LLMHelper:
         Reviews the answer and checks whether each factual claim is backed by
         a retrieved source. Returns a list of dicts:
           {"claim": "...", "status": "supported"|"general_knowledge",
-           "requires_evidence": bool, "source_ids": [...]}
+           "requires_evidence": bool, "source_ids": [...], "passage_ids": [...]}
         Only the top 5 claims are checked to keep latency low. requires_evidence
         distinguishes claims a reader would expect to be evidence-backed (a
         mechanism, a statistic, a named causal relationship) from generic
         safety-netting or self-care language that doesn't need a citation --
         callers should only act on unsupported claims where this is true.
+
+        passage_ids (Evidence Ledger Phase 1): when the Evidence Ledger
+        persisted a verified exact passage for a source (source_briefings'
+        `exact_passage`/`passage_id`, see backend/evidence_ledger.py), that
+        passage text is what's actually shown to the checker for that source
+        instead of the raw excerpt, and a claim marked "supported" against
+        that source carries the specific passage_id it was checked against --
+        so a claim traces to an exact passage, not just "a source somewhere".
+        A source with no persisted passage still contributes its raw excerpt
+        as before; its claims just get no passage_id.
         """
         if not answer_markdown or not source_briefings:
             return []
 
+        passage_id_by_source = {
+            s["source_id"]: s["passage_id"]
+            for s in source_briefings
+            if s.get("source_id") and s.get("passage_id")
+        }
         source_block = "\n".join(
             f"[{s['source_id']}] {s.get('title', '')} -- "
-            f"{(s.get('detail_snippet') or s.get('snippet', ''))[:600]}"
+            f"{(s.get('exact_passage') or s.get('detail_snippet') or s.get('snippet', ''))[:600]}"
             for s in source_briefings[:8]
         )
 
@@ -504,12 +689,18 @@ class LLMHelper:
         result = []
         for item in items[:5]:
             if isinstance(item, dict) and item.get("claim"):
+                source_ids = [str(s) for s in item.get("source_ids", [])]
                 result.append(
                     {
                         "claim": str(item.get("claim", "")).strip(),
                         "status": str(item.get("status", "general_knowledge")).strip(),
                         "requires_evidence": bool(item.get("requires_evidence", False)),
-                        "source_ids": [str(s) for s in item.get("source_ids", [])],
+                        "source_ids": source_ids,
+                        "passage_ids": [
+                            passage_id_by_source[sid]
+                            for sid in source_ids
+                            if sid in passage_id_by_source
+                        ],
                     }
                 )
         return result
@@ -748,7 +939,10 @@ class LLMHelper:
                 "1. Chips must come from what the EVIDENCE AND ANSWER raised -- risk factors, "
                 "associated symptoms, red flags, lifestyle triggers, or family history the "
                 "research identified as relevant. Do NOT invent generic health questions.\n"
-                "2. Never ask something the patient already described in their question.\n"
+                "2. Never offer a chip that repeats anything already present in the patient's "
+                "question, profile, health record, recent conversation, or the answer. A recorded "
+                "allergy, reaction, condition, medicine, or symptom is already known and must not "
+                "be presented as a new confirmation chip.\n"
                 "3. Never include source counts, numbers of papers, or any metadata from the "
                 "answer -- chips are about the PATIENT, not the evidence database.\n"
                 "4. Each chip 'display' must be a short first-person statement, max 8 words:\n"
@@ -907,14 +1101,7 @@ class LLMHelper:
     def _render_chat_history(chat_history: Optional[list[dict]]) -> str:
         if not chat_history:
             return "No prior conversation."
-
-        lines = []
-        for message in chat_history[-6:]:
-            role = message.get("role", "user").title()
-            content = message.get("content", "").strip()
-            if content:
-                lines.append(f"{role}: {content}")
-        return "\n".join(lines) if lines else "No prior conversation."
+        return render_verbatim(chat_history[-5:])
 
     @staticmethod
     def _render_profile_summary(user_profile: Optional[dict]) -> str:
@@ -955,8 +1142,24 @@ class LLMHelper:
 
     @staticmethod
     def _render_evidence_dossier(
-        source_briefings: Optional[list[dict]], fallback_context: str
+        source_briefings: Optional[list[dict]],
+        fallback_context: str,
+        evidence_dossier=None,
     ) -> str:
+        # The orchestrator's evidence extractor produces a filtered, per-article
+        # ArticleEvidence dossier (question_facts, patient-aligned facts with an
+        # explicit relevance_type, contraindications, drug_interactions, a
+        # synthesized summary) -- this was being computed and then silently
+        # discarded whenever source_briefings was also non-empty (i.e. on
+        # nearly every real sourced answer), leaving the model with only raw
+        # excerpts and metadata scores instead of the pre-extracted, filtered
+        # facts the dossier exists to provide. The dossier now always leads
+        # when available; the flat per-source rendering still follows it so
+        # raw excerpt text remains available for exact-quote citation checks.
+        dossier_text = ""
+        if evidence_dossier is not None and getattr(evidence_dossier, "articles", None):
+            dossier_text = evidence_dossier.to_prompt_context()
+
         if source_briefings:
             blocks = []
             for source in source_briefings:
@@ -1000,6 +1203,16 @@ class LLMHelper:
                         ]
                     )
                 )
-            return "\n\n".join(blocks)
+            flat_text = "\n\n".join(blocks)
+            if dossier_text:
+                return (
+                    dossier_text
+                    + "\n\nSOURCE METADATA (tier, quality status, and raw excerpt per "
+                    "source, for exact-quote citation checks -- the dossier above is "
+                    "the authoritative filtered fact set; do not cite anything from "
+                    "here that the dossier doesn't support):\n"
+                    + flat_text
+                )
+            return flat_text
 
-        return fallback_context or "No biomedical evidence was retrieved."
+        return dossier_text or fallback_context or "No biomedical evidence was retrieved."

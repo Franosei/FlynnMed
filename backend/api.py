@@ -52,7 +52,9 @@ from backend.clinical_context_guard import (
     validate_generated_answer,
 )
 from backend.clinical_trials import build_trial_search_profile, find_matching_trials
+from backend.conversation_context import build_conversation_context
 from backend.query_expander import QueryExpander
+from backend.relationship_engine import derive_relationships, merge_relationships
 from backend.config import DatabaseConfigurationError
 from backend.db import get_db, get_session_factory
 from backend.email_service import send_clinical_note_email, send_urgent_care_alert
@@ -307,14 +309,40 @@ def _snapshot(username: str) -> Dict:
     conditions = UserStore.get_conditions(username)
     vitals = UserStore.get_vitals(username, limit=None)
     triage_summaries = UserStore.get_triage_summaries(username, limit=None)
+    care_plans = CarePlanStore.list_plans(username)
+    clinical_notes = UserStore.get_clinical_notes(username)
+    document_summaries = UserStore.get_document_summaries(username)
+    memory = UserStore.get_longitudinal_memory(username)
     latest_triage = triage_summaries[0] if triage_summaries else {}
     chat_history = _reconcile_chat_history(username, UserStore.get_chat_history(username))
+    base_relationships = merge_relationships(
+        UserStore.get_clinical_relationships(username),
+        derive_relationships(
+            medications=medications,
+            allergies=allergies,
+            conditions=conditions,
+            symptom_logs=symptom_logs,
+            vitals=vitals,
+            triage_summaries=triage_summaries,
+            care_plans=care_plans,
+            clinical_notes=clinical_notes,
+        ),
+    )
     safety_reviews = build_safety_reviews(
         vitals=vitals,
         symptoms=symptom_logs,
         medications=medications,
         allergies=allergies,
+        conditions=conditions,
+        triage_summaries=triage_summaries,
+        document_summaries=document_summaries,
+        clinical_relationships=base_relationships,
+        longitudinal_memory=str(memory.get("summary") or ""),
         saved_states=UserStore.get_safety_review_states(username),
+    )
+    clinical_relationships = merge_relationships(
+        base_relationships,
+        derive_relationships(safety_reviews=safety_reviews),
     )
 
     return {
@@ -339,18 +367,19 @@ def _snapshot(username: str) -> Dict:
         "latest_triage": latest_triage,
         "chat_history": chat_history,
         "uploads": uploads,
-        "document_summaries": UserStore.get_document_summaries(username),
+        "document_summaries": document_summaries,
         "symptom_logs": symptom_logs,
         "medications": medications,
         "allergies": allergies,
         "conditions": conditions,
+        "clinical_relationships": clinical_relationships,
         "vitals": vitals,
         "triage_summaries": triage_summaries,
         "traces": UserStore.get_interaction_traces(username, limit=10),
         "audit": UserStore.get_audit(username, limit=20),
-        "memory": UserStore.get_longitudinal_memory(username),
+        "memory": memory,
         "trial_search_result": UserStore.get_trial_search_result(username),
-        "clinical_notes": UserStore.get_clinical_notes(username),
+        "clinical_notes": clinical_notes,
         "safety_reviews": safety_reviews,
     }
 
@@ -686,6 +715,9 @@ def generate_care_plan(
     profile = UserStore.get_user_profile(username) or {}
     snap = _snapshot(username)
     longitudinal_memory = _get_rag_engine().get_combined_longitudinal_memory(username)
+    conversation_context = build_conversation_context(
+        UserStore.get_chat_history(username), ""
+    )
 
     patient_history = build_patient_history_context(
         longitudinal_memory=longitudinal_memory,
@@ -716,8 +748,16 @@ def generate_care_plan(
         "allergies": snap.get("allergies", []),
         "vitals": snap.get("vitals", []),
         "triage_summaries": snap.get("triage_summaries", []),
+        "symptom_logs": snap.get("symptom_logs", []),
+        "document_summaries": snap.get("document_summaries", []),
+        "clinical_relationships": snap.get("clinical_relationships", []),
+        "clinical_notes": snap.get("clinical_notes", []),
+        "existing_care_plans": CarePlanStore.list_plans(username),
+        "safety_reviews": snap.get("safety_reviews", []),
         "longitudinal_memory": longitudinal_memory,
         "chat_summary": payload.chat_summary,
+        "conversation_summary": conversation_context.full_summary,
+        "previous_five_chat": conversation_context.previous_five,
         "patient_history": patient_history,
         "clinical_context": clinical_context,
     }
@@ -850,6 +890,9 @@ def gp_prep(plan_id: str, username: str = Depends(current_user)) -> Dict:
         raise HTTPException(status_code=404, detail="Care plan not found.")
     profile = UserStore.get_user_profile(username) or {}
     snap = _snapshot(username)
+    conversation_context = build_conversation_context(
+        UserStore.get_chat_history(username), ""
+    )
     agent = CarePlanAgent()
     user_context = {
         "profile": profile,
@@ -858,6 +901,14 @@ def gp_prep(plan_id: str, username: str = Depends(current_user)) -> Dict:
         "allergies": snap.get("allergies", []),
         "vitals": snap.get("vitals", []),
         "triage_summaries": snap.get("triage_summaries", []),
+        "symptom_logs": snap.get("symptom_logs", []),
+        "document_summaries": snap.get("document_summaries", []),
+        "clinical_relationships": snap.get("clinical_relationships", []),
+        "clinical_notes": snap.get("clinical_notes", []),
+        "existing_care_plans": CarePlanStore.list_plans(username),
+        "safety_reviews": snap.get("safety_reviews", []),
+        "conversation_summary": conversation_context.full_summary,
+        "previous_five_chat": conversation_context.previous_five,
         "longitudinal_memory": _get_rag_engine().get_combined_longitudinal_memory(username),
     }
     summary = agent.generate_gp_prep(plan, user_context)
@@ -1708,6 +1759,7 @@ def stream_chat(payload: ChatPayload, username: str = Depends(current_user)) -> 
                     "video_caption": payload_final.get("video_caption", ""),
                     "video_rate_limit_msg": payload_final.get("video_rate_limit_msg", ""),
                     "follow_up_questions": payload_final.get("follow_up_questions", []),
+                    "record_updates": payload_final.get("record_updates", []),
                 },
             }
 
@@ -2184,13 +2236,28 @@ def add_symptom(payload: SymptomPayload, username: str = Depends(current_user)) 
     )
     if not saved:
         raise HTTPException(status_code=400, detail="Enter a symptom and date.")
+    UserStore.save_clinical_relationships(
+        username,
+        derive_relationships(symptom_logs=[saved], source="manual_record"),
+    )
     _get_rag_engine().restore_user_context(username)
     return _snapshot(username)
 
 
 @app.delete("/api/symptoms/{log_id}")
 def delete_symptom(log_id: str, username: str = Depends(current_user)) -> Dict:
+    record = next(
+        (
+            item for item in UserStore.get_symptom_logs(username, limit=None)
+            if str(item.get("log_id") or "") == log_id
+        ),
+        None,
+    )
     UserStore.delete_symptom_log(username, log_id)
+    if record:
+        UserStore.delete_clinical_relationships_for_entity(
+            username, "symptom", str(record.get("symptom") or "")
+        )
     _get_rag_engine().restore_user_context(username)
     return _snapshot(username)
 
@@ -2200,13 +2267,28 @@ def save_condition(payload: ConditionPayload, username: str = Depends(current_us
     saved = UserStore.save_condition(username, payload.dict(exclude_none=True))
     if not saved:
         raise HTTPException(status_code=400, detail="Enter a condition name.")
+    UserStore.save_clinical_relationships(
+        username,
+        derive_relationships(conditions=[saved], source="manual_record"),
+    )
     _get_rag_engine().restore_user_context(username)
     return _snapshot(username)
 
 
 @app.delete("/api/conditions/{condition_id}")
 def delete_condition(condition_id: str, username: str = Depends(current_user)) -> Dict:
+    record = next(
+        (
+            item for item in UserStore.get_conditions(username)
+            if str(item.get("condition_id") or "") == condition_id
+        ),
+        None,
+    )
     UserStore.delete_condition(username, condition_id)
+    if record:
+        UserStore.delete_clinical_relationships_for_entity(
+            username, "condition", str(record.get("name") or "")
+        )
     _get_rag_engine().restore_user_context(username)
     return _snapshot(username)
 
@@ -2216,13 +2298,28 @@ def save_medication(payload: MedicationPayload, username: str = Depends(current_
     saved = UserStore.save_medication(username, payload.dict(exclude_none=True))
     if not saved:
         raise HTTPException(status_code=400, detail="Enter a medication name.")
+    UserStore.save_clinical_relationships(
+        username,
+        derive_relationships(medications=[saved], source="manual_record"),
+    )
     _get_rag_engine().restore_user_context(username)
     return _snapshot(username)
 
 
 @app.delete("/api/medications/{medication_id}")
 def delete_medication(medication_id: str, username: str = Depends(current_user)) -> Dict:
+    record = next(
+        (
+            item for item in UserStore.get_medications(username)
+            if str(item.get("medication_id") or "") == medication_id
+        ),
+        None,
+    )
     UserStore.delete_medication(username, medication_id)
+    if record:
+        UserStore.delete_clinical_relationships_for_entity(
+            username, "medication", str(record.get("name") or "")
+        )
     _get_rag_engine().restore_user_context(username)
     return _snapshot(username)
 
@@ -2232,14 +2329,37 @@ def save_allergy(payload: AllergyPayload, username: str = Depends(current_user))
     saved = UserStore.save_allergy(username, payload.dict(exclude_none=True))
     if not saved:
         raise HTTPException(status_code=400, detail="Enter an allergy name.")
+    UserStore.save_clinical_relationships(
+        username,
+        derive_relationships(allergies=[saved], source="manual_record"),
+    )
     _get_rag_engine().restore_user_context(username)
     return _snapshot(username)
 
 
 @app.delete("/api/allergies/{allergy_id}")
 def delete_allergy(allergy_id: str, username: str = Depends(current_user)) -> Dict:
+    record = next(
+        (
+            item for item in UserStore.get_allergies(username)
+            if str(item.get("allergy_id") or "") == allergy_id
+        ),
+        None,
+    )
     UserStore.delete_allergy(username, allergy_id)
+    if record:
+        UserStore.delete_clinical_relationships_for_entity(
+            username, "allergy", str(record.get("name") or "")
+        )
     _get_rag_engine().restore_user_context(username)
+    return _snapshot(username)
+
+
+@app.delete("/api/relationships/{relationship_id}")
+def delete_clinical_relationship(
+    relationship_id: str, username: str = Depends(current_user)
+) -> Dict:
+    UserStore.delete_clinical_relationship(username, relationship_id)
     return _snapshot(username)
 
 
@@ -2248,13 +2368,28 @@ def save_vitals(payload: VitalsPayload, username: str = Depends(current_user)) -
     saved = UserStore.save_vitals_entry(username, payload.dict(exclude_none=True))
     if not saved:
         raise HTTPException(status_code=400, detail="Enter a measurement type and value.")
+    UserStore.save_clinical_relationships(
+        username,
+        derive_relationships(vitals=[saved], source="manual_record"),
+    )
     _get_rag_engine().restore_user_context(username)
     return _snapshot(username)
 
 
 @app.delete("/api/vitals/{vitals_id}")
 def delete_vitals(vitals_id: str, username: str = Depends(current_user)) -> Dict:
+    record = next(
+        (
+            item for item in UserStore.get_vitals(username, limit=None)
+            if str(item.get("vitals_id") or "") == vitals_id
+        ),
+        None,
+    )
     UserStore.delete_vitals_entry(username, vitals_id)
+    if record:
+        UserStore.delete_clinical_relationships_for_entity(
+            username, "vital", str(record.get("type") or "")
+        )
     _get_rag_engine().restore_user_context(username)
     return _snapshot(username)
 
@@ -2283,16 +2418,25 @@ def terms_for_role(role_label: str) -> Dict:
 @app.post("/api/trials/search")
 def search_trials(payload: TrialSearchPayload, username: str = Depends(current_user)) -> Dict:
     profile = UserStore.get_user_profile(username)
+    snap = _snapshot(username)
+    conversation_context = build_conversation_context(
+        UserStore.get_chat_history(username), ""
+    )
     trial_profile = build_trial_search_profile(
         profile=profile,
-        memory=UserStore.get_longitudinal_memory(username),
-        symptom_logs=UserStore.get_symptom_logs(username, limit=None),
-        medications=UserStore.get_medications(username),
-        allergies=UserStore.get_allergies(username),
-        conditions=UserStore.get_conditions(username),
-        vitals=UserStore.get_vitals(username, limit=None),
-        triage_summaries=UserStore.get_triage_summaries(username, limit=None),
-        document_summaries=UserStore.get_document_summaries(username),
+        memory={"summary": _get_rag_engine().get_combined_longitudinal_memory(username)},
+        symptom_logs=snap.get("symptom_logs", []),
+        medications=snap.get("medications", []),
+        allergies=snap.get("allergies", []),
+        conditions=snap.get("conditions", []),
+        vitals=snap.get("vitals", []),
+        triage_summaries=snap.get("triage_summaries", []),
+        document_summaries=snap.get("document_summaries", []),
+        clinical_relationships=snap.get("clinical_relationships", []),
+        clinical_notes=snap.get("clinical_notes", []),
+        care_plans=CarePlanStore.list_plans(username),
+        safety_reviews=snap.get("safety_reviews", []),
+        conversation_summary=conversation_context.full_summary,
     )
     result = find_matching_trials(
         profile=trial_profile,

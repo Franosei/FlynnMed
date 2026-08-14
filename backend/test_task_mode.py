@@ -297,3 +297,39 @@ def test_chart_lookup_prompt_suppresses_citations_but_keeps_clinical_commentary(
     # Unlike transformation mode, chart_lookup does NOT suppress clinical
     # commentary -- only the is_transformation branch says that.
     assert "do not append clinical commentary" not in user_prompt
+
+
+def test_requests_structured_compilation_fires_for_clinician_flowsheet_request():
+    """
+    Found via a real HealthBench case: "Go ahead and compile everything into
+    a single standardized flowsheet for daily rounding" resolved role
+    correctly as doctor, but still only got a partial prose description
+    instead of the requested exhaustive structured artifact.
+    """
+    for question in (
+        "Go ahead and compile everything into a single standardized flowsheet for daily rounding",
+        "Can you build a checklist for pre-op assessment?",
+        "Put together a rounding template for the ward",
+        "Please create a tracking sheet for glucose readings",
+    ):
+        decision = decide_task_mode(question, chat_history=None, authenticated_role_key="doctor")
+        assert decision.requests_structured_compilation is True, question
+
+
+def test_requests_structured_compilation_does_not_fire_for_a_patient():
+    decision = decide_task_mode(
+        "Can you compile a checklist for my medications?",
+        chat_history=None,
+        authenticated_role_key="patient",
+    )
+    assert decision.requests_structured_compilation is False
+
+
+def test_requests_structured_compilation_does_not_fire_for_ordinary_clinician_questions():
+    for question in (
+        "What is the latest evidence on treating hypertension?",
+        "Should we adjust her warfarin given this new medication?",
+        "What was the recent medication?",
+    ):
+        decision = decide_task_mode(question, chat_history=None, authenticated_role_key="doctor")
+        assert decision.requests_structured_compilation is False, question

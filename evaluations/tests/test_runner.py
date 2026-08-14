@@ -429,6 +429,90 @@ def test_consistency_repeats_are_opt_in(monkeypatch):
     assert result.consistency_answers == ["repeat 1", "repeat 2"]
 
 
+def _grade(model, points, met, harm="none", correctness=0.9):
+    case = _valid_case()
+    return GradingResult(
+        case_id=case.case_id,
+        grader_model=model,
+        rubric_results=[
+            RubricResult(
+                criterion="Advises rest.",
+                points=points,
+                met=met,
+                answer_evidence="Rest",
+            )
+        ],
+        clinical_correctness_score=correctness,
+        triage_appropriateness="appropriate",
+        potential_harm_level=harm,
+        confidence=0.9,
+        explanation="test grade",
+        expected_urgency_level="routine",
+    )
+
+
+def test_more_conservative_grade_prefers_worse_harm_level_regardless_of_score():
+    """
+    Regression test: unconditionally trusting whichever grader ran second
+    let a lenient grader silently overrule a stricter one that flagged real
+    harm -- found via a real 50-case run where the adjudicator (a smaller,
+    weaker model) never once agreed with the primary grader's only
+    severe-harm finding, and its lenient grade became "final" every time.
+    """
+    case = _valid_case()
+    strict = _grade("gpt-5.6-luna", points=5, met=False, harm="severe")
+    lenient = _grade("gpt-4o-mini", points=5, met=True, harm="none")
+
+    assert runner._more_conservative_grade(strict, lenient, case) is strict
+    assert runner._more_conservative_grade(lenient, strict, case) is strict
+
+
+def test_more_conservative_grade_prefers_lower_score_on_harm_tie():
+    case = _valid_case()
+    stricter = _grade("gpt-5.6-luna", points=5, met=False, harm="low")
+    lenient = _grade("gpt-4o-mini", points=5, met=True, harm="low")
+
+    assert runner._more_conservative_grade(stricter, lenient, case) is stricter
+    assert runner._more_conservative_grade(lenient, stricter, case) is stricter
+
+
+def test_finalize_healthbench_result_prefers_stricter_grade_on_successful_adjudication(
+    monkeypatch,
+):
+    """
+    Full integration test through finalize_healthbench_result: a successful
+    adjudication call must not unconditionally replace the primary grade --
+    the stricter of the two (here, the primary grader's) must win as
+    final_grade, both graders must still be recorded for the audit trail.
+    """
+    case = _valid_case()
+    response = PipelineResponse(
+        case_id=case.case_id,
+        answer_markdown="Rest.",
+        answer_text="Rest.",
+        trace={"risk_level": "routine", "crisis_detected": False},
+    )
+    strict_primary = _grade("gpt-5.6-luna", points=5, met=False, harm="moderate")
+    lenient_adjudicator = _grade("gpt-4o-mini", points=5, met=True, harm="none")
+
+    monkeypatch.setattr(
+        runner, "should_adjudicate", lambda *args: (True, ["flagged_for_review"])
+    )
+    monkeypatch.setattr(
+        runner, "grade_with_terra", lambda *args: lenient_adjudicator
+    )
+
+    config = EvalConfig(
+        primary_grader_model="gpt-5.6-luna", adjudicator_model="gpt-4o-mini"
+    )
+    result = runner.finalize_healthbench_result(case, response, strict_primary, config)
+
+    assert result.adjudication.final_grade is strict_primary
+    assert result.adjudication.terra_grade is lenient_adjudicator
+    assert result.adjudication.luna_grade is strict_primary
+    assert result.weighted_score == 0.0
+
+
 def test_finalize_healthbench_score_uses_dataset_points_not_grader_score(monkeypatch):
     case = _valid_case()
     response = PipelineResponse(

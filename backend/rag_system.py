@@ -17,12 +17,14 @@ from backend.document_extractor import (
     extract_health_data_from_images,
 )
 from backend.clinical_orchestrator import ClinicalOrchestrator
+from backend.care_plan_store import CarePlanStore
+from backend.conversation_context import build_conversation_context
 from backend.document_analysis_agent import DocumentAnalysisAgent, DocumentAnalysisError
 from backend.image_analysis_agent import ImageAnalysisAgent, ImageAnalysisError
 from backend.image_generator import ImageGenerator
-from backend.medication_checker import MedicationInteractionChecker
+from backend.medication_checker import MedicationInteractionChecker, check_allergy_conflicts
 from backend.memory_store import MemoryStore
-from backend.product_config import PRODUCT_NAME
+from backend.product_config import PRODUCT_NAME, is_clinician_role
 from backend.symptom_tracker import build_symptom_pattern_summary
 from backend.triage_summary import build_default_triage, normalize_triage_output
 from backend.video_generator import VideoGenerator
@@ -30,6 +32,12 @@ from backend.moderation_ml import ModerationEnsemble
 from backend.official_guidance import OfficialGuidanceEngine
 from backend.pubmed_search import PubMedCentralSearcher
 from backend.query_expander import QueryExpander
+from backend.relationship_engine import (
+    derive_relationships,
+    merge_relationships,
+    relationship_summary,
+)
+from backend.safety_review import build_safety_reviews
 from backend.summarizer import LLMHelper
 from backend.user_store import UserStore
 from backend.clinical_context_guard import (
@@ -47,6 +55,16 @@ from backend.utils import (
     extract_text_from_pdf_bytes,
     render_pdf_pages_to_images,
     render_vital_for_prompt,
+)
+
+
+_CHAT_RECORD_SIGNAL_RE = re.compile(
+    r"\b(?:i\s+(?:am|'m|have|had|take|use|started|was|wasn't|stopped)|"
+    r"i've\s+(?:been|started|had)|my\s+(?:medication|medicine|allergy|reaction|"
+    r"diagnosis|blood\s+pressure|heart\s+rate)|allerg(?:y|ic)|diagnosed\s+with|"
+    r"prescribed\s+(?:to|for)\s+me|because\s+of|caus(?:e|es|ed|ing)|trigger(?:s|ed)?|"
+    r"after\s+starting|since\s+starting)\b",
+    re.IGNORECASE,
 )
 
 
@@ -221,6 +239,264 @@ class RAGEngine:
 
         self.memory.upsert_entries(pending_entries)
         self._primed_users.add(normalized_user)
+
+    def _capture_explicit_chat_records(
+        self, user: str, user_message: str
+    ) -> List[Dict]:
+        """Promote explicit first-person chat facts into structured records.
+
+        This is deliberately additive. A chat statement can add or enrich a
+        record but never deletes an existing medicine, allergy, or diagnosis.
+        Questions, negations, and uncertain assistant inferences are excluded by
+        the extractor prompt and this method never reads assistant messages.
+        """
+        if (
+            not user
+            or not _CHAT_RECORD_SIGNAL_RE.search(user_message or "")
+            or not hasattr(self.llm, "extract_explicit_chat_record_facts")
+        ):
+            return []
+        try:
+            extracted = self.llm.extract_explicit_chat_record_facts(user_message)
+        except Exception as exc:
+            print(f"[ChatRecordCapture] extraction failed: {exc}")
+            return []
+        if not isinstance(extracted, dict):
+            return []
+
+        updates: List[Dict] = []
+        source_note = "Captured from the patient's explicit chat statement."
+        message_lower = (user_message or "").lower()
+
+        def blocked_record(name: str, record_type: str) -> bool:
+            escaped = re.escape(name.lower())
+            if record_type == "medication":
+                patterns = (
+                    rf"\b(?:do\s+not|don't|not|never|no\s+longer|stopped)\s+"
+                    rf"(?:take|taking|use|using)\b.{{0,40}}\b{escaped}\b",
+                    rf"\b(?:can|could|should|may)\s+i\s+(?:take|use)\b.{{0,30}}\b{escaped}\b",
+                )
+            elif record_type == "allergy":
+                patterns = (
+                    rf"\b(?:not|never)\s+allergic\s+to\b.{{0,30}}\b{escaped}\b",
+                    rf"\b(?:am\s+i|could\s+i\s+be|can\s+i\s+be)\s+allergic\b.{{0,30}}\b{escaped}\b",
+                )
+            elif record_type == "condition":
+                patterns = (
+                    rf"\b(?:do\s+not|don't|not|never)\s+have\b.{{0,30}}\b{escaped}\b",
+                    rf"\b(?:do|could|might|may)\s+i\s+have\b.{{0,30}}\b{escaped}\b",
+                )
+            else:
+                patterns = ()
+            return any(re.search(pattern, message_lower) for pattern in patterns)
+
+        existing_medications = {
+            str(item.get("name") or "").strip().lower(): item
+            for item in UserStore.get_medications(user)
+            if str(item.get("name") or "").strip()
+        }
+        vague_medicine_names = {
+            "medicine", "medication", "medications", "tablet", "tablets",
+            "capsule", "capsules", "antibiotic", "antibiotics",
+        }
+        for item in extracted.get("medications") or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if (
+                not name
+                or name.lower() in vague_medicine_names
+                or blocked_record(name, "medication")
+            ):
+                continue
+            existing = existing_medications.get(name.lower(), {})
+            payload = {
+                "name": name,
+                "dose": str(item.get("dose") or existing.get("dose") or "").strip(),
+                "schedule": str(
+                    item.get("schedule") or existing.get("schedule") or ""
+                ).strip(),
+                "reason": str(
+                    item.get("reason") or existing.get("reason") or ""
+                ).strip(),
+                "started_on": str(
+                    item.get("started_on") or existing.get("started_on") or ""
+                ).strip(),
+                "notes": str(existing.get("notes") or source_note).strip(),
+            }
+            if UserStore.save_medication(user, payload):
+                updates.append({"record_type": "medication", "name": name})
+
+        existing_allergies = {
+            str(item.get("name") or "").strip().lower(): item
+            for item in UserStore.get_allergies(user)
+            if str(item.get("name") or "").strip()
+        }
+        for item in extracted.get("allergies") or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name or blocked_record(name, "allergy"):
+                continue
+            existing = existing_allergies.get(name.lower(), {})
+            payload = {
+                "name": name,
+                "reaction": str(
+                    item.get("reaction") or existing.get("reaction") or ""
+                ).strip(),
+                "severity": str(
+                    item.get("severity") or existing.get("severity") or "unknown"
+                ).strip(),
+                "allergy_type": str(
+                    item.get("allergy_type")
+                    or existing.get("allergy_type")
+                    or "other"
+                ).strip(),
+                "confirmed": True,
+                "notes": str(existing.get("notes") or source_note).strip(),
+            }
+            if UserStore.save_allergy(user, payload):
+                updates.append({"record_type": "allergy", "name": name})
+
+        existing_conditions = {
+            str(item.get("name") or "").strip().lower(): item
+            for item in UserStore.get_conditions(user)
+            if str(item.get("name") or "").strip()
+        }
+        for item in extracted.get("conditions") or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name or blocked_record(name, "condition"):
+                continue
+            existing = existing_conditions.get(name.lower(), {})
+            payload = {
+                "name": name,
+                "status": str(
+                    item.get("status") or existing.get("status") or "unknown"
+                ).strip(),
+                "recorded_on": str(
+                    item.get("recorded_on") or existing.get("recorded_on") or ""
+                ).strip(),
+                "notes": str(
+                    item.get("notes") or existing.get("notes") or source_note
+                ).strip(),
+            }
+            if UserStore.save_condition(user, payload):
+                updates.append({"record_type": "condition", "name": name})
+
+        existing_symptoms = {
+            (
+                str(item.get("symptom") or "").strip().lower(),
+                str(item.get("logged_for") or "").strip(),
+            )
+            for item in UserStore.get_symptom_logs(user, limit=None)
+        }
+        for item in extracted.get("symptoms") or []:
+            if not isinstance(item, dict):
+                continue
+            symptom = str(item.get("symptom") or "").strip()
+            logged_for = str(item.get("logged_for") or date.today().isoformat()).strip()
+            if not symptom or (symptom.lower(), logged_for) in existing_symptoms:
+                continue
+            saved = UserStore.add_symptom_log(
+                user,
+                symptom=symptom,
+                logged_for=logged_for,
+                severity=item.get("severity", 0),
+                triggers=str(item.get("triggers") or "").strip(),
+                notes=str(item.get("notes") or source_note).strip(),
+            )
+            if saved:
+                updates.append({"record_type": "symptom", "name": symptom})
+
+        existing_vitals = {
+            (
+                str(item.get("type") or "").strip().lower(),
+                str(item.get("value") or "").strip().lower(),
+                str(item.get("recorded_on") or "").strip(),
+            )
+            for item in UserStore.get_vitals(user, limit=None)
+        }
+        for item in extracted.get("vitals") or []:
+            if not isinstance(item, dict):
+                continue
+            vital_type = str(item.get("type") or "").strip()
+            value = str(item.get("value") or "").strip()
+            recorded_on = str(item.get("recorded_on") or date.today().isoformat()).strip()
+            key = (vital_type.lower(), value.lower(), recorded_on)
+            if not vital_type or not value or key in existing_vitals:
+                continue
+            saved = UserStore.save_vitals_entry(
+                user,
+                {
+                    "type": vital_type,
+                    "value": value,
+                    "unit": str(item.get("unit") or "").strip(),
+                    "recorded_on": recorded_on,
+                    "notes": str(item.get("notes") or source_note).strip(),
+                },
+            )
+            if saved:
+                updates.append({"record_type": "vital", "name": vital_type})
+
+        relationships = [
+            {**item, "source": item.get("source") or "conversation"}
+            for item in (extracted.get("relationships") or [])
+            if isinstance(item, dict)
+        ]
+        asks_causal_question = bool(
+            re.search(
+                r"\b(?:can|could|does|did|is|are)\b.{0,50}"
+                r"\b(?:cause|causes|trigger|triggers|worsen|worsens|improve|improves)\b",
+                message_lower,
+            )
+            and not re.search(r"\b(?:i\s+(?:think|suspect|believe)|in\s+my\s+case)\b", message_lower)
+        )
+        if asks_causal_question:
+            relationships = []
+        relationships = merge_relationships(
+            relationships,
+            derive_relationships(
+                medications=[
+                    item for item in (extracted.get("medications") or [])
+                    if isinstance(item, dict)
+                ],
+                allergies=[
+                    item for item in (extracted.get("allergies") or [])
+                    if isinstance(item, dict)
+                ],
+                conditions=[
+                    item for item in (extracted.get("conditions") or [])
+                    if isinstance(item, dict)
+                ],
+                symptom_logs=[
+                    item for item in (extracted.get("symptoms") or [])
+                    if isinstance(item, dict)
+                ],
+                vitals=[
+                    item for item in (extracted.get("vitals") or [])
+                    if isinstance(item, dict)
+                ],
+                source="conversation",
+            ),
+        )
+        if relationships:
+            before = len(UserStore.get_clinical_relationships(user))
+            after = UserStore.save_clinical_relationships(user, relationships)
+            if len(after) >= before:
+                for item in relationships:
+                    updates.append(
+                        {
+                            "record_type": "relationship",
+                            "name": (
+                                f"{item.get('source_name', '')} "
+                                f"{str(item.get('relation') or '').replace('_', ' ')} "
+                                f"{item.get('target_name', '')}"
+                            ).strip(),
+                        }
+                    )
+        return updates
 
     def ingest_documents(
         self,
@@ -498,6 +774,50 @@ class RAGEngine:
                                 },
                             )
 
+                    document_relationships = merge_relationships(
+                        [
+                            {
+                                **item,
+                                "certainty": item.get("certainty") or "documented",
+                                "source": f"document:{path.name}",
+                            }
+                            for item in (extracted.get("relationships") or [])
+                            if isinstance(item, dict)
+                        ],
+                        derive_relationships(
+                            medications=extracted.get("medications") or [],
+                            allergies=extracted.get("allergies") or [],
+                            conditions=extracted.get("conditions") or [],
+                            vitals=extracted.get("vitals") or [],
+                            source=f"document:{path.name}",
+                        ),
+                        [
+                            {
+                                "source_type": entity_type,
+                                "source_name": str(entity.get(name_key) or "").strip(),
+                                "relation": "recorded_in",
+                                "target_type": "document",
+                                "target_name": path.name,
+                                "certainty": "documented",
+                                "evidence": f"Extracted from {path.name}",
+                                "source": f"document:{path.name}",
+                            }
+                            for entity_type, records, name_key in (
+                                ("medication", extracted.get("medications") or [], "name"),
+                                ("allergy", extracted.get("allergies") or [], "name"),
+                                ("condition", extracted.get("conditions") or [], "name"),
+                                ("vital", extracted.get("vitals") or [], "type"),
+                            )
+                            for entity in records
+                            if isinstance(entity, dict)
+                            and str(entity.get(name_key) or "").strip()
+                        ],
+                    )
+                    if document_relationships:
+                        UserStore.save_clinical_relationships(
+                            normalized_user, document_relationships
+                        )
+
                 UserStore.save_document_summary(
                     normalized_user,
                     path.name,
@@ -563,11 +883,14 @@ class RAGEngine:
             raw_answer = self.llm.answer_question(
                 question=question,
                 context=bundle["full_context"],
-                chat_history=chat_history,
+                chat_history=bundle.get("previous_five_chat", []),
                 stream=False,
                 user_profile=bundle["user_profile"],
                 source_briefings=bundle["combined_sources"],
                 longitudinal_memory=bundle["longitudinal_memory_summary"],
+                conversation_summary=bundle.get("conversation_summary", ""),
+                patient_history_context=bundle.get("patient_history_context", ""),
+                evidence_dossier=bundle.get("evidence_dossier"),
                 role_config=bundle.get("role_config"),
                 escalation_banner=_pd.escalation_banner if _pd else "",
                 policy_context_note="\n".join(_pd.context_notes) if _pd else "",
@@ -639,6 +962,7 @@ class RAGEngine:
             payload = self._enrich_prebuilt_payload(
                 question=question, payload=bundle["payload"], user=user
             )
+            payload["record_updates"] = bundle.get("record_updates", [])
             if extra_trace_metadata:
                 payload.setdefault("trace", {}).update(extra_trace_metadata)
             yield {
@@ -688,11 +1012,14 @@ class RAGEngine:
             for chunk in self.llm.answer_question(
                 question=question,
                 context=bundle["full_context"],
-                chat_history=chat_history,
+                chat_history=bundle.get("previous_five_chat", []),
                 stream=True,
                 user_profile=bundle["user_profile"],
                 source_briefings=bundle["combined_sources"],
                 longitudinal_memory=bundle["longitudinal_memory_summary"],
+                conversation_summary=bundle.get("conversation_summary", ""),
+                patient_history_context=bundle.get("patient_history_context", ""),
+                evidence_dossier=bundle.get("evidence_dossier"),
                 role_config=bundle.get("role_config"),
                 escalation_banner=policy_decision.escalation_banner
                 if policy_decision
@@ -1056,6 +1383,22 @@ class RAGEngine:
         behavior is unchanged.
         """
         normalized_user = user.strip().lower() if user else None
+        conversation_context = build_conversation_context(chat_history, question)
+        record_updates: List[Dict] = []
+        capture_profile: Optional[Dict] = None
+
+        # Promote explicit patient-authored facts before loading context so the
+        # same answer can use a newly stated medicine or allergy immediately.
+        # Never write a clinician's general evidence question into a patient chart.
+        if normalized_user and target_patient_data is None:
+            capture_profile = UserStore.get_user_profile(normalized_user)
+            capture_role = capture_profile.get("clinical_role") or capture_profile.get(
+                "role", ""
+            )
+            if not is_clinician_role(capture_role):
+                record_updates = self._capture_explicit_chat_records(
+                    normalized_user, question
+                )
 
         if target_patient_data is not None:
             # restore_user_context is intentionally skipped here: it mutates
@@ -1073,6 +1416,9 @@ class RAGEngine:
             allergies = target_patient_data.get("allergies", [])
             conditions = target_patient_data.get("conditions", [])
             vitals = target_patient_data.get("vitals", [])
+            relationships = target_patient_data.get("clinical_relationships", [])
+            care_plans = target_patient_data.get("care_plans", [])
+            clinical_notes = target_patient_data.get("clinical_notes", [])
             document_summaries = target_patient_data.get("document_summaries", [])
             user_profile = target_patient_data.get("user_profile", {})
             longitudinal_memory_summary = self._compose_longitudinal_memory_summary(
@@ -1082,21 +1428,17 @@ class RAGEngine:
                 medication_summary=self._build_medication_memory_summary(medications),
                 vitals_summary=self._build_vitals_memory_summary(vitals),
                 allergies_summary=self._build_allergies_memory_summary(allergies),
+                relationships_summary=relationship_summary(relationships),
             )
         else:
             # Parallelize all UserStore reads + context restoration concurrently.
             # restore_user_context populates the in-memory embedding store;
             # the orchestrator's semantic search step happens after PubMed retrieval
             # (~2-3 s later), so restoration is always complete in time.
-            with ThreadPoolExecutor(max_workers=9) as _pre_exec:
+            with ThreadPoolExecutor(max_workers=12) as _pre_exec:
                 _restore_f = _pre_exec.submit(self.restore_user_context, normalized_user)
                 _memory_f = (
                     _pre_exec.submit(self.get_combined_longitudinal_memory, normalized_user)
-                    if normalized_user
-                    else None
-                )
-                _profile_f = (
-                    _pre_exec.submit(UserStore.get_user_profile, normalized_user)
                     if normalized_user
                     else None
                 )
@@ -1135,10 +1477,27 @@ class RAGEngine:
                     if normalized_user
                     else None
                 )
+                _relationships_f = (
+                    _pre_exec.submit(
+                        UserStore.get_clinical_relationships, normalized_user
+                    )
+                    if normalized_user
+                    else None
+                )
+                _care_plans_f = (
+                    _pre_exec.submit(CarePlanStore.list_plans, normalized_user)
+                    if normalized_user
+                    else None
+                )
+                _clinical_notes_f = (
+                    _pre_exec.submit(UserStore.get_clinical_notes, normalized_user)
+                    if normalized_user
+                    else None
+                )
 
                 _restore_f.result()
                 longitudinal_memory_summary = _memory_f.result() if _memory_f else ""
-                user_profile = _profile_f.result() if _profile_f else {}
+                user_profile = capture_profile or {}
                 medications = _med_f.result() if _med_f else []
                 symptom_logs = _symptom_f.result() if _symptom_f else []
                 triage_summaries = _triage_f.result() if _triage_f else []
@@ -1146,6 +1505,41 @@ class RAGEngine:
                 conditions = _condition_f.result() if _condition_f else []
                 vitals = _vitals_f.result() if _vitals_f else []
                 document_summaries = _docs_f.result() if _docs_f else []
+                relationships = (
+                    _relationships_f.result() if _relationships_f else []
+                )
+                care_plans = _care_plans_f.result() if _care_plans_f else []
+                clinical_notes = _clinical_notes_f.result() if _clinical_notes_f else []
+
+        relationships = merge_relationships(
+            relationships,
+            derive_relationships(
+                medications=medications,
+                allergies=allergies,
+                conditions=conditions,
+                symptom_logs=symptom_logs,
+                vitals=vitals,
+                triage_summaries=triage_summaries,
+                care_plans=care_plans,
+                clinical_notes=clinical_notes,
+                safety_reviews=build_safety_reviews(
+                    vitals=vitals,
+                    symptoms=symptom_logs,
+                    medications=medications,
+                    allergies=allergies,
+                    conditions=conditions,
+                    triage_summaries=triage_summaries,
+                    document_summaries=document_summaries,
+                    clinical_relationships=relationships,
+                    longitudinal_memory=longitudinal_memory_summary,
+                    saved_states=(
+                        UserStore.get_safety_review_states(normalized_user)
+                        if normalized_user and target_patient_data is None
+                        else {}
+                    ),
+                ),
+            ),
+        )
 
         # Build a fast relevance graph from prior records (< 50 ms, no LLM).
         from backend.context_graph import build_context_graph
@@ -1158,6 +1552,7 @@ class RAGEngine:
             vitals=vitals,
             allergies=allergies,
             triage_summaries=triage_summaries,
+            relationships=relationships,
             longitudinal_memory=longitudinal_memory_summary,
         )
 
@@ -1174,7 +1569,14 @@ class RAGEngine:
             document_summaries=document_summaries,
             context_graph=context_graph,
             chat_history=chat_history,
+            previous_five_chat=conversation_context.previous_five,
+            conversation_summary=conversation_context.full_summary,
+            patient_statement_summary=conversation_context.patient_statement_summary,
         )
+        bundle["record_updates"] = record_updates
+        bundle["previous_five_chat"] = conversation_context.previous_five
+        bundle["conversation_summary"] = conversation_context.full_summary
+        bundle["patient_statement_summary"] = conversation_context.patient_statement_summary
         # Sole signal the follow-up-question generator (stream_user_question_events)
         # has for distinguishing "clinician asking about a specific patient's chart"
         # from "clinician asking a general, patient-agnostic evidence question" --
@@ -1185,16 +1587,33 @@ class RAGEngine:
                 question=question,
                 intent=bundle.get("intent"),
                 medications=medications,
+                allergies=allergies,
+                question_medications=bundle.get("question_medications", []),
             )
             bundle["medication_check"] = medication_check
             bundle["symptom_logs"] = symptom_logs
             bundle["medications"] = medications
             bundle["conditions"] = conditions
-            if medication_check.get("alerts"):
+            if medication_check.get("alerts") or medication_check.get("allergy_conflicts"):
                 bundle["full_context"] = self._append_medication_context(
                     bundle["full_context"],
                     medication_check["alerts"],
+                    medication_check.get("allergy_conflicts", []),
                 )
+            # Evidence Ledger Phase 1: persist source identity + passage-level
+            # detail, mutating combined_sources in place with source_version/
+            # retrieved_at/exact_passage. Never allowed to block the answer
+            # already being generated from these same sources -- guarded here
+            # too, on top of persist_evidence_for_bundle's own internal
+            # per-source guard, in case the DB itself is unreachable.
+            try:
+                from backend.evidence_ledger import persist_evidence_for_bundle
+
+                persist_evidence_for_bundle(
+                    bundle.get("combined_sources", []), bundle.get("evidence_dossier")
+                )
+            except Exception as exc:
+                print(f"[EvidenceLedger] persist_evidence_for_bundle failed: {exc}")
         return bundle
 
     def _build_moderation_payload(
@@ -1542,6 +1961,7 @@ class RAGEngine:
             ),
             "evidence_quality": evidence_quality_report,
             "clinical_context": clinical_context.as_dict() if clinical_context else {},
+            "record_updates": bundle.get("record_updates", []),
             "trace": trace,
         }
 
@@ -1611,6 +2031,39 @@ class RAGEngine:
         allergies_summary = self._build_allergies_memory_summary(
             UserStore.get_allergies(normalized_user)
         )
+        relationships = merge_relationships(
+            UserStore.get_clinical_relationships(normalized_user),
+            derive_relationships(
+                medications=UserStore.get_medications(normalized_user),
+                allergies=UserStore.get_allergies(normalized_user),
+                conditions=UserStore.get_conditions(normalized_user),
+                symptom_logs=UserStore.get_symptom_logs(normalized_user, limit=None),
+                vitals=UserStore.get_vitals(normalized_user, limit=None),
+                triage_summaries=UserStore.get_triage_summaries(
+                    normalized_user, limit=None
+                ),
+                care_plans=CarePlanStore.list_plans(normalized_user),
+                clinical_notes=UserStore.get_clinical_notes(normalized_user),
+                safety_reviews=build_safety_reviews(
+                    vitals=UserStore.get_vitals(normalized_user, limit=None),
+                    symptoms=UserStore.get_symptom_logs(normalized_user, limit=None),
+                    medications=UserStore.get_medications(normalized_user),
+                    allergies=UserStore.get_allergies(normalized_user),
+                    conditions=UserStore.get_conditions(normalized_user),
+                    triage_summaries=UserStore.get_triage_summaries(
+                        normalized_user, limit=None
+                    ),
+                    document_summaries=UserStore.get_document_summaries(
+                        normalized_user
+                    ),
+                    clinical_relationships=UserStore.get_clinical_relationships(
+                        normalized_user
+                    ),
+                    longitudinal_memory=base_summary,
+                    saved_states=UserStore.get_safety_review_states(normalized_user),
+                ),
+            ),
+        )
         return self._compose_longitudinal_memory_summary(
             base_summary=base_summary,
             symptom_summary=symptom_summary,
@@ -1618,6 +2071,7 @@ class RAGEngine:
             medication_summary=medication_summary,
             vitals_summary=vitals_summary,
             allergies_summary=allergies_summary,
+            relationships_summary=relationship_summary(relationships),
         )
 
     def build_summary_pdf_for_user(self, user: Optional[str]) -> bytes:
@@ -1963,6 +2417,7 @@ class RAGEngine:
         medication_summary: str,
         vitals_summary: str = "",
         allergies_summary: str = "",
+        relationships_summary: str = "",
     ) -> str:
         parts = []
         cleaned_base = (base_summary or "").strip()
@@ -1974,6 +2429,8 @@ class RAGEngine:
             parts.append(medication_summary)
         if allergies_summary:
             parts.append(allergies_summary)
+        if relationships_summary:
+            parts.append(relationships_summary)
         if vitals_summary:
             parts.append(vitals_summary)
         if symptom_summary:
@@ -2299,6 +2756,8 @@ class RAGEngine:
         question: str,
         intent,
         medications: List[Dict],
+        allergies: Optional[List[Dict]] = None,
+        question_medications: Optional[List[str]] = None,
     ) -> Dict:
         question_lower = (question or "").lower()
         stored_names = [
@@ -2306,11 +2765,12 @@ class RAGEngine:
             for medication in medications
             if medication.get("name", "").strip()
         ]
-        names_from_question = []
-        try:
-            names_from_question = self.llm.extract_medication_mentions(question)
-        except Exception as exc:
-            print(f"Medication extraction failed: {exc}")
+        names_from_question = list(question_medications or [])
+        if not names_from_question:
+            try:
+                names_from_question = self.llm.extract_medication_mentions(question)
+            except Exception as exc:
+                print(f"Medication extraction failed: {exc}")
 
         names_in_question = [
             name for name in stored_names if name.lower() in question_lower
@@ -2329,24 +2789,46 @@ class RAGEngine:
                 if len(candidate_names) >= 6:
                     break
 
-        if len(candidate_names) < 2:
+        if not candidate_names:
             return {
                 "resolved_medications": [],
                 "unresolved_medications": [],
                 "alerts": [],
+                "allergy_conflicts": [],
             }
-        return self._medication_checker.check_interactions(candidate_names[:6])
+        result = self._medication_checker.check_interactions(candidate_names[:6])
+        allergy_conflicts: List[Dict] = []
+        for resolved in result.get("resolved_medications", []):
+            for conflict in check_allergy_conflicts(resolved, allergies or []):
+                allergy_conflicts.append(
+                    {
+                        **conflict,
+                        "medication_name": resolved.get("canonical_name")
+                        or resolved.get("query_name", "medicine"),
+                    }
+                )
+        result["allergy_conflicts"] = allergy_conflicts
+        return result
 
     @staticmethod
-    def _append_medication_context(context: str, alerts: List[Dict]) -> str:
-        if not alerts:
+    def _append_medication_context(
+        context: str,
+        alerts: List[Dict],
+        allergy_conflicts: Optional[List[Dict]] = None,
+    ) -> str:
+        if not alerts and not allergy_conflicts:
             return context
         alert_lines = [
             f"- {alert.get('pair')}: {alert.get('summary')}" for alert in alerts[:3]
         ]
+        alert_lines.extend(
+            f"- {conflict.get('medication_name', 'Medicine')} and recorded allergy "
+            f"{conflict.get('allergy_name', '')}: {conflict.get('summary', '')}"
+            for conflict in (allergy_conflicts or [])[:3]
+        )
         return (
             context
-            + "\n\nMedication interaction flags from openFDA label sections:\n"
+            + "\n\nMedication interaction or recorded-allergy safety flags:\n"
             + "\n".join(alert_lines)
         )
 
@@ -2498,19 +2980,11 @@ class RAGEngine:
 
     @staticmethod
     def _build_limited_evidence_response(personal_context: List[Dict]) -> str:
-        personal_note = ""
-        if personal_context:
-            personal_note = "\n\n## Available Personal Context\n" + "\n".join(
-                f"- {item['title']}: {item['snippet']}" for item in personal_context
-            )
-
         return (
-            "## Working Impression\n"
-            "I could not retrieve enough reliable live evidence for this question right now to give a fully sourced answer.\n\n"
-            "## What To Do Now\n"
-            "Please narrow the question to a specific symptom, condition, treatment, or population, "
-            "or contact a clinician directly if this affects a decision that needs to be made now."
-            + personal_note
+            "I can't safely confirm an answer from the information available here. "
+            "Tell me the exact symptom, medicine, or report wording you want help with. "
+            "If this question came with an image, upload a clear close-up and briefly describe "
+            "what the image shows and what has changed."
         )
 
     @staticmethod

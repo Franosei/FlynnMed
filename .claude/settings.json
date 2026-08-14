@@ -15,7 +15,11 @@
       "Bash(python3 -m pytest backend/test_medication_proposal.py -v)",
       "Bash(python3 -m pytest backend/test_summarizer.py::test_apply_claim_corrections_attributes_unsupported_claim_as_general_knowledge -v -s)",
       "Bash(docker compose *)",
-      "Bash(break)"
+      "Bash(break)",
+      "Bash(EVAL_ADJUDICATOR_MODEL=gpt-4o-mini python -c ' *)",
+      "Bash(python -c ' *)",
+      "Bash(python -m pytest evaluations/tests/test_role_detection.py -q)",
+      "Bash(python -m ruff check evaluations/role_detection.py evaluations/tests/test_role_detection.py)"
     ]
   }
 }

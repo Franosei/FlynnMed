@@ -69,10 +69,38 @@ class ContextNode:
 
 
 @dataclass
+class ContextEdge:
+    source_type: str
+    source_name: str
+    relation: str
+    target_type: str
+    target_name: str
+    relation_class: str = "association"
+    certainty: str = "user_reported"
+    evidence: str = ""
+    relevance_score: float = 0.0
+
+    def prompt_line(self) -> str:
+        certainty = {
+            "user_suspected": "user suspects",
+            "user_reported": "user reports",
+            "documented": "documented",
+            "recorded_association": "recorded association",
+        }.get(self.certainty, "recorded association")
+        relation = self.relation.replace("_", " ")
+        return (
+            f"[{self.relation_class}; {certainty}] "
+            f"{self.source_name} {relation} {self.target_name}"
+            + (f" ({self.evidence})" if self.evidence else "")
+        )
+
+
+@dataclass
 class ContextGraph:
     question: str = ""
     question_entities: List[str] = field(default_factory=list)
     nodes: List[ContextNode] = field(default_factory=list)
+    edges: List[ContextEdge] = field(default_factory=list)
     search_hints: List[str] = field(default_factory=list)
 
     def top_nodes(self, max_nodes: int = 10) -> List[ContextNode]:
@@ -100,6 +128,20 @@ class ContextGraph:
             if node.node_type == "medication" and node.relevance_score > 0.2
         ][:n]
 
+    def relationship_prompt_block(self, max_edges: int = 8) -> str:
+        if not self.edges:
+            return ""
+        edges = sorted(
+            self.edges, key=lambda edge: edge.relevance_score, reverse=True
+        )[:max_edges]
+        lines = "\n".join(f"- {edge.prompt_line()}" for edge in edges)
+        return (
+            "Explicit patient-reported clinical relationships:\n"
+            f"{lines}\n"
+            "Treat these links as patient-reported context, not proven medical causation. "
+            "Distinguish temporal association or suspicion from evidence-supported causality."
+        )
+
 
 def build_context_graph(
     question: str,
@@ -109,6 +151,7 @@ def build_context_graph(
     vitals: Optional[List[Dict]] = None,
     allergies: Optional[List[Dict]] = None,
     triage_summaries: Optional[List[Dict]] = None,
+    relationships: Optional[List[Dict]] = None,
     longitudinal_memory: str = "",
 ) -> ContextGraph:
     """
@@ -243,6 +286,34 @@ def build_context_graph(
                 recency_weight=recency,
                 source="prior consultation",
             ))
+
+    # Explicit links captured from the patient's own statements. These are
+    # edges, not diagnoses: their certainty remains visible to every response.
+    for item in relationships or []:
+        source_name = str(item.get("source_name") or "").strip()
+        target_name = str(item.get("target_name") or "").strip()
+        relation = str(item.get("relation") or "").strip().lower()
+        if not source_name or not target_name or not relation:
+            continue
+        relevance = _score(
+            q_words,
+            f"{source_name} {relation.replace('_', ' ')} {target_name}",
+        )
+        graph.edges.append(
+            ContextEdge(
+                source_type=str(item.get("source_type") or "other").strip().lower(),
+                source_name=source_name,
+                relation=relation,
+                target_type=str(item.get("target_type") or "other").strip().lower(),
+                target_name=target_name,
+                relation_class=str(
+                    item.get("relation_class") or "association"
+                ).strip().lower(),
+                certainty=str(item.get("certainty") or "user_reported").strip().lower(),
+                evidence=str(item.get("evidence") or "").strip(),
+                relevance_score=max(relevance, 0.1),
+            )
+        )
 
     # ── Derive search hints from patient context × question entities ──────────
     graph.search_hints = _build_search_hints(graph, q_words)

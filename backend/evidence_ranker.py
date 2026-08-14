@@ -630,6 +630,19 @@ class EvidenceRanker:
             for node in context_graph.top_nodes(6):
                 if node.node_type in {"condition", "medication", "allergy"} and node.relevance_score >= 0.30:
                     add(node.label, node.node_type)
+            for edge in sorted(
+                context_graph.edges,
+                key=lambda item: item.relevance_score,
+                reverse=True,
+            )[:6]:
+                if edge.relevance_score >= 0.20:
+                    add(edge.source_name, edge.source_type)
+                    add(edge.target_name, edge.target_type)
+                    add(
+                        f"{edge.source_name} {edge.relation.replace('_', ' ')} "
+                        f"{edge.target_name}",
+                        "relationship",
+                    )
 
         return facts[:16]
 

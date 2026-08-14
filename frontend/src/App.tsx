@@ -544,6 +544,7 @@ function Shell({
         { id: "chat", label: "Health Chat", short: "Chat", icon: MessageSquare },
         { id: "care-plans", label: "My Care Plans", short: "Plans", icon: ListChecks },
         { id: "timeline", label: "My Timeline", short: "Timeline", icon: CalendarClock },
+        { id: "trials", label: "Find Clinical Trials", short: "Trials", icon: FlaskConical },
         { id: "access", label: "Clinician Access", short: "Access", icon: UserCheck }
       ];
   const name = clean(snapshot.profile.display_name, snapshot.user);
@@ -1262,6 +1263,15 @@ function ClinicianPatientChart({
         <ClinicalDataList title="Triage and disposition" items={summary.triage} primary="urgency_level" secondary="next_step" />
         <ClinicalDataList title="Patient care plans" items={summary.care_plans} primary="title" secondary="status" />
         <ClinicalDataList title="Clinical notes" items={summary.clinical_notes} primary="assessment" secondary="plan" />
+        <ClinicalDataList
+          title="Clinical relationships"
+          items={(summary.clinical_relationships ?? []).map((item: Dict<any>) => ({
+            ...item,
+            relationship: `${item.relation ?? "associated with"} ${item.target_name ?? ""}`,
+          }))}
+          primary="source_name"
+          secondary="relationship"
+        />
       </section>
 
       <section className="surface-card">
@@ -2539,6 +2549,20 @@ function SourceList({ sources }: { sources: NonNullable<Message["sources"]> }) {
               {!!source.patient_alignment_facts?.length && (
                 <small>Matches: {source.patient_alignment_facts.slice(0, 3).join(", ")}</small>
               )}
+              {source.exact_passage && (
+                <blockquote className="source-passage">
+                  "{source.exact_passage}"
+                  <footer>
+                    {[
+                      source.passage_locator,
+                      source.source_version ? `version ${source.source_version}` : "",
+                      source.retrieved_at ? `checked ${formatTimestamp(source.retrieved_at)}` : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" - ")}
+                  </footer>
+                </blockquote>
+              )}
             </a>
           );
         })}
@@ -3309,6 +3333,7 @@ function RecordPanel({
             Save condition
           </button>
         </form>
+        <MiniList items={snapshot.conditions.slice(0, 8)} titleKey="name" detailKey="status" deleteKey="condition_id" deletePath="/api/conditions" onDelete={remove} />
       </details>
 
       <details>
@@ -3331,6 +3356,7 @@ function RecordPanel({
             Save medication
           </button>
         </form>
+        <MiniList items={snapshot.medications.slice(0, 8)} titleKey="name" detailKey="dose" deleteKey="medication_id" deletePath="/api/medications" onDelete={remove} />
       </details>
 
       <details>
@@ -3363,6 +3389,37 @@ function RecordPanel({
             Save allergy
           </button>
         </form>
+        <MiniList items={snapshot.allergies.slice(0, 8)} titleKey="name" detailKey="reaction" deleteKey="allergy_id" deletePath="/api/allergies" onDelete={remove} />
+      </details>
+
+      <details>
+        <summary>Clinical relationships</summary>
+        {snapshot.clinical_relationships?.length ? (
+          <div className="mini-list">
+            {snapshot.clinical_relationships.slice(0, 10).map((relationship) => (
+              <div key={clean(relationship.relationship_id)}>
+                <span>
+                  {clean(relationship.relation_class, "association").replace(/_/g, " ")} · {clean(relationship.certainty, "recorded association").replace(/_/g, " ")}
+                </span>
+                <strong>
+                  {clean(relationship.source_name)} {clean(relationship.relation).replace(/_/g, " ")} {clean(relationship.target_name)}
+                </strong>
+                {relationship.source !== "structured_record" && (
+                  <button
+                    className="icon-button"
+                    onClick={() => remove(`/api/relationships/${relationship.relationship_id}`)}
+                    title="Remove"
+                    aria-label="Remove"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="muted">No patient-reported relationships saved yet.</p>
+        )}
       </details>
 
       <details>

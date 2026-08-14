@@ -45,6 +45,7 @@ from backend.models.patient import (
 )
 from backend.mrn import generate_mrn
 from backend.product_config import is_clinician_role
+from backend.relationship_engine import RELATION_CLASS
 
 _VALID_SEX_OPTIONS = {"Male", "Female", "Other", "Prefer not to say"}
 
@@ -577,6 +578,171 @@ class SqlUserStore:
                 select(Allergy).where(Allergy.patient_id == patient.id).order_by(Allergy.name.asc())
             ).scalars().all()
             return [_allergy_to_dict(r) for r in rows]
+
+    @staticmethod
+    def save_clinical_relationships(
+        username: str, relationships: List[Dict]
+    ) -> List[Dict]:
+        """Store explicit conversation links inside the patient's JSONB memory."""
+        allowed_relations = {
+            "taken_for", "causes", "triggers", "worsens", "improves",
+            "started_after", "allergic_reaction", "associated_with",
+            "led_to", "recorded_in", "recommended_for",
+        }
+        with _session() as db:
+            patient = _get_patient(db, username)
+            if patient is None:
+                return []
+            memory = dict(patient.longitudinal_memory or {})
+            stored = list(memory.get("clinical_relationships") or [])
+            changed = False
+            for item in relationships or []:
+                source_name = str(item.get("source_name") or "").strip()
+                target_name = str(item.get("target_name") or "").strip()
+                relation = str(item.get("relation") or "").strip().lower()
+                if not source_name or not target_name or relation not in allowed_relations:
+                    continue
+                normalized = {
+                    "relationship_id": item.get("relationship_id") or f"rel-{uuid.uuid4().hex[:12]}",
+                    "source_type": str(item.get("source_type") or "other").strip().lower(),
+                    "source_name": source_name,
+                    "relation": relation,
+                    "relation_class": str(
+                        item.get("relation_class") or RELATION_CLASS.get(relation, "association")
+                    ).strip(),
+                    "target_type": str(item.get("target_type") or "other").strip().lower(),
+                    "target_name": target_name,
+                    "certainty": (
+                        str(item.get("certainty") or "user_reported").strip().lower()
+                        if str(item.get("certainty") or "user_reported").strip().lower()
+                        in {"documented", "user_reported", "user_suspected", "recorded_association"}
+                        else "user_reported"
+                    ),
+                    "evidence": str(item.get("evidence") or "").strip(),
+                    "source": str(item.get("source") or "conversation").strip(),
+                    "recorded_at": item.get("recorded_at") or _utc_now().isoformat(),
+                }
+                key = (
+                    normalized["source_type"], normalized["source_name"].lower(),
+                    normalized["relation"], normalized["target_type"],
+                    normalized["target_name"].lower(),
+                )
+                existing_index = next(
+                    (
+                        index for index, existing in enumerate(stored)
+                        if (
+                            str(existing.get("source_type") or "").lower(),
+                            str(existing.get("source_name") or "").lower(),
+                            str(existing.get("relation") or "").lower(),
+                            str(existing.get("target_type") or "").lower(),
+                            str(existing.get("target_name") or "").lower(),
+                        ) == key
+                    ),
+                    None,
+                )
+                if existing_index is None:
+                    stored.append(normalized)
+                else:
+                    normalized["relationship_id"] = stored[existing_index].get(
+                        "relationship_id", normalized["relationship_id"]
+                    )
+                    stored[existing_index] = normalized
+                changed = True
+            if changed:
+                memory["clinical_relationships"] = stored
+                patient.longitudinal_memory = memory
+                _append_activity(
+                    db,
+                    patient.account_id,
+                    "clinical_relationships_saved",
+                    "Saved user-reported clinical relationships from conversation",
+                    metadata={"relationship_count": len(stored)},
+                )
+                db.commit()
+            return stored
+
+    @staticmethod
+    def get_clinical_relationships(username: str) -> List[Dict]:
+        with _session() as db:
+            patient = _get_patient(db, username)
+            if patient is None:
+                return []
+            return list(
+                dict(patient.longitudinal_memory or {}).get(
+                    "clinical_relationships", []
+                )
+                or []
+            )
+
+    @staticmethod
+    def delete_clinical_relationship(username: str, relationship_id: str) -> bool:
+        with _session() as db:
+            patient = _get_patient(db, username)
+            if patient is None:
+                return False
+            memory = dict(patient.longitudinal_memory or {})
+            stored = list(memory.get("clinical_relationships") or [])
+            kept = [
+                item for item in stored
+                if str(item.get("relationship_id") or "") != relationship_id
+            ]
+            if len(kept) == len(stored):
+                return False
+            memory["clinical_relationships"] = kept
+            patient.longitudinal_memory = memory
+            _append_activity(
+                db,
+                patient.account_id,
+                "clinical_relationship_deleted",
+                "Removed user-reported clinical relationship",
+                metadata={"relationship_id": relationship_id},
+            )
+            db.commit()
+            return True
+
+    @staticmethod
+    def delete_clinical_relationships_for_entity(
+        username: str, entity_type: str, entity_name: str
+    ) -> int:
+        with _session() as db:
+            patient = _get_patient(db, username)
+            if patient is None or not entity_name:
+                return 0
+            memory = dict(patient.longitudinal_memory or {})
+            stored = list(memory.get("clinical_relationships") or [])
+            kind = (entity_type or "").strip().lower()
+            name = entity_name.strip().lower()
+            kept = [
+                item
+                for item in stored
+                if not (
+                    (
+                        str(item.get("source_type") or "").lower() == kind
+                        and str(item.get("source_name") or "").lower() == name
+                    )
+                    or (
+                        str(item.get("target_type") or "").lower() == kind
+                        and str(item.get("target_name") or "").lower() == name
+                    )
+                )
+            ]
+            removed = len(stored) - len(kept)
+            if removed:
+                memory["clinical_relationships"] = kept
+                patient.longitudinal_memory = memory
+                _append_activity(
+                    db,
+                    patient.account_id,
+                    "clinical_relationships_pruned",
+                    f"Removed relationships for deleted {kind}: {entity_name}",
+                    metadata={
+                        "entity_type": kind,
+                        "entity_name": entity_name,
+                        "removed": removed,
+                    },
+                )
+                db.commit()
+            return removed
 
     @staticmethod
     def delete_allergy(username: str, allergy_id: str) -> bool:

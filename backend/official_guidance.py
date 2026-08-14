@@ -61,6 +61,96 @@ class OfficialGuidanceEngine:
         self.search_cache[cache_key] = [dict(source) for source in enriched]
         return enriched
 
+    def search_medicine(self, medicine_name: str, limit: int = 4) -> List[Dict]:
+        """Fetch exact NHS medicine pages without relying on the site search UI.
+
+        NHS medicine pages use stable slugs.  This is especially useful when a
+        user asks in conversational language or the general NHS search endpoint
+        is temporarily unavailable.
+        """
+        cleaned_name = " ".join((medicine_name or "").split()).strip()
+        if not cleaned_name or len(cleaned_name) > 80:
+            return []
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9 '\-()]+", cleaned_name):
+            return []
+
+        slug = re.sub(r"[^a-z0-9]+", "-", cleaned_name.lower()).strip("-")
+        if not slug:
+            return []
+
+        page_names = [
+            f"about-{slug}",
+            f"how-and-when-to-take-{slug}",
+            f"common-questions-about-{slug}",
+            f"who-can-and-cannot-take-{slug}",
+            f"side-effects-of-{slug}",
+        ][: max(1, min(limit, 4))]
+        urls = [
+            f"https://www.nhs.uk/medicines/{slug}/{page_name}/"
+            for page_name in page_names
+        ]
+
+        with ThreadPoolExecutor(max_workers=len(urls)) as executor:
+            futures = [
+                executor.submit(
+                    self._fetch_exact_nhs_medicine_page,
+                    url,
+                    cleaned_name,
+                )
+                for url in urls
+            ]
+            sources = []
+            for future in futures:
+                try:
+                    source = future.result()
+                except Exception as exc:
+                    print(f"OfficialGuidanceEngine medicine-page fallback: {exc}")
+                    source = None
+                if source:
+                    sources.append(source)
+
+        return self._dedupe_and_number(sources)[:limit]
+
+    def _fetch_exact_nhs_medicine_page(
+        self, url: str, medicine_name: str
+    ) -> Dict | None:
+        response = requests.get(
+            url,
+            headers={"User-Agent": self.USER_AGENT},
+            timeout=6,
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+
+        heading_match = re.search(
+            r"<h1[^>]*>(?P<title>.*?)</h1>",
+            response.text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        title = self._clean_html(
+            heading_match.group("title") if heading_match else medicine_name
+        )
+        detail = self._extract_relevant_paragraphs(
+            response.text,
+            f"{medicine_name} used treat allergy contraindications side effects",
+            max_paragraphs=5,
+        )
+        if not detail:
+            return None
+        return {
+            "title": title,
+            "journal": "NHS",
+            "year": "",
+            "section": "Medicine guidance",
+            "url": url,
+            "query": medicine_name,
+            "snippet": detail[:500],
+            "detail_snippet": detail,
+            "provider": "nhs",
+            "source_type": "official_guidance",
+        }
+
     def _search_nice(self, query: str, limit: int) -> List[Dict]:
         response = requests.get(
             self.NICE_SEARCH_URL,
@@ -313,7 +403,11 @@ class OfficialGuidanceEngine:
     def _extract_relevant_paragraphs(self, html_text: str, query: str, max_paragraphs: int = 3) -> str:
         cleaned_html = re.sub(r"<script[\s\S]*?</script>", " ", html_text, flags=re.IGNORECASE)
         cleaned_html = re.sub(r"<style[\s\S]*?</style>", " ", cleaned_html, flags=re.IGNORECASE)
-        paragraph_matches = re.findall(r"<p[^>]*>(.*?)</p>", cleaned_html, flags=re.IGNORECASE | re.DOTALL)
+        paragraph_matches = re.findall(
+            r"<(?:p|li)[^>]*>(.*?)</(?:p|li)>",
+            cleaned_html,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
 
         paragraphs = []
         for paragraph in paragraph_matches:

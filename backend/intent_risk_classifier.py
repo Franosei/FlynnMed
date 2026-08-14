@@ -38,6 +38,11 @@ class IntentClassification:
     ambiguity_clarifying_question: str = ""
     ambiguity_reply_options: List[Dict[str, str]] = field(default_factory=list)
     # [{"display": short chip label, "prompt": full self-contained disambiguated question}, ...]
+    clarification_required: bool = False
+    clarification_reason: str = ""
+    clarifying_questions: List[str] = field(default_factory=list)
+    # Up to 3 decision-specific questions required before a useful
+    # personalized answer can be given.
 
 
 # ── Fast regex crisis patterns ─────────────────────────────────────────────────
@@ -140,6 +145,7 @@ class IntentRiskClassifier:
         role_key: str = "patient",
         patient_history=None,
         recent_turns: Optional[List[dict]] = None,
+        conversation_summary: str = "",
     ) -> IntentClassification:
         """
         Full classification pipeline. Run this concurrently with query expansion
@@ -173,7 +179,14 @@ class IntentRiskClassifier:
 
         # Stage 2: LLM classification
         try:
-            return self._llm_classify(question, user_profile or {}, role_key, patient_history, recent_turns)
+            return self._llm_classify(
+                question,
+                user_profile or {},
+                role_key,
+                patient_history,
+                recent_turns,
+                conversation_summary,
+            )
         except Exception as exc:
             print(f"IntentRiskClassifier LLM call failed, using safe defaults: {exc}")
             return self._safe_default()
@@ -208,6 +221,7 @@ class IntentRiskClassifier:
         role_key: str,
         patient_history=None,
         recent_turns: Optional[List[dict]] = None,
+        conversation_summary: str = "",
     ) -> IntentClassification:
         role_hint = f"The user's clinical role is: {role_key}." if role_key else ""
         pregnancy_hint = ""
@@ -231,7 +245,7 @@ class IntentRiskClassifier:
             turns = [
                 m for m in recent_turns
                 if m.get("role") in ("user", "assistant") and m.get("content", "").strip()
-            ][-4:]
+            ][-5:]
             if turns:
                 rendered = "\n".join(f"{m['role'].title()}: {m['content'].strip()}" for m in turns)
                 continuation_block = (
@@ -241,12 +255,23 @@ class IntentRiskClassifier:
                     "ambiguous term, and the patient's current message answers it, resolve the "
                     "ambiguity using that reply -- set ambiguous_term_detected to false (it is "
                     "already resolved) and classify normally using both messages together as the "
-                    "intended question."
+                    "intended question. Treat details supplied in recent turns as known and never "
+                    "ask for the same information again. An assistant's earlier diagnosis, treatment "
+                    "indication, or patient-history statement is not a confirmed fact unless the user "
+                    "subsequently confirms it or it appears in the structured patient history."
                 )
+
+        summary_block = ""
+        if conversation_summary and conversation_summary != "No earlier conversation.":
+            summary_block = (
+                "\n\nSummary of the whole earlier conversation (role-labelled; prior assistant "
+                "statements are not confirmed patient facts):\n"
+                + conversation_summary
+            )
 
         prompt = (
             "You are a clinical intent classifier for a health information system.\n"
-            f"{role_hint}{pregnancy_hint}{history_block}{continuation_block}\n\n"
+            f"{role_hint}{pregnancy_hint}{history_block}{summary_block}{continuation_block}\n\n"
             "First distinguish an active patient event from professional education, guideline review, "
             "research, teaching, audit, or hypothetical discussion. Emergency terminology in an educational "
             "request is not evidence that an emergency is occurring. If a clinician describes an active patient, "
@@ -298,7 +323,23 @@ class IntentRiskClassifier:
             "flow was measured with a breathing/asthma peak flow meter -- what does my reading "
             "mean?\"}, {\"display\": \"It was a urine flow test\", \"prompt\": \"My peak flow was "
             "measured during a urology urine flow test (uroflowmetry) -- what does my reading "
-            "mean?\"}]. Empty array otherwise.\n\n"
+            "mean?\"}]. Empty array otherwise.\n"
+            "- clarification_required: boolean -- true only when this is a PERSONALIZED health "
+            "or active-patient decision and missing facts are essential to give a useful, specific "
+            "answer. Examples include a patient asking whether a prescription is 'for me' without "
+            "saying what it was prescribed to treat, a clinician asking for patient-specific treatment "
+            "without the indication or a decision-changing contraindication, or a non-urgent symptom "
+            "description that is too incomplete to assess. False for definitions, general education, "
+            "record lookups, administrative requests, and questions that can be answered directly. "
+            "Never use this for urgent or crisis presentations and never delay an immediate safety action.\n"
+            "- clarification_reason: when clarification_required is true, a concrete phrase naming "
+            "the missing decision, such as 'the prescription indication is unknown'; empty otherwise.\n"
+            "- clarifying_questions: when clarification_required is true, an array of 1-3 concise, "
+            "role-appropriate questions. Ask only for facts that could change the answer. Use the known "
+            "patient history and recent conversation; do not ask for anything already recorded or answered. "
+            "For a medication prescribed to a patient, normally establish the indication, whether any "
+            "doses were taken and what happened, and whether the prescriber knew about a relevant recorded "
+            "allergy. For clinicians, ask in concise clinical terms. Empty otherwise.\n\n"
             f"Question: {question}\n\n"
             "Return only valid JSON, no other text."
         )
@@ -336,23 +377,52 @@ class IntentRiskClassifier:
             and ambiguity_reply_options
             and risk_level not in ("urgent", "crisis")
         )
+        clarifying_questions = [
+            str(item).strip()
+            for item in (data.get("clarifying_questions", []) or [])
+            if str(item).strip()
+        ][:3]
+        clarification_required = bool(
+            data.get("clarification_required", False)
+            and clarifying_questions
+            and risk_level not in ("urgent", "crisis")
+            and not ambiguous_term_detected
+        )
+
+        intent_category = data.get("intent_category", "general_info")
+        raw_pathway = data.get("pathway_hint", "")
+        valid_pathways = {
+            "general_triage", "maternity", "msk", "medications", "chronic_conditions"
+        }
+        pathway_hint = (
+            raw_pathway
+            if raw_pathway in valid_pathways
+            else _INTENT_TO_PATHWAY.get(intent_category, "general_triage")
+        )
 
         return IntentClassification(
-            intent_category=data.get("intent_category", "general_info"),
+            intent_category=intent_category,
             risk_level=risk_level,
             vulnerable_flags=data.get("vulnerable_flags", []),
             escalation_required=bool(data.get("escalation_required", False)),
             escalation_reason=data.get("escalation_reason", ""),
             crisis_detected=data.get("risk_level", "") == "crisis",
-            pathway_hint=_INTENT_TO_PATHWAY.get(
-                data.get("pathway_hint", "general_triage"), "general_triage"
-            ),
+            pathway_hint=pathway_hint,
             confidence=float(data.get("confidence", 0.8)),
             presentation_hint=presentation_hint,
             ambiguous_term_detected=ambiguous_term_detected,
             ambiguous_term=str(data.get("ambiguous_term", "")).strip() if ambiguous_term_detected else "",
             ambiguity_clarifying_question=ambiguity_clarifying_question if ambiguous_term_detected else "",
             ambiguity_reply_options=ambiguity_reply_options if ambiguous_term_detected else [],
+            clarification_required=clarification_required,
+            clarification_reason=(
+                str(data.get("clarification_reason", "")).strip()
+                if clarification_required
+                else ""
+            ),
+            clarifying_questions=(
+                clarifying_questions if clarification_required else []
+            ),
         )
 
     @staticmethod

@@ -36,6 +36,26 @@ _PROFESSIONAL_EVIDENCE = re.compile(
 )
 _CLINICAL_ROLE_KEYS = {"doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"}
 
+# A clinician asking to "compile a flowsheet/checklist/template" wants a
+# complete, exhaustive reference artifact -- fundamentally different from a
+# quick clinical question, and the default clinician answer instructions
+# (short, ~120-word, few-section) actively work against it. Deliberately
+# does NOT route into "documentation" mode (_DOCUMENT_TYPE/_DOCUMENT_ACTION
+# below) even though "compile" also matches that action verb -- documentation
+# mode skips evidence retrieval entirely (literal_transformation=True), which
+# would reopen the no-ungrounded-claims concern this session already fixed
+# once for citations. This only changes response *instructions*, not the
+# evidence-retrieval path.
+_STRUCTURED_COMPILATION_ACTION = re.compile(
+    r"\b(?:compile|put together|produce|generate|create|draft|build)\b", re.IGNORECASE
+)
+_STRUCTURED_ARTIFACT_TYPE = re.compile(
+    r"\b(?:flowsheet|flow\s+sheet|checklist|template|tracking\s+sheet|"
+    r"scoring\s+sheet|proforma|standardi[sz]ed\s+(?:form|chart|sheet)|"
+    r"rounding\s+(?:chart|sheet|template))\b",
+    re.IGNORECASE,
+)
+
 # A pure chart-data-lookup question ("what medication is she on", "does she have any
 # allergies") is fully answerable from data already loaded into the prompt (patient_history) --
 # it needs no external NHS/PubMed retrieval. _CHART_FIELD + _CHART_LOOKUP_ACTION are the
@@ -50,6 +70,7 @@ _CHART_FIELD = re.compile(
     r"vitals?|blood\s+pressure|\bBPs?\b|heart\s+rate|\bHR\b|temperature|weight|height|"
     r"labs?|lab\s+results?|"
     r"symptoms?|"
+    r"clinical\s+relationships?|recorded\s+(?:links?|connections?)|causal\s+links?|"
     r"triage\s+(?:history|summary)|"
     r"care\s+plans?)\b",
     re.IGNORECASE,
@@ -85,6 +106,7 @@ class TaskModeDecision:
     presentation_audience: str = "patient"
     requires_evidence_retrieval: bool = True
     literal_transformation: bool = False
+    requests_structured_compilation: bool = False
     reason: str = "default clinical information mode"
 
     @property
@@ -257,6 +279,11 @@ def decide_task_mode(
         )
 
     authenticated_clinician = authenticated_role_key in _CLINICAL_ROLE_KEYS
+    requests_structured_compilation = bool(
+        authenticated_clinician
+        and _STRUCTURED_COMPILATION_ACTION.search(current)
+        and _STRUCTURED_ARTIFACT_TYPE.search(current)
+    )
 
     # Must be checked before the authenticated-clinician catch-all just below --
     # that check alone routes ANY authenticated clinician's question to
@@ -277,6 +304,7 @@ def decide_task_mode(
             mode="chart_lookup",
             presentation_audience=("professional" if authenticated_clinician else "patient"),
             requires_evidence_retrieval=False,
+            requests_structured_compilation=requests_structured_compilation,
             reason="direct factual question about already-loaded record data",
         )
 
@@ -292,6 +320,7 @@ def decide_task_mode(
             mode="professional_evidence_review",
             presentation_audience="professional",
             requires_evidence_retrieval=True,
+            requests_structured_compilation=requests_structured_compilation,
             reason=(
                 "authenticated clinical role"
                 if authenticated_clinician
@@ -300,5 +329,6 @@ def decide_task_mode(
         )
 
     return TaskModeDecision(
-        presentation_audience=("professional" if authenticated_clinician else "patient")
+        presentation_audience=("professional" if authenticated_clinician else "patient"),
+        requests_structured_compilation=requests_structured_compilation,
     )

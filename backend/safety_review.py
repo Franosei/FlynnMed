@@ -287,16 +287,38 @@ def build_safety_reviews(
     symptoms: List[Dict],
     medications: List[Dict],
     allergies: List[Dict],
+    conditions: Optional[List[Dict]] = None,
+    triage_summaries: Optional[List[Dict]] = None,
+    document_summaries: Optional[List[Dict]] = None,
+    clinical_relationships: Optional[List[Dict]] = None,
+    longitudinal_memory: str = "",
     saved_states: Optional[Dict[str, Dict]] = None,
 ) -> List[Dict]:
-    """Return ordered safety reviews, merging non-clinical workflow state."""
+    """Return ordered safety reviews with an auditable full-record context trace.
+
+    Locked rules still trigger only from record types they explicitly support;
+    receiving broader context must never turn a free-text summary into a new
+    diagnosis or alert.
+    """
     reviews = [
         *_emergency_symptom_reviews(symptoms),
         *_potassium_reviews(vitals),
         *_medicine_reviews(medications, allergies),
     ]
     states = saved_states or {}
+    context_considered = {
+        "conditions": [
+            str(item.get("name") or "").strip()
+            for item in conditions or []
+            if str(item.get("name") or "").strip()
+        ][:20],
+        "triage_record_count": len(triage_summaries or []),
+        "document_summary_count": len(document_summaries or []),
+        "clinical_relationship_count": len(clinical_relationships or []),
+        "longitudinal_summary_available": bool((longitudinal_memory or "").strip()),
+    }
     for review in reviews:
+        review["context_considered"] = context_considered
         state = states.get(review["review_id"], {})
         if state:
             review["status"] = state.get("status", review["status"])

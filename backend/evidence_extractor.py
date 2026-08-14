@@ -97,12 +97,18 @@ def _extract_one_article(
         '  "contraindications": ["contraindication relevant to this patient"],\n'
         '  "drug_interactions": ["interaction involving this patient medications"],\n'
         '  "patient_relevant_summary": "2-3 sentences on what this article contributes for this patient",\n'
+        '  "extracted_passages": ["verbatim substring of ARTICLE TEXT above that supports '
+        'question_facts/contraindications/drug_interactions -- copy the exact wording, do not '
+        'paraphrase or summarise"],\n'
         '  "alignment_confidence": 0.0-1.0,\n'
         '  "specialty_mismatch": true/false,\n'
         '  "specialty_mismatch_reason": "one sentence, only if specialty_mismatch is true"\n'
         "}\n\n"
         "RULES:\n"
         "- Only include facts explicitly in the article text -- never infer\n"
+        "- extracted_passages entries MUST be an exact, verbatim substring of ARTICLE TEXT -- "
+        "copy-paste the wording exactly, including punctuation. A passage that is not an exact "
+        "substring will be discarded, so do not summarise, combine, or lightly reword it.\n"
         "- patient_aligned_facts must reference actual values from the patient profile\n"
         "- If article does not match patient's conditions/meds, set patient_aligned_facts: []\n"
         "- SPECIALTY/MEANING MISMATCH: set specialty_mismatch to true ONLY if the PATIENT PROFILE "
@@ -152,6 +158,17 @@ def _extract_one_article(
             except Exception:
                 pass
 
+        # Evidence Ledger Phase 1: a claimed passage that isn't an exact
+        # substring of the article text is dropped, not kept in softened/
+        # paraphrased form -- excluded rather than passed through as
+        # unverified background text, matching the same principle already
+        # applied to specialty_mismatch exclusion above.
+        verified_passages = [
+            quote
+            for quote in data.get("extracted_passages", [])
+            if isinstance(quote, str) and quote.strip() and quote.strip() in snippet
+        ][:6]
+
         return ArticleEvidence(
             source_id=source_id,
             title=title,
@@ -166,6 +183,7 @@ def _extract_one_article(
             contraindications=data.get("contraindications", [])[:4],
             drug_interactions=data.get("drug_interactions", [])[:4],
             patient_relevant_summary=str(data.get("patient_relevant_summary", ""))[:500],
+            extracted_passages=verified_passages,
             alignment_confidence=float(data.get("alignment_confidence", 0.5)),
             specialty_mismatch=bool(data.get("specialty_mismatch", False)),
             specialty_mismatch_reason=str(data.get("specialty_mismatch_reason", ""))[:300],

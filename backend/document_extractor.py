@@ -31,8 +31,8 @@ You are a clinical data extraction assistant. Read the clinical document page sh
 image and extract ALL structured health data present -- including values that are only shown \
 inside a gauge, badge, chart, or other graphical widget rather than as plain text.
 
-Return ONLY a valid JSON object with these four keys: "vitals", "medications", "allergies", \
-"conditions" -- same field shapes as below.
+Return ONLY a valid JSON object with these five keys: "vitals", "medications", "allergies", \
+"conditions", "relationships" -- same field shapes as below.
 
 "vitals": array of objects, each with "type" (standardized snake_case key), "value" (string), \
 "unit" (string), "recorded_on" (YYYY-MM-DD or empty string), "notes" (string, else empty).
@@ -45,6 +45,11 @@ Return ONLY a valid JSON object with these four keys: "vitals", "medications", "
 
 "conditions": array of objects with "name", "status" ("active"/"past"/"resolved"/"unknown"), \
 "recorded_on", "notes".
+
+"relationships": explicit links stated on the page, each with "source_type", "source_name", \
+"relation", "target_type", "target_name", "certainty" ("documented"), and "evidence". Use \
+relations taken_for, causes, triggers, worsens, improves, started_after, allergic_reaction, or \
+associated_with. Do not infer a relationship from two facts merely appearing on the same page.
 
 Preferred vital/lab type keys (use these when they match; otherwise create a concise snake_case \
 key from the document's measurement name):
@@ -78,7 +83,7 @@ typically mL/s), use peak_urinary_flow_rate.
 _EXTRACT_PROMPT = """\
 You are a clinical data extraction assistant. Read the clinical document below and extract ALL structured health data present.
 
-Return ONLY a valid JSON object with these four keys:
+Return ONLY a valid JSON object with these five keys:
 
 "vitals": array of objects, each with:
   - "type": standardized snake_case key from the list below
@@ -106,6 +111,14 @@ Return ONLY a valid JSON object with these four keys:
 
 For "conditions", prefer objects with keys "name", "status", "recorded_on", and "notes".
 Use status "active", "past", "resolved", or "unknown".
+
+"relationships": array of explicit links stated in the document, each with:
+  - "source_type", "source_name", "relation", "target_type", "target_name"
+  - "certainty": "documented"
+  - "evidence": a short supporting phrase from the document
+Use relation taken_for, causes, triggers, worsens, improves, started_after,
+allergic_reaction, or associated_with. Do not infer a link merely because two
+facts appear in the same document.
 
 Preferred vital/lab type keys (use these when they match; otherwise create a concise snake_case key from the document's measurement name):
 blood_pressure, heart_rate, temperature, weight, height, bmi,
@@ -187,6 +200,11 @@ def _normalize_extraction_payload(parsed: Dict) -> Dict[str, List]:
         "medications": [m for m in (parsed.get("medications") or []) if isinstance(m, dict)],
         "allergies": [a for a in (parsed.get("allergies") or []) if isinstance(a, dict)],
         "conditions": conditions,
+        "relationships": [
+            item
+            for item in (parsed.get("relationships") or [])
+            if isinstance(item, dict)
+        ],
     }
 
 
@@ -203,7 +221,10 @@ def _dedupe_items(items: List[Dict], fields: List[str]) -> List[Dict]:
 
 
 def _merge_extraction_payloads(payloads: List[Dict[str, List]]) -> Dict[str, List]:
-    merged: Dict[str, List] = {"vitals": [], "medications": [], "allergies": [], "conditions": []}
+    merged: Dict[str, List] = {
+        "vitals": [], "medications": [], "allergies": [], "conditions": [],
+        "relationships": [],
+    }
     for payload in payloads:
         for key in merged:
             merged[key].extend(payload.get(key, []))
@@ -212,6 +233,10 @@ def _merge_extraction_payloads(payloads: List[Dict[str, List]]) -> Dict[str, Lis
     merged["medications"] = _dedupe_items(merged["medications"], ["name", "dose", "schedule", "reason"])
     merged["allergies"] = _dedupe_items(merged["allergies"], ["name", "reaction"])
     merged["conditions"] = _dedupe_items(merged["conditions"], ["name", "status"])
+    merged["relationships"] = _dedupe_items(
+        merged["relationships"],
+        ["source_type", "source_name", "relation", "target_type", "target_name"],
+    )
     return merged
 
 
@@ -220,11 +245,14 @@ def extract_health_data_from_document(text: str, filename: str = "") -> Dict[str
     Use the LLM to extract structured health data from a clinical document.
 
     Returns a dict:
-      {"vitals": [...], "medications": [...], "allergies": [...], "conditions": [...]}
+      {"vitals": [...], "medications": [...], "allergies": [...], "conditions": [...], "relationships": [...]}
     Returns empty lists on any failure (silently logged).
     """
     api_key = os.getenv("OPENAI_API_KEY", "")
-    empty: Dict[str, List] = {"vitals": [], "medications": [], "allergies": [], "conditions": []}
+    empty: Dict[str, List] = {
+        "vitals": [], "medications": [], "allergies": [], "conditions": [],
+        "relationships": [],
+    }
 
     if not api_key:
         empty["extraction_errors"] = ["OPENAI_API_KEY is not configured, so structured extraction could not run."]
@@ -284,7 +312,10 @@ def extract_health_data_from_images(images: List[bytes], filename: str = "") -> 
     useful -- it costs one vision call per page.
     """
     api_key = os.getenv("OPENAI_API_KEY", "")
-    empty: Dict[str, List] = {"vitals": [], "medications": [], "allergies": [], "conditions": []}
+    empty: Dict[str, List] = {
+        "vitals": [], "medications": [], "allergies": [], "conditions": [],
+        "relationships": [],
+    }
 
     if not api_key:
         empty["extraction_errors"] = ["OPENAI_API_KEY is not configured, so vision extraction could not run."]
