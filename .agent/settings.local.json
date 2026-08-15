@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest backend/test_new_features.py::test_user_store_round_trip_for_new_health_records -q)",
+      "Bash(python -m pytest backend/test_new_features.py -q -k user_store)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/docs)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:8000/)",
+      "Bash(python -c ' *)",
+      "Bash(powershell -Command 'Get-CimInstance Win32_Process -Filter \"Name='\\\\''python.exe'\\\\''\" | Where-Object { $_.CommandLine -like '\\\\''*uvicorn*backend.api*'\\\\'' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }')",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:8000/docs)",
+      "Bash(python -m ruff check backend/models/patient_fact.py backend/patient_fact_ledger.py backend/test_patient_fact_ledger.py backend/rag_system.py backend/clinician_chat_data.py backend/repositories/sql_user_store.py backend/models/__init__.py)",
+      "Bash(python -m pytest backend/test_patient_fact_ledger.py -q)",
+      "Bash(python -m ruff check backend/models/answer_claim.py backend/answer_claim_ledger.py backend/rag_system.py backend/models/__init__.py)",
+      "Bash(python -c \"import backend.rag_system\")",
+      "Bash(python -m ruff check backend/test_answer_claim_ledger.py)",
+      "Bash(python -m ruff check backend/conftest.py)"
+    ]
+  }
+}
