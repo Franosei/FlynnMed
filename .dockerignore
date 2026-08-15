@@ -5,6 +5,7 @@
 .local_backup
 .pytest_cache
 .pytest_tmp
+.pytest-tmp-*
 .ruff_cache
 **/__pycache__
 **/*.pyc
