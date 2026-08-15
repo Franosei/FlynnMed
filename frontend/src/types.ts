@@ -71,6 +71,61 @@ export type Source = {
   retrieved_at?: string;
 };
 
+// Evidence Ledger v2 (#11): the answer -> claim -> passage -> source /
+// patient-fact lineage, fetched lazily via GET /api/evidence/trace/{trace_id}.
+export type EvidenceTraceSource = {
+  title: string;
+  url: string;
+  source_version: string;
+  retrieved_at: string;
+  is_full_document: boolean;
+};
+
+export type EvidenceTraceClaim = {
+  claim_text: string;
+  study_design: string;
+  certainty: string;
+  risk_of_bias: string;
+  passage: {
+    exact_text: string;
+    locator: string;
+    source: EvidenceTraceSource | null;
+  } | null;
+};
+
+export type EvidenceTracePatientFact = {
+  label: string;
+  value: string;
+  status: string;
+  source: string;
+  previous_fact_id: string | null;
+};
+
+export type EvidenceTraceContradiction = {
+  topic: string;
+  claim_a: string;
+  claim_b: string;
+  description: string;
+  source_a: EvidenceTraceSource | null;
+  source_b: EvidenceTraceSource | null;
+};
+
+export type AnswerClaimTrace = {
+  claim_text: string;
+  status: string;
+  requires_evidence: boolean;
+  module: string;
+  llm_only_support: boolean;
+  evidence_claims: EvidenceTraceClaim[];
+  patient_facts: EvidenceTracePatientFact[];
+};
+
+export type EvidenceTrace = {
+  trace_id: string;
+  claims: AnswerClaimTrace[];
+  contradictions: EvidenceTraceContradiction[];
+};
+
 export type ClinicalNote = {
   note_id: string;
   created_at: string;

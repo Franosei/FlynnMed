@@ -1581,6 +1581,97 @@ label {
   color: var(--muted);
 }
 
+/* Evidence Ledger v2 (#11): claim-level reasoning lineage */
+.claim-lineage-status {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0.4rem 0;
+}
+
+.claim-lineage-status--error {
+  color: var(--danger);
+}
+
+.claim-lineage-row {
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 0.3rem;
+}
+
+.claim-lineage-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.claim-status {
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  border: 1px solid var(--line);
+}
+
+.claim-status--ok {
+  color: var(--primary-strong);
+  border-color: #94cbbf;
+  background: #edf8f4;
+}
+
+.claim-status--warn {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: #fff0ed;
+}
+
+.claim-status--neutral {
+  color: var(--muted);
+}
+
+.claim-module {
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: capitalize;
+}
+
+.claim-text {
+  font-size: 0.85rem;
+  color: var(--ink);
+  margin: 0;
+}
+
+.claim-evidence-row {
+  margin-left: 0.5rem;
+}
+
+.claim-patient-facts {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.claim-contradictions {
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--line);
+  color: var(--danger);
+}
+
+.claim-contradiction-row {
+  margin-top: 0.3rem;
+  font-size: 0.8rem;
+}
+
+.claim-contradiction-row p {
+  color: var(--ink);
+  margin: 0.15rem 0;
+}
+
+.trace-claim {
+  font-size: 0.8rem;
+  color: var(--ink);
+}
+
 .follow-ups {
   display: flex;
   flex-wrap: wrap;

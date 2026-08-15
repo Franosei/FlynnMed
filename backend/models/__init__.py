@@ -22,6 +22,7 @@ from backend.models.consent import ConsentGrant, ConsentScope, ConsentStatus
 from backend.models.audit import AuditAction, AuditLogEntry, AuditOutcome
 from backend.models.activity import AccountActivityLog
 from backend.models.evidence import EvidenceClaim, EvidencePassage, SourceArtifact
+from backend.models.evidence_contradiction import EvidenceContradiction
 from backend.models.patient_fact import PatientFact
 from backend.models.answer_claim import AnswerClaim
 
@@ -56,6 +57,7 @@ __all__ = [
     "SourceArtifact",
     "EvidencePassage",
     "EvidenceClaim",
+    "EvidenceContradiction",
     "PatientFact",
     "AnswerClaim",
 ]

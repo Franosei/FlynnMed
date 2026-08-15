@@ -12,7 +12,7 @@ answer already being generated from these same facts.
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 from uuid import UUID
 
 from sqlalchemy import select
@@ -50,6 +50,25 @@ def _parse_uuid(value: Any) -> Optional[UUID]:
         return None
 
 
+def _latest_fact_for_label(
+    db: Session, patient_id: UUID, category: str, label: str
+) -> Optional[PatientFact]:
+    """Most recent non-retracted row for this (patient_id, category, label),
+    used to link an edit or retraction back to what it replaces. Retracted
+    rows are excluded -- a fact that was already retracted and later
+    reappears starts a fresh chain rather than un-retracting the old one."""
+    return db.execute(
+        select(PatientFact)
+        .where(
+            PatientFact.patient_id == patient_id,
+            PatientFact.category == category,
+            PatientFact.label.ilike(label),
+            PatientFact.status != "retracted",
+        )
+        .order_by(PatientFact.created_at.desc())
+    ).scalars().first()
+
+
 def persist_patient_fact(
     db: Session,
     patient_id: UUID,
@@ -68,7 +87,9 @@ def persist_patient_fact(
     many answers reuses one row; an edited value (e.g. a changed dose)
     produces a new row rather than mutating the old one, so a past
     AnswerClaim keeps pointing at the value that was actually true when
-    that answer was generated."""
+    that answer was generated. The new row's previous_fact_id is set to
+    whatever row it's replacing, making the edit an explicit, queryable
+    chain instead of something only recoverable by created_at ordering."""
     label = label.strip()
     if not label:
         return None
@@ -100,6 +121,8 @@ def persist_patient_fact(
     if existing is not None:
         return existing
 
+    previous_fact = _latest_fact_for_label(db, patient_id, category, label)
+
     fact = PatientFact(
         patient_id=patient_id,
         category=category[:32],
@@ -112,10 +135,63 @@ def persist_patient_fact(
         source_record_id=source_record_id,
         recorded_at=recorded_at,
         fact_hash=fact_hash,
+        previous_fact_id=previous_fact.id if previous_fact is not None else None,
     )
     db.add(fact)
     db.flush()
     return fact
+
+
+def _retract_missing_facts(
+    db: Session, patient_id: UUID, category: str, live_labels: Iterable[str]
+) -> None:
+    """Marks any previously-persisted, non-retracted fact in this category
+    whose label is no longer present in the patient's current live snapshot
+    as retracted -- so a removed medication or a disproved allergy leaves an
+    explicit terminal row instead of just silently stopping being mentioned.
+    Never raises; callers already wrap this in a broad try/except per the
+    module's never-blocks-the-answer discipline."""
+    live_label_set = {label.strip().lower() for label in live_labels if label and label.strip()}
+    # Latest row per label, regardless of status -- if the latest row for a
+    # label is already "retracted" (from an earlier call), it must be
+    # skipped rather than re-processed; only the ORIGINAL confirmed/suspected
+    # row it points back to would otherwise keep matching status != "retracted"
+    # forever, since retracting never mutates that original row in place.
+    all_rows = db.execute(
+        select(PatientFact)
+        .where(PatientFact.patient_id == patient_id, PatientFact.category == category)
+        .order_by(PatientFact.created_at.desc())
+    ).scalars().all()
+    latest_by_label: Dict[str, PatientFact] = {}
+    for row in all_rows:
+        key = row.label.strip().lower()
+        if key and key not in latest_by_label:
+            latest_by_label[key] = row
+
+    for key, row in latest_by_label.items():
+        if row.status == "retracted" or key in live_label_set:
+            continue
+        retracted = PatientFact(
+            patient_id=patient_id,
+            category=row.category,
+            label=row.label,
+            value=row.value,
+            unit=row.unit,
+            status="retracted",
+            source=row.source,
+            source_record_type=row.source_record_type,
+            source_record_id=row.source_record_id,
+            recorded_at=row.recorded_at,
+            fact_hash=_hash_text(
+                _normalize_for_hash(row.category)
+                + "|" + _normalize_for_hash(row.label)
+                + "|" + _normalize_for_hash(row.value)
+                + "|" + _normalize_for_hash(row.unit)
+                + "|retracted|" + str(row.id)
+            ),
+            previous_fact_id=row.id,
+        )
+        db.add(retracted)
 
 
 def persist_patient_facts_for_bundle(
@@ -126,12 +202,25 @@ def persist_patient_facts_for_bundle(
     allergies: Optional[List[Dict]] = None,
     vitals: Optional[List[Dict]] = None,
     symptom_logs: Optional[List[Dict]] = None,
+    source: str = "structured_patient_record",
 ) -> None:
     """Persists the current full snapshot of the patient's structured
     record. No-op when patient_id is falsy (e.g. a clinician asking a
     patient-agnostic evidence question with no target patient in view).
     Silent per-fact failure -- never raises, since persistence must not
-    block the answer already generated from this same data."""
+    block the answer already generated from this same data.
+
+    `source` is applied to every fact persisted this call -- pass
+    "document_extracted" when this snapshot was taken during a
+    document-analysis chat turn (see backend/rag_system.py), otherwise the
+    default "structured_patient_record" (a normal chat turn reading the
+    patient's own saved record).
+
+    After persisting each category's current live rows, any previously-seen
+    label now absent from that category's live list is marked retracted
+    (see _retract_missing_facts) -- this is what surfaces a deleted
+    medication or a since-disproved allergy as an explicit event rather than
+    a silent gap."""
     parsed_patient_id = _parse_uuid(patient_id)
     if parsed_patient_id is None:
         return
@@ -148,12 +237,19 @@ def persist_patient_facts_for_bundle(
                     category="medication",
                     label=med.get("name", ""),
                     value=dose_schedule,
+                    source=source,
                     source_record_type="medication",
                     source_record_id=_parse_uuid(med.get("medication_id")),
                     recorded_at=_parse_iso(med.get("created_at")),
                 )
             except Exception as exc:
                 print(f"[PatientFactLedger] medication persist failed: {exc}")
+        try:
+            _retract_missing_facts(
+                db, parsed_patient_id, "medication", (m.get("name", "") for m in medications or [])
+            )
+        except Exception as exc:
+            print(f"[PatientFactLedger] medication retraction pass failed: {exc}")
 
         for cond in conditions or []:
             try:
@@ -162,12 +258,19 @@ def persist_patient_facts_for_bundle(
                     category="condition",
                     label=cond.get("name", ""),
                     value=cond.get("status", ""),
+                    source=source,
                     source_record_type="condition",
                     source_record_id=_parse_uuid(cond.get("condition_id")),
                     recorded_at=_parse_iso(cond.get("created_at")),
                 )
             except Exception as exc:
                 print(f"[PatientFactLedger] condition persist failed: {exc}")
+        try:
+            _retract_missing_facts(
+                db, parsed_patient_id, "condition", (c.get("name", "") for c in conditions or [])
+            )
+        except Exception as exc:
+            print(f"[PatientFactLedger] condition retraction pass failed: {exc}")
 
         for allergy in allergies or []:
             try:
@@ -177,12 +280,19 @@ def persist_patient_facts_for_bundle(
                     label=allergy.get("name", ""),
                     value=allergy.get("reaction", ""),
                     status="confirmed" if allergy.get("confirmed", True) else "suspected",
+                    source=source,
                     source_record_type="allergy",
                     source_record_id=_parse_uuid(allergy.get("allergy_id")),
                     recorded_at=_parse_iso(allergy.get("created_at")),
                 )
             except Exception as exc:
                 print(f"[PatientFactLedger] allergy persist failed: {exc}")
+        try:
+            _retract_missing_facts(
+                db, parsed_patient_id, "allergy", (a.get("name", "") for a in allergies or [])
+            )
+        except Exception as exc:
+            print(f"[PatientFactLedger] allergy retraction pass failed: {exc}")
 
         for vital in vitals or []:
             try:
@@ -192,6 +302,7 @@ def persist_patient_facts_for_bundle(
                     label=vital.get("type", ""),
                     value=vital.get("value", ""),
                     unit=vital.get("unit", ""),
+                    source=source,
                     source_record_type="vitals_entry",
                     source_record_id=_parse_uuid(vital.get("vitals_id")),
                     recorded_at=_parse_iso(vital.get("created_at")),
@@ -206,6 +317,7 @@ def persist_patient_facts_for_bundle(
                     category="symptom",
                     label=symptom.get("symptom", ""),
                     value=str(symptom.get("severity", "")),
+                    source=source,
                     source_record_type="symptom_log",
                     source_record_id=_parse_uuid(symptom.get("log_id")),
                     recorded_at=_parse_iso(symptom.get("created_at")),

@@ -58,6 +58,32 @@ from backend.utils import (
 )
 
 
+# Fail-closed policy (Evidence Ledger v2, #8): when claim-source verification
+# can't be run or a required correction can't be applied even after a retry,
+# this replaces the answer instead of shipping unverified text. Previously
+# both failure paths silently fell back to the raw, unverified answer.
+SAFE_VERIFICATION_FALLBACK_MESSAGE = (
+    "## Unable To Verify This Answer\n\n"
+    "I wasn't able to verify this answer against its sources right now, so I "
+    "can't show it. Please try asking again in a moment, or check with a "
+    "clinician for guidance on this question."
+)
+
+
+def _retry_once(fn, *args, **kwargs):
+    """Runs fn once, retries exactly once more on any exception, and returns
+    (result, succeeded). No backoff -- this wraps a single extra LLM call,
+    not a batch job. Callers decide what "still failing" means for them."""
+    for attempt in range(2):
+        try:
+            return fn(*args, **kwargs), True
+        except Exception as exc:
+            last_exc = exc
+            if attempt == 1:
+                print(f"[Orchestrator] {getattr(fn, '__name__', fn)} failed after retry: {last_exc}")
+    return None, False
+
+
 _CHAT_RECORD_SIGNAL_RE = re.compile(
     r"\b(?:i\s+(?:am|'m|have|had|take|use|started|was|wasn't|stopped)|"
     r"i've\s+(?:been|started|had)|my\s+(?:medication|medicine|allergy|reaction|"
@@ -952,11 +978,23 @@ class RAGEngine:
         if needs_video:
             needs_illustration = False
 
+        # Evidence Ledger v2, #5: a document-analysis chat turn (see
+        # stream_document_analysis_events) tags this turn's patient-fact
+        # snapshot "document_extracted" instead of the default -- the extra
+        # trace metadata it passes is the only signal available this early
+        # (bundle["extra_trace_metadata"] isn't attached until after
+        # _prepare_answer_bundle returns, further down).
+        fact_source = (
+            "document_extracted"
+            if extra_trace_metadata and "document_analysis" in extra_trace_metadata
+            else "structured_patient_record"
+        )
         bundle = self._prepare_answer_bundle(
             question=question,
             user=user,
             chat_history=chat_history,
             target_patient_data=target_patient_data,
+            fact_source=fact_source,
         )
         if bundle["kind"] == "final":
             payload = self._enrich_prebuilt_payload(
@@ -1369,6 +1407,7 @@ class RAGEngine:
         user: Optional[str] = None,
         chat_history: Optional[List[dict]] = None,
         target_patient_data: Optional[Dict] = None,
+        fact_source: str = "structured_patient_record",
     ) -> Dict:
         """
         target_patient_data: when supplied, sources clinical context from this
@@ -1381,6 +1420,11 @@ class RAGEngine:
         "the acting account" throughout regardless (audit/rate-limit/trace),
         never the data source. When omitted (every existing call site),
         behavior is unchanged.
+
+        fact_source (Evidence Ledger v2, #5): the PatientFact.source value
+        this turn's patient-fact snapshot should be persisted with -- see
+        stream_document_analysis_events, which passes "document_extracted"
+        instead of the default.
         """
         normalized_user = user.strip().lower() if user else None
         conversation_context = build_conversation_context(chat_history, question)
@@ -1614,6 +1658,24 @@ class RAGEngine:
                 )
             except Exception as exc:
                 print(f"[EvidenceLedger] persist_evidence_for_bundle failed: {exc}")
+            # Evidence Ledger v2, #4: detect same-intervention cross-source
+            # contradictions now (combined_sources' source_artifact_id fields
+            # were just populated above), so a positive result can still
+            # reach the answer prompt via full_context below. Persistence
+            # happens later, in _finalize_answer_payload, once the real
+            # trace_id exists -- findings are carried on the bundle until
+            # then. Never allowed to block the answer.
+            try:
+                from backend.contradiction_detector import detect_contradictions
+
+                contradictions = detect_contradictions(self.llm, bundle.get("evidence_dossier"))
+                bundle["contradictions"] = contradictions
+                if contradictions:
+                    bundle["full_context"] = self._append_contradiction_context(
+                        bundle["full_context"], contradictions
+                    )
+            except Exception as exc:
+                print(f"[ContradictionDetector] detect_contradictions failed: {exc}")
             # Evidence Ledger Phase 3: persist a snapshot of the patient's
             # structured facts (conditions/medications/allergies/vitals/
             # symptoms) so a future AnswerClaim can cite exactly which
@@ -1628,6 +1690,7 @@ class RAGEngine:
                     allergies=allergies,
                     vitals=vitals,
                     symptom_logs=symptom_logs,
+                    source=fact_source,
                 )
             except Exception as exc:
                 print(f"[PatientFactLedger] persist_patient_facts_for_bundle failed: {exc}")
@@ -1774,44 +1837,65 @@ class RAGEngine:
         # existing inside it) so it's still in scope when Evidence Ledger Phase 4
         # persists claim classifications after trace_id is computed further down.
         uncited_supported_claims: List[Dict] = []
+        # Fail-closed (#8): set when verification couldn't be completed even
+        # after a retry, in which case raw_answer below is replaced with
+        # SAFE_VERIFICATION_FALLBACK_MESSAGE rather than shipping unverified
+        # text. Read further down by the Evidence Ledger Phase 4 persistence
+        # call to record an "unsupported_blocked" audit row.
+        answer_blocked = False
         if combined_sources:
-            try:
-                claim_alignment = self.llm.check_claim_source_alignment(
-                    answer_markdown=raw_answer,
-                    source_briefings=combined_sources,
-                )
-            except Exception as exc:
-                print(f"[Orchestrator] Claim-source alignment check failed: {exc}")
+            claim_alignment, alignment_ok = _retry_once(
+                self.llm.check_claim_source_alignment,
+                answer_markdown=raw_answer,
+                source_briefings=combined_sources,
+            )
+            if not alignment_ok:
                 claim_alignment = []
+                answer_blocked = True
+                raw_answer = SAFE_VERIFICATION_FALLBACK_MESSAGE
 
-            unsupported_claims = [
-                c
-                for c in claim_alignment
-                if c.get("status") == "general_knowledge" and c.get("requires_evidence")
-            ]
-            # A claim the check confirmed IS supported by a specific source, but
-            # whose [S#] marker never made it into the generated text, is the
-            # other half of the same problem: the model drew on the evidence
-            # correctly but didn't attribute it. Only flagged when NONE of the
-            # claim's source_ids appear anywhere in the text yet, so an already-
-            # cited source never gets a redundant second marker inserted.
-            uncited_supported_claims = [
-                c
-                for c in claim_alignment
-                if c.get("status") == "supported"
-                and c.get("source_ids")
-                and not any(f"[{sid}]" in raw_answer for sid in c["source_ids"])
-            ]
-            if unsupported_claims or uncited_supported_claims:
-                rewritten = self.llm.apply_claim_corrections(
-                    answer_markdown=raw_answer,
-                    unsupported_claims=unsupported_claims,
-                    source_briefings=combined_sources,
-                    uncited_supported_claims=uncited_supported_claims,
-                )
-                if rewritten and rewritten.strip() and rewritten != raw_answer:
-                    raw_answer = rewritten
-                    claim_correction_applied = True
+            if not answer_blocked:
+                unsupported_claims = [
+                    c
+                    for c in claim_alignment
+                    if c.get("status") == "general_knowledge" and c.get("requires_evidence")
+                ]
+                # A claim the check confirmed IS supported by a specific source, but
+                # whose [S#] marker never made it into the generated text, is the
+                # other half of the same problem: the model drew on the evidence
+                # correctly but didn't attribute it. Only flagged when NONE of the
+                # claim's source_ids appear anywhere in the text yet, so an already-
+                # cited source never gets a redundant second marker inserted.
+                uncited_supported_claims = [
+                    c
+                    for c in claim_alignment
+                    if c.get("status") == "supported"
+                    and c.get("source_ids")
+                    and not any(f"[{sid}]" in raw_answer for sid in c["source_ids"])
+                ]
+                if unsupported_claims or uncited_supported_claims:
+                    # apply_claim_corrections never raises (it catches its own
+                    # OpenAI call and returns the original text on failure),
+                    # so "failed" here means a no-op return, not an exception
+                    # -- retry once on that condition instead of on exceptions.
+                    rewritten = ""
+                    for _attempt in range(2):
+                        rewritten = self.llm.apply_claim_corrections(
+                            answer_markdown=raw_answer,
+                            unsupported_claims=unsupported_claims,
+                            source_briefings=combined_sources,
+                            uncited_supported_claims=uncited_supported_claims,
+                        )
+                        if rewritten and rewritten.strip() and rewritten != raw_answer:
+                            break
+                    if rewritten and rewritten.strip() and rewritten != raw_answer:
+                        raw_answer = rewritten
+                        claim_correction_applied = True
+                    elif unsupported_claims:
+                        # Both attempts were a no-op while genuinely
+                        # unsupported claims remain -- don't ship them.
+                        answer_blocked = True
+                        raw_answer = SAFE_VERIFICATION_FALLBACK_MESSAGE
 
         role_config = bundle.get("role_config")
         raw_answer = self._append_clinical_evidence_trail(
@@ -1909,9 +1993,23 @@ class RAGEngine:
                 claim_alignment=claim_alignment,
                 uncited_supported_claims=uncited_supported_claims,
                 claim_correction_applied=claim_correction_applied,
+                answer_blocked=answer_blocked,
             )
         except Exception as exc:
             print(f"[AnswerClaimLedger] persist_answer_claims_for_bundle failed: {exc}")
+
+        # Evidence Ledger v2, #4: persist the contradiction pairs detected
+        # earlier in _prepare_answer_bundle, now that trace_id exists so
+        # they correlate with this answer's AnswerClaim rows for the #11
+        # lineage view. Never allowed to block the answer.
+        try:
+            from backend.contradiction_detector import persist_contradictions_for_bundle
+
+            persist_contradictions_for_bundle(
+                trace_id, bundle.get("contradictions", []), combined_sources
+            )
+        except Exception as exc:
+            print(f"[ContradictionDetector] persist_contradictions_for_bundle failed: {exc}")
 
         from backend.evidence_ranker import EvidenceRanker
 
@@ -2869,6 +2967,25 @@ class RAGEngine:
             context
             + "\n\nMedication interaction or recorded-allergy safety flags:\n"
             + "\n".join(alert_lines)
+        )
+
+    @staticmethod
+    def _append_contradiction_context(context: str, contradictions: List[Dict]) -> str:
+        """Evidence Ledger v2, #4: tells the answer model when retrieved
+        sources disagree on the same intervention, so it describes both
+        positions instead of silently picking one -- see
+        backend/contradiction_detector.py for how these pairs are found."""
+        if not contradictions:
+            return context
+        lines = [
+            f"- {item.get('topic') or 'A finding'}: {item.get('description', '')} "
+            f"({item.get('source_a_id')} vs {item.get('source_b_id')})"
+            for item in contradictions[:3]
+        ]
+        return (
+            context
+            + "\n\nSources disagree on the following -- describe both positions rather "
+            "than presenting only one as settled:\n" + "\n".join(lines)
         )
 
     @staticmethod

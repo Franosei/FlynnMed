@@ -1,5 +1,5 @@
 import { Component, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, SyntheticEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import {
   Activity,
@@ -48,6 +48,7 @@ import {
   emailNote,
   fetchAccessOverview,
   fetchClinicianPatient,
+  fetchEvidenceTrace,
   fetchMyMedicationProposals,
   fetchMyPrevisitSummaries,
   fetchPrevisitChatHistory,
@@ -82,7 +83,7 @@ import {
   updateSafetyReview,
   uploadDocuments
 } from "./api";
-import type { AccessOverview, AuthResponse, CarePlan, CarePlanTask, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, Dict, EscalationThreshold, FeedbackRating, LabReminder, MedReminder, Message, MissedCareItem, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, ProposedMedication, SafetyReview, Snapshot, TrialSearchResult } from "./types";
+import type { AccessOverview, AuthResponse, CarePlan, CarePlanTask, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, Dict, EscalationThreshold, EvidenceTrace, FeedbackRating, LabReminder, MedReminder, Message, MissedCareItem, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, ProposedMedication, SafetyReview, Snapshot, TrialSearchResult } from "./types";
 import type { ClarifyOption, UploadExtracted } from "./api";
 import {
   buildSeries,
@@ -794,6 +795,7 @@ function SafetyReviewView({
                 {review.evidence.map((source) => (
                   <div className="trace-row" key={source.source_url}>
                     <a href={source.source_url} target="_blank" rel="noreferrer">{source.source_title}</a>
+                    {source.claim && <em className="trace-claim">{source.claim}</em>}
                     <span>{source.passage}</span>
                   </div>
                 ))}
@@ -1491,6 +1493,9 @@ function PrevisitWorkspace({
               <div className="markdown">
                 <ReactMarkdown>{message.content}</ReactMarkdown>
               </div>
+              {message.role === "assistant" && message.sources && message.sources.length > 0 && (
+                <SourceList sources={message.sources} />
+              )}
               {message.role === "assistant" && !!message.follow_up_questions?.length && (
                 <div className="follow-ups">
                   {message.follow_up_questions.slice(0, 3).map((q, i) => {
@@ -2292,6 +2297,10 @@ function MessageBubble({
           <SourceList sources={message.sources} />
         )}
 
+        {!patientView && message.trace_id && (
+          <ClaimLineageView traceId={message.trace_id} />
+        )}
+
         {!isUser && metadata.follow_up_questions?.length > 0 && (
           <div className="follow-ups">
             {metadata.follow_up_questions.slice(0, 3).map((q: string | { display: string; prompt: string }, i: number) => {
@@ -2567,6 +2576,111 @@ function SourceList({ sources }: { sources: NonNullable<Message["sources"]> }) {
           );
         })}
       </div>
+    </details>
+  );
+}
+
+const CLAIM_STATUS_LABELS: Record<string, string> = {
+  supported_cited: "Supported",
+  supported_citation_added: "Supported (citation added)",
+  unsupported_hedged: "Unsupported -- hedged",
+  unsupported_uncorrected: "Unsupported -- uncorrected",
+  unsupported_blocked: "Blocked -- could not verify",
+  general_knowledge_no_evidence_required: "General knowledge",
+  unknown: "Unclassified",
+};
+
+function claimStatusClass(status: string): string {
+  if (status.startsWith("supported")) return "claim-status--ok";
+  if (status.startsWith("unsupported")) return "claim-status--warn";
+  return "claim-status--neutral";
+}
+
+// Evidence Ledger v2 (#11): the answer -> claim -> passage -> source /
+// patient-fact reasoning lineage for one message, fetched only when
+// expanded -- see fetchEvidenceTrace/GET /api/evidence/trace/{trace_id}.
+function ClaimLineageView({ traceId }: { traceId: string }) {
+  const [trace, setTrace] = useState<EvidenceTrace | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [loaded, setLoaded] = useState(false);
+
+  async function handleToggle(event: SyntheticEvent<HTMLDetailsElement>) {
+    if (!event.currentTarget.open || loaded) return;
+    setLoading(true);
+    setError("");
+    try {
+      const result = await fetchEvidenceTrace(traceId);
+      setTrace(result);
+      setLoaded(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load the reasoning trace.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <details className="details-block claim-lineage" onToggle={handleToggle}>
+      <summary>Reasoning lineage</summary>
+      {loading && <p className="claim-lineage-status">Loading...</p>}
+      {error && <p className="claim-lineage-status claim-lineage-status--error">{error}</p>}
+      {trace && trace.claims.length === 0 && !loading && (
+        <p className="claim-lineage-status">No claim-level detail was recorded for this answer.</p>
+      )}
+      {trace && trace.contradictions.length > 0 && (
+        <div className="claim-contradictions">
+          <strong>Sources disagree</strong>
+          {trace.contradictions.map((item, index) => (
+            <div key={index} className="claim-contradiction-row">
+              <em>{item.topic}</em>
+              <p>{item.description}</p>
+              <small>
+                {item.source_a?.title ?? "Source A"} vs {item.source_b?.title ?? "Source B"}
+              </small>
+            </div>
+          ))}
+        </div>
+      )}
+      {trace && trace.claims.map((claim, index) => (
+        <div key={index} className="claim-lineage-row">
+          <div className="claim-lineage-header">
+            <span className={`claim-status ${claimStatusClass(claim.status)}`}>
+              {CLAIM_STATUS_LABELS[claim.status] ?? claim.status}
+            </span>
+            {claim.llm_only_support && (
+              <span className="claim-status claim-status--warn" title="The model marked this supported, but the independent term-overlap check could not confirm it.">
+                Unverified by deterministic check
+              </span>
+            )}
+            <span className="claim-module">{claim.module.replace("_", " ")}</span>
+          </div>
+          <p className="claim-text">{claim.claim_text}</p>
+          {claim.evidence_claims.map((ec, ecIndex) => (
+            <div key={ecIndex} className="claim-evidence-row">
+              <small>
+                {unique([ec.study_design.replace("_", " "), `certainty: ${ec.certainty}`, `risk of bias: ${ec.risk_of_bias}`]).join(" - ")}
+              </small>
+              {ec.passage && (
+                <blockquote className="source-passage">
+                  "{ec.passage.exact_text}"
+                  {ec.passage.source && (
+                    <footer>
+                      {ec.passage.source.title}
+                      {ec.passage.source.is_full_document ? "" : " (excerpt)"}
+                    </footer>
+                  )}
+                </blockquote>
+              )}
+            </div>
+          ))}
+          {!!claim.patient_facts.length && (
+            <small className="claim-patient-facts">
+              Patient facts used: {claim.patient_facts.map((f) => `${f.label} (${f.source})`).join(", ")}
+            </small>
+          )}
+        </div>
+      ))}
     </details>
   );
 }

@@ -340,6 +340,18 @@ def _snapshot(username: str) -> Dict:
         longitudinal_memory=str(memory.get("summary") or ""),
         saved_states=UserStore.get_safety_review_states(username),
     )
+    # Evidence Ledger traceability for Safety Review (#7): deterministic,
+    # deduped internally against repeated calls (this snapshot is refetched
+    # after nearly every action app-wide), scoped to emergency/urgent
+    # reviews only. Never allowed to block the snapshot response.
+    try:
+        from backend.answer_claim_ledger import persist_safety_review_evidence
+
+        persist_safety_review_evidence(
+            safety_reviews, UserStore.get_user_profile(username).get("patient_record_id")
+        )
+    except Exception as exc:
+        print(f"[AnswerClaimLedger] persist_safety_review_evidence failed: {exc}")
     clinical_relationships = merge_relationships(
         base_relationships,
         derive_relationships(safety_reviews=safety_reviews),
@@ -2115,6 +2127,29 @@ def submit_feedback(payload: FeedbackPayload, username: str = Depends(current_us
     }
 
 
+@app.get("/api/evidence/trace/{trace_id}")
+def get_evidence_trace(trace_id: str, username: str = Depends(current_user)) -> Dict:
+    """Evidence Ledger v2, #11: the answer -> claim -> passage -> source /
+    patient-fact lineage for one answer, previously written on every Health
+    Chat turn (see backend/answer_claim_ledger.py) but never exposed. Scoped
+    to traces the requesting account itself owns, the same ownership check
+    submit_feedback already uses -- a trace_id is only ever saved against the
+    account that generated it (see UserStore.save_interaction_trace)."""
+    trace_id = trace_id.strip()
+    if not trace_id:
+        raise HTTPException(status_code=400, detail="A trace id is required.")
+    owns_trace = any(
+        item.get("trace_id") == trace_id
+        for item in UserStore.get_interaction_traces(username, limit=None)
+    )
+    if not owns_trace:
+        raise HTTPException(status_code=404, detail="Could not find that response trace.")
+
+    from backend.evidence_trace import build_evidence_trace
+
+    return build_evidence_trace(trace_id)
+
+
 @app.post("/api/uploads")
 async def upload_documents(
     files: List[UploadFile] = File(...),
@@ -2445,6 +2480,20 @@ def search_trials(payload: TrialSearchPayload, username: str = Depends(current_u
         query_expander=QueryExpander(),
     )
     UserStore.save_trial_search_result(username, result)
+    # Evidence Ledger traceability for Trial Finder (#7): deterministic
+    # ClinicalTrials.gov matching, so this records why each trial was
+    # surfaced rather than running an LLM claim-check against it. Never
+    # allowed to block the search response.
+    try:
+        from backend.answer_claim_ledger import persist_trial_finder_matches
+
+        persist_trial_finder_matches(
+            f"trial-finder-{uuid.uuid4().hex[:12]}",
+            profile.get("patient_record_id"),
+            result.get("trials", []),
+        )
+    except Exception as exc:
+        print(f"[AnswerClaimLedger] persist_trial_finder_matches failed: {exc}")
     return {"result": result, "snapshot": _snapshot(username)}
 
 

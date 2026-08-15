@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from typing import Generator, Optional, TYPE_CHECKING
 
 from dotenv import load_dotenv
@@ -594,46 +595,61 @@ class LLMHelper:
         )
         return json.loads(response.choices[0].message.content.strip())
 
-    def check_claim_source_alignment(
+    @staticmethod
+    def _split_answer_for_claim_check(answer_markdown: str, max_chars: int = 1500) -> list[str]:
+        """Splits a long answer into paragraph-bounded chunks so every claim
+        gets checked, not just the first max_chars of the whole answer.
+        Typical answers are well under max_chars and come back as a single
+        chunk -- no behavior change, no extra LLM call, for the common case."""
+        paragraphs = [p for p in re.split(r"\n{2,}", answer_markdown) if p.strip()]
+        if not paragraphs:
+            return [answer_markdown] if answer_markdown.strip() else []
+        chunks: list[str] = []
+        current = ""
+        for para in paragraphs:
+            candidate = f"{current}\n\n{para}" if current else para
+            if len(candidate) > max_chars and current:
+                chunks.append(current)
+                current = para
+            else:
+                current = candidate
+        if current:
+            chunks.append(current)
+        return chunks
+
+    @staticmethod
+    def _claim_terms(text: str) -> set:
+        words = re.findall(r"[a-zA-Z0-9]+", (text or "").lower())
+        return {w for w in words if len(w) >= 4}
+
+    def _deterministic_corroboration_confirmed(self, claim_text: str, source_texts: list[str]) -> bool:
+        """Paraphrase-tolerant, non-LLM cross-check: does the cited source
+        text actually share substantial vocabulary with this claim? This is
+        deliberately not a quote-verification check (see
+        backend/evidence_extractor.py::_canonicalize_passage for that --
+        unsuitable here since check_claim_source_alignment's claims are
+        paraphrased summaries, not verbatim quotes) -- it's a softer,
+        independent sanity check so the LLM's own "supported" judgment is
+        never the only signal a claim was actually grounded in a source.
+        """
+        claim_terms = self._claim_terms(claim_text)
+        if not claim_terms:
+            return True  # nothing meaningful to check against; don't penalize
+        combined_source_terms = set()
+        for text in source_texts:
+            combined_source_terms |= self._claim_terms(text)
+        if not combined_source_terms:
+            return False
+        overlap = claim_terms & combined_source_terms
+        return (len(overlap) / len(claim_terms)) >= 0.35
+
+    def _check_claim_alignment_chunk(
         self,
-        answer_markdown: str,
-        source_briefings: list[dict],
+        answer_chunk: str,
+        source_block: str,
+        passage_id_by_source: dict,
+        source_text_by_id: dict,
     ) -> list[dict]:
-        """
-        Reviews the answer and checks whether each factual claim is backed by
-        a retrieved source. Returns a list of dicts:
-          {"claim": "...", "status": "supported"|"general_knowledge",
-           "requires_evidence": bool, "source_ids": [...], "passage_ids": [...]}
-        Only the top 5 claims are checked to keep latency low. requires_evidence
-        distinguishes claims a reader would expect to be evidence-backed (a
-        mechanism, a statistic, a named causal relationship) from generic
-        safety-netting or self-care language that doesn't need a citation --
-        callers should only act on unsupported claims where this is true.
-
-        passage_ids (Evidence Ledger Phase 1): when the Evidence Ledger
-        persisted a verified exact passage for a source (source_briefings'
-        `exact_passage`/`passage_id`, see backend/evidence_ledger.py), that
-        passage text is what's actually shown to the checker for that source
-        instead of the raw excerpt, and a claim marked "supported" against
-        that source carries the specific passage_id it was checked against --
-        so a claim traces to an exact passage, not just "a source somewhere".
-        A source with no persisted passage still contributes its raw excerpt
-        as before; its claims just get no passage_id.
-        """
-        if not answer_markdown or not source_briefings:
-            return []
-
-        passage_id_by_source = {
-            s["source_id"]: s["passage_id"]
-            for s in source_briefings
-            if s.get("source_id") and s.get("passage_id")
-        }
-        source_block = "\n".join(
-            f"[{s['source_id']}] {s.get('title', '')} -- "
-            f"{(s.get('exact_passage') or s.get('detail_snippet') or s.get('snippet', ''))[:600]}"
-            for s in source_briefings[:8]
-        )
-
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -673,7 +689,7 @@ class LLMHelper:
                     "role": "user",
                     "content": (
                         f"Sources:\n{source_block}\n\n"
-                        f"Answer (first 1200 chars):\n{answer_markdown[:1200]}\n\n"
+                        f"Answer:\n{answer_chunk}\n\n"
                         "Return only valid JSON."
                     ),
                 },
@@ -689,11 +705,28 @@ class LLMHelper:
         result = []
         for item in items[:5]:
             if isinstance(item, dict) and item.get("claim"):
+                claim_text = str(item.get("claim", "")).strip()
+                status = str(item.get("status", "general_knowledge")).strip()
                 source_ids = [str(s) for s in item.get("source_ids", [])]
+                deterministic_corroboration = "not_applicable"
+                if status == "supported" and source_ids:
+                    cited_texts = [source_text_by_id[sid] for sid in source_ids if sid in source_text_by_id]
+                    if self._deterministic_corroboration_confirmed(claim_text, cited_texts):
+                        deterministic_corroboration = "confirmed"
+                    else:
+                        # LLM said supported, but the independent term-overlap
+                        # check couldn't confirm it against the cited source
+                        # text -- downgrade so every downstream branch
+                        # (hedging/correction/persistence) treats this exactly
+                        # like any other unsupported claim, no special-casing
+                        # needed elsewhere.
+                        status = "general_knowledge"
+                        source_ids = []
+                        deterministic_corroboration = "failed"
                 result.append(
                     {
-                        "claim": str(item.get("claim", "")).strip(),
-                        "status": str(item.get("status", "general_knowledge")).strip(),
+                        "claim": claim_text,
+                        "status": status,
                         "requires_evidence": bool(item.get("requires_evidence", False)),
                         "source_ids": source_ids,
                         "passage_ids": [
@@ -701,9 +734,88 @@ class LLMHelper:
                             for sid in source_ids
                             if sid in passage_id_by_source
                         ],
+                        "deterministic_corroboration": deterministic_corroboration,
                     }
                 )
         return result
+
+    def check_claim_source_alignment(
+        self,
+        answer_markdown: str,
+        source_briefings: list[dict],
+    ) -> list[dict]:
+        """
+        Reviews the answer and checks whether each factual claim is backed by
+        a retrieved source. Returns a list of dicts:
+          {"claim": "...", "status": "supported"|"general_knowledge",
+           "requires_evidence": bool, "source_ids": [...], "passage_ids": [...],
+           "deterministic_corroboration": "confirmed"|"failed"|"not_applicable"}
+        The answer is split into paragraph-bounded chunks (see
+        _split_answer_for_claim_check) so a long answer gets every claim
+        checked instead of only whatever fits in the first ~1500 chars;
+        typical answers are a single chunk and cost exactly one LLM call, as
+        before. Up to 5 claims are extracted per chunk, merged and deduped by
+        claim text, capped at 25 total to bound latency/cost on unusually
+        long answers. requires_evidence distinguishes claims a reader would
+        expect to be evidence-backed (a mechanism, a statistic, a named
+        causal relationship) from generic safety-netting or self-care
+        language that doesn't need a citation -- callers should only act on
+        unsupported claims where this is true.
+
+        deterministic_corroboration (independent of the LLM's own
+        "supported" judgment): for every claim the LLM marks "supported", a
+        non-LLM term-overlap check (see _deterministic_corroboration_confirmed)
+        verifies the cited source text actually shares substantial
+        vocabulary with the claim. A claim that fails this check is
+        downgraded to "general_knowledge" before it's ever returned, so the
+        LLM's self-report is never the sole signal a claim was grounded in a
+        source.
+
+        passage_ids (Evidence Ledger Phase 1): when the Evidence Ledger
+        persisted a verified exact passage for a source (source_briefings'
+        `exact_passage`/`passage_id`, see backend/evidence_ledger.py), that
+        passage text is what's actually shown to the checker for that source
+        instead of the raw excerpt, and a claim marked "supported" against
+        that source carries the specific passage_id it was checked against --
+        so a claim traces to an exact passage, not just "a source somewhere".
+        A source with no persisted passage still contributes its raw excerpt
+        as before; its claims just get no passage_id.
+        """
+        if not answer_markdown or not source_briefings:
+            return []
+
+        passage_id_by_source = {
+            s["source_id"]: s["passage_id"]
+            for s in source_briefings
+            if s.get("source_id") and s.get("passage_id")
+        }
+        source_text_by_id = {
+            s["source_id"]: (s.get("exact_passage") or s.get("detail_snippet") or s.get("snippet", ""))
+            for s in source_briefings
+            if s.get("source_id")
+        }
+        source_block = "\n".join(
+            f"[{s['source_id']}] {s.get('title', '')} -- "
+            f"{(s.get('exact_passage') or s.get('detail_snippet') or s.get('snippet', ''))[:600]}"
+            for s in source_briefings[:8]
+        )
+
+        chunks = self._split_answer_for_claim_check(answer_markdown)
+        seen_claim_keys: set = set()
+        merged: list[dict] = []
+        for chunk in chunks:
+            chunk_claims = self._check_claim_alignment_chunk(
+                chunk, source_block, passage_id_by_source, source_text_by_id
+            )
+            for claim in chunk_claims:
+                key = " ".join(claim["claim"].casefold().split())
+                if key in seen_claim_keys:
+                    continue
+                seen_claim_keys.add(key)
+                merged.append(claim)
+                if len(merged) >= 25:
+                    return merged
+        return merged
 
     def extract_medication_proposal(
         self,

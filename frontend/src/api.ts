@@ -1,4 +1,4 @@
-import type { AccessGrant, AccessOverview, AuthResponse, CarePlan, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, FeedbackRating, FeedbackResponse, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, ProposedMedication, SafetyReview, Snapshot } from "./types";
+import type { AccessGrant, AccessOverview, AuthResponse, CarePlan, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, EvidenceTrace, FeedbackRating, FeedbackResponse, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, ProposedMedication, SafetyReview, Snapshot } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 const TOKEN_KEY = "flynnmed_token";
@@ -81,6 +81,13 @@ export function signup(payload: Record<string, unknown>): Promise<AuthResponse> 
 
 export function fetchSnapshot(): Promise<Snapshot> {
   return apiRequest<Snapshot>("/api/snapshot");
+}
+
+// Evidence Ledger v2 (#11): the answer -> claim -> passage -> source /
+// patient-fact lineage for one answer. Fetched lazily -- only when the user
+// expands the claim-lineage view on a message, not on every render.
+export function fetchEvidenceTrace(traceId: string): Promise<EvidenceTrace> {
+  return apiRequest<EvidenceTrace>(`/api/evidence/trace/${encodeURIComponent(traceId)}`);
 }
 
 export function updateSafetyReview(

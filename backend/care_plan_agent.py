@@ -30,6 +30,7 @@ from backend.official_guidance import OfficialGuidanceEngine
 from backend.patient_history import build_patient_history_context
 from backend.pubmed_search import PubMedCentralSearcher
 from backend.query_expander import QueryExpander
+from backend.summarizer import LLMHelper
 
 # Sources the extractor confirms are near-zero relevance and don't answer the
 # question are excluded outright -- same threshold and rationale as
@@ -246,6 +247,22 @@ class CarePlanAgent:
         self._guidance = OfficialGuidanceEngine()
         self._pubmed = PubMedCentralSearcher()
         self._query_expander = QueryExpander()
+        # Evidence Ledger v2, #7: sources actually surfaced to the plan LLM
+        # this generate() call, accumulated by _nhs/_pubmed_search and used
+        # afterwards to claim-check the finished plan. Reset per call.
+        self._collected_sources: List[Dict] = []
+        self._llm_helper: Optional[LLMHelper] = None
+
+    def _get_llm_helper(self) -> Optional[LLMHelper]:
+        """Lazy, best-effort -- constructed on first use rather than in
+        __init__ so a missing OPENAI_API_KEY never breaks agent construction
+        itself, only the optional claim-check pass."""
+        if self._llm_helper is None:
+            try:
+                self._llm_helper = LLMHelper(model=self._model)
+            except Exception as exc:
+                print(f"[CarePlanAgent] LLMHelper unavailable, skipping claim-check: {exc}")
+        return self._llm_helper
 
     # ------------------------------------------------------------------
     # Public API
@@ -261,6 +278,7 @@ class CarePlanAgent:
             if on_progress:
                 on_progress(msg)
 
+        self._collected_sources = []
         profile = user_context.get("profile", {})
         meds = user_context.get("medications", [])
         existing_conditions = user_context.get("conditions", [])
@@ -494,7 +512,70 @@ AGENT RULES:
             for item in plan.get(key, []):
                 item.setdefault("id", uuid.uuid4().hex[:12])
 
+        self._persist_plan_evidence_trail(plan, profile)
         return plan
+
+    def _persist_plan_evidence_trail(self, plan: Dict, profile: Dict) -> None:
+        """Evidence Ledger v2, #7: Care Plans traceability. Reuses
+        check_claim_source_alignment (backend/summarizer.py) against the
+        sources actually surfaced during this generate() call, the same
+        deterministic-corroboration-backed checker Health Chat uses -- see
+        backend/answer_claim_ledger.py's module tagging. Deliberately
+        check-only: unlike a markdown chat answer, apply_claim_corrections'
+        rewrite prompt isn't a safe fit for a structured JSON plan (a
+        malformed rewrite could corrupt fields the frontend depends on), so
+        this persists a real audit trail without attempting an automated
+        rewrite of the plan itself. Never raises -- must not block plan
+        generation."""
+        try:
+            llm_helper = self._get_llm_helper()
+            if llm_helper is None or not self._collected_sources:
+                return
+
+            seen_urls: set = set()
+            combined_sources: List[Dict] = []
+            for src in self._collected_sources:
+                key = src.get("url") or src.get("title")
+                if not key or key in seen_urls:
+                    continue
+                seen_urls.add(key)
+                combined_sources.append(
+                    {
+                        "source_id": f"S{len(combined_sources) + 1}",
+                        "title": src.get("title", ""),
+                        "snippet": src.get("snippet", ""),
+                        "source_type": src.get("source_type", ""),
+                        "url": src.get("url", ""),
+                    }
+                )
+            if not combined_sources:
+                return
+
+            checkable_text = "\n".join(
+                f"- {item.get('description') or item.get('name') or item.get('threshold') or item}"
+                for key in ("goals", "daily_tasks", "lab_reminders", "escalation_thresholds")
+                for item in plan.get(key, [])
+                if item
+            )
+            if not checkable_text.strip():
+                return
+
+            claim_alignment = llm_helper.check_claim_source_alignment(
+                answer_markdown=checkable_text, source_briefings=combined_sources
+            )
+            if not claim_alignment:
+                return
+
+            from backend.answer_claim_ledger import persist_answer_claims_for_bundle
+
+            persist_answer_claims_for_bundle(
+                f"care-plan-{plan.get('id', uuid.uuid4().hex[:12])}",
+                profile.get("patient_record_id"),
+                claim_alignment=claim_alignment,
+                module="care_plan",
+            )
+        except Exception as exc:
+            print(f"[CarePlanAgent] evidence trail persist failed: {exc}")
 
     def generate_gp_prep(self, plan: Dict, user_context: Dict) -> str:
         profile = user_context.get("profile", {})
@@ -642,6 +723,9 @@ AGENT RULES:
                 snippet = (r.get("snippet") or r.get("content") or "")[:500]
                 url = r.get("url", "")
                 parts.append(f"[{title}]\n{snippet}\nSource: {url}")
+                self._collected_sources.append(
+                    {"title": title, "snippet": snippet, "url": url, "source_type": "official_guidance"}
+                )
             return "\n\n---\n\n".join(parts)
         except Exception as exc:
             return f"NHS search error: {exc}"
@@ -682,6 +766,14 @@ AGENT RULES:
                 year = r.get("year", "")
                 journal = r.get("journal", "")
                 parts.append(f"[{title} -- {journal} {year}]\n{abstract}")
+                self._collected_sources.append(
+                    {
+                        "title": f"{title} -- {journal} {year}".strip(" -"),
+                        "snippet": abstract,
+                        "url": r.get("url", ""),
+                        "source_type": "pubmed",
+                    }
+                )
             return "\n\n---\n\n".join(parts)
         except Exception as exc:
             return f"PubMed error: {exc}"

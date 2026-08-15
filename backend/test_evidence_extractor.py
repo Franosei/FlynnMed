@@ -76,6 +76,34 @@ def test_extract_one_article_prompt_instructs_specialty_mismatch_detection():
     assert "different clinical meaning" in sent_prompt.lower()
 
 
+def test_extract_one_article_prefers_detail_snippet_over_shorter_snippet():
+    """Evidence Ledger v2 (#3): detail_snippet (the richer fetched excerpt)
+    must be used over the shorter search-result snippet when both are
+    present -- previously `or` precedence picked snippet first."""
+    llm = _FakeLLM(
+        {
+            "answers_question": True,
+            "patient_aligned_facts": [],
+            "alignment_confidence": 0.5,
+            "patient_relevant_summary": "x",
+        }
+    )
+    source = {
+        "snippet": "Short search-result blurb.",
+        "detail_snippet": "The full fetched paragraph with much richer clinical detail than the blurb.",
+        "title": "Guidance page",
+        "source_id": "S1",
+    }
+
+    _extract_one_article(
+        llm=llm, source=source, question="q", patient_summary="p", medications=[], conditions=[],
+    )
+
+    sent_prompt = llm.client.chat.completions.calls[0]["messages"][0]["content"]
+    assert "richer clinical detail" in sent_prompt
+    assert "Short search-result blurb." not in sent_prompt
+
+
 def test_extract_one_article_keeps_a_verbatim_extracted_passage():
     snippet = "Flucloxacillin can potentiate warfarin's anticoagulant effect in some patients."
     llm = _FakeLLM(

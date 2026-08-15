@@ -31,11 +31,16 @@ ANSWER_CLAIM_STATUSES = {
     "supported_citation_added",                 # supported, marker inserted by apply_claim_corrections
     "unsupported_hedged",                        # flagged unsupported, text was rewritten to hedge it
     "unsupported_uncorrected",                   # flagged unsupported, but no rewrite happened (correction call failed/no-op)
+    "unsupported_blocked",                       # verification failed twice (retry exhausted); answer replaced with the safe fallback message
     "general_knowledge_no_evidence_required",    # general knowledge that never needed a citation -- not a violation
     "unknown",
 }
+# Which subsystem produced this claim -- health_chat (default, existing
+# behavior), safety_review, care_plan, trial_finder. See
+# backend/answer_claim_ledger.py's module-specific persist helpers.
+ANSWER_CLAIM_MODULES = {"health_chat", "safety_review", "care_plan", "trial_finder"}
 # Bump when the classification logic in backend/answer_claim_ledger.py changes.
-ANSWER_CLAIM_RULE_VERSION = "2026.08-phase4-v1"
+ANSWER_CLAIM_RULE_VERSION = "2026.08-phase5-v2"
 
 
 class AnswerClaim(Base, TimestampMixin):
@@ -59,5 +64,14 @@ class AnswerClaim(Base, TimestampMixin):
     evidence_claim_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     patient_fact_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     rule_version: Mapped[str] = mapped_column(String(32), nullable=False, default=ANSWER_CLAIM_RULE_VERSION)
+    # Which subsystem produced this claim -- see ANSWER_CLAIM_MODULES.
+    module: Mapped[str] = mapped_column(String(32), nullable=False, default="health_chat")
+    # True when the LLM marked this claim "supported" but the deterministic
+    # corroboration cross-check (backend/evidence_extractor.py::_canonicalize_passage,
+    # reused from backend/summarizer.py::check_claim_source_alignment) could
+    # not confirm it against the cited source text, so it was downgraded and
+    # treated as unsupported -- lets the audit trail answer "how often did
+    # the deterministic layer override the LLM's own judgment".
+    llm_only_support: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     patient: Mapped[Optional["Patient"]] = relationship()  # noqa: F821

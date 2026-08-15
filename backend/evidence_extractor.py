@@ -108,11 +108,18 @@ def _extract_one_article(
     """
     from backend.summarizer import LLMHelper
 
+    # Prefer the richer fetched excerpt (detail_snippet, up to ~800 chars of
+    # actual page/section text) over the shorter search-result snippet
+    # (~300 chars) whenever both are present -- matches the precedence
+    # backend/evidence_ledger.py and backend/evidence_ranker.py already use.
+    # Reversing this order used to mean claims/passages were extracted from
+    # (and hashed from) the worse of the two texts even though the better
+    # one had already been fetched.
     snippet = (
-        source.get("snippet")
-        or source.get("detail_snippet")
+        source.get("detail_snippet")
+        or source.get("snippet")
         or source.get("text", "")
-    )[:800]
+    )[:1500]
     title = source.get("title", "Untitled")
     source_id = source.get("source_id", "S?")
 

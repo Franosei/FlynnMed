@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.db import get_session_factory
+from backend.evidence_quality import apply_certainty_downgrade, assign_risk_of_bias
 from backend.models.evidence import (
     CERTAINTY_LEVELS,
     STUDY_DESIGNS,
@@ -143,6 +144,10 @@ def persist_evidence_claim(
     certainty = str(getattr(claim, "certainty", "unknown") or "unknown").strip().lower()
     if certainty not in CERTAINTY_LEVELS:
         certainty = "unknown"
+    # Deterministic, independent of the LLM's own study_design/certainty
+    # self-report -- see backend/evidence_quality.py.
+    risk_of_bias = assign_risk_of_bias(study_design)
+    certainty = apply_certainty_downgrade(certainty, risk_of_bias)
 
     claim_hash = _hash_text(
         _normalize_for_hash(claim_text)
@@ -170,6 +175,7 @@ def persist_evidence_claim(
         outcome=outcome,
         study_design=study_design,
         certainty=certainty,
+        risk_of_bias=risk_of_bias,
         claim_hash=claim_hash,
     )
     db.add(evidence_claim)
@@ -247,6 +253,10 @@ def persist_evidence_for_bundle(
 
                 source["source_version"] = artifact.content_hash[:12]
                 source["retrieved_at"] = artifact.retrieved_at.isoformat()
+                # Evidence Ledger v2, #4: lets contradiction_detector.py
+                # resolve a claim's source_id back to the SourceArtifact row
+                # a contradiction pair should reference.
+                source["source_artifact_id"] = str(artifact.id)
 
                 quotes = quotes_by_source.get(source_id, [])
                 if quotes:

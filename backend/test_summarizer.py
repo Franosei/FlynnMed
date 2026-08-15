@@ -419,6 +419,7 @@ def test_check_claim_source_alignment_flags_unsupported_specific_claim():
             "requires_evidence",
             "source_ids",
             "passage_ids",
+            "deterministic_corroboration",
         }
         assert claim["status"] in ("supported", "general_knowledge")
 

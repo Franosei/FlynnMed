@@ -11,13 +11,16 @@ import os
 import uuid
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
 
 from backend.answer_claim_ledger import (
     persist_answer_claim,
     persist_answer_claims_for_bundle,
+    persist_safety_review_evidence,
+    persist_trial_finder_matches,
 )
+from backend.models.answer_claim import AnswerClaim
 from backend.db import get_session_factory
 from backend.evidence_ledger import (
     persist_evidence_claim,
@@ -370,3 +373,289 @@ def test_persist_answer_claims_for_bundle_resolves_patient_fact_ids():
     by_text = {r["claim_text"]: r["patient_fact_ids"] for r in rows}
     assert by_text[matched_claim["claim"]] == [expected_fact_id]
     assert by_text[unmatched_claim["claim"]] == []
+
+
+# ---------------------------------------------------------------------------
+# Evidence Ledger v2: word-boundary + generic-reference patient-fact linking (#2)
+# ---------------------------------------------------------------------------
+
+def test_word_boundary_match_does_not_false_positive_on_substring():
+    """The old substring check matched "iron" inside "ironic" -- a
+    word-boundary regex must not."""
+    session_factory = get_session_factory()
+    with session_factory() as db:
+        patient = _patient(db)
+        persist_patient_fact(db, patient.id, category="medication", label="Iron", value="65mg daily")
+        db.commit()
+        patient_id = str(patient.id)
+
+    trace_id = f"trace-{uuid.uuid4().hex[:8]}"
+    claim = {
+        "claim": "The patient's ironic response to the question was noted.",
+        "status": "general_knowledge", "requires_evidence": False,
+        "source_ids": [], "passage_ids": [],
+    }
+    persist_answer_claims_for_bundle(
+        trace_id, patient_id,
+        claim_alignment=[claim], uncited_supported_claims=[], claim_correction_applied=False,
+    )
+
+    with session_factory() as db:
+        row = db.execute(
+            text("SELECT patient_fact_ids FROM answer_claims WHERE trace_id = :tid"),
+            {"tid": trace_id},
+        ).mappings().one()
+    assert row["patient_fact_ids"] == []
+
+
+def test_generic_reference_links_when_exactly_one_fact_in_category():
+    session_factory = get_session_factory()
+    with session_factory() as db:
+        patient = _patient(db)
+        fact = persist_patient_fact(db, patient.id, category="medication", label="Amoxicillin", value="500mg")
+        db.commit()
+        patient_id = str(patient.id)
+        expected_fact_id = str(fact.id)
+
+    trace_id = f"trace-{uuid.uuid4().hex[:8]}"
+    claim = {
+        "claim": "Take this medication with food to reduce stomach upset.",
+        "status": "general_knowledge", "requires_evidence": False,
+        "source_ids": [], "passage_ids": [],
+    }
+    persist_answer_claims_for_bundle(
+        trace_id, patient_id,
+        claim_alignment=[claim], uncited_supported_claims=[], claim_correction_applied=False,
+    )
+
+    with session_factory() as db:
+        row = db.execute(
+            text("SELECT patient_fact_ids FROM answer_claims WHERE trace_id = :tid"),
+            {"tid": trace_id},
+        ).mappings().one()
+    assert row["patient_fact_ids"] == [expected_fact_id]
+
+
+def test_generic_reference_skipped_when_multiple_facts_in_category():
+    """Ambiguous with two+ facts of the same category -- must not guess."""
+    session_factory = get_session_factory()
+    with session_factory() as db:
+        patient = _patient(db)
+        persist_patient_fact(db, patient.id, category="medication", label="Amoxicillin", value="500mg")
+        persist_patient_fact(db, patient.id, category="medication", label="Metformin", value="500mg")
+        db.commit()
+        patient_id = str(patient.id)
+
+    trace_id = f"trace-{uuid.uuid4().hex[:8]}"
+    claim = {
+        "claim": "Take this medication with food to reduce stomach upset.",
+        "status": "general_knowledge", "requires_evidence": False,
+        "source_ids": [], "passage_ids": [],
+    }
+    persist_answer_claims_for_bundle(
+        trace_id, patient_id,
+        claim_alignment=[claim], uncited_supported_claims=[], claim_correction_applied=False,
+    )
+
+    with session_factory() as db:
+        row = db.execute(
+            text("SELECT patient_fact_ids FROM answer_claims WHERE trace_id = :tid"),
+            {"tid": trace_id},
+        ).mappings().one()
+    assert row["patient_fact_ids"] == []
+
+
+def test_retracted_facts_excluded_from_linking():
+    from uuid import UUID
+
+    from backend.patient_fact_ledger import _retract_missing_facts
+
+    session_factory = get_session_factory()
+    with session_factory() as db:
+        patient = _patient(db)
+        db.commit()
+        patient_id = str(patient.id)
+
+    with session_factory() as db:
+        persist_patient_fact(db, UUID(patient_id), category="allergy", label="Penicillin", value="Rash")
+        db.commit()
+        _retract_missing_facts(db, UUID(patient_id), "allergy", [])
+        db.commit()
+
+    trace_id = f"trace-{uuid.uuid4().hex[:8]}"
+    claim = {
+        "claim": "This patient has a Penicillin allergy.",
+        "status": "general_knowledge", "requires_evidence": False,
+        "source_ids": [], "passage_ids": [],
+    }
+    persist_answer_claims_for_bundle(
+        trace_id, patient_id,
+        claim_alignment=[claim], uncited_supported_claims=[], claim_correction_applied=False,
+    )
+
+    with session_factory() as db:
+        row = db.execute(
+            text("SELECT patient_fact_ids FROM answer_claims WHERE trace_id = :tid"),
+            {"tid": trace_id},
+        ).mappings().one()
+    assert row["patient_fact_ids"] == []
+
+
+# ---------------------------------------------------------------------------
+# Evidence Ledger v2: module tagging, llm_only_support, unsupported_blocked (#7, #8, #9)
+# ---------------------------------------------------------------------------
+
+def test_persist_answer_claims_for_bundle_tags_module():
+    session_factory = get_session_factory()
+    with session_factory() as db:
+        patient = _patient(db)
+        db.commit()
+        patient_id = str(patient.id)
+
+    trace_id = f"trace-{uuid.uuid4().hex[:8]}"
+    claim = {
+        "claim": "A care-plan claim.",
+        "status": "general_knowledge", "requires_evidence": False,
+        "source_ids": [], "passage_ids": [],
+    }
+    persist_answer_claims_for_bundle(
+        trace_id, patient_id,
+        claim_alignment=[claim], uncited_supported_claims=[], claim_correction_applied=False,
+        module="care_plan",
+    )
+
+    with session_factory() as db:
+        row = db.execute(
+            text("SELECT module FROM answer_claims WHERE trace_id = :tid"),
+            {"tid": trace_id},
+        ).mappings().one()
+    assert row["module"] == "care_plan"
+
+
+def test_persist_answer_claims_for_bundle_sets_llm_only_support():
+    session_factory = get_session_factory()
+    with session_factory() as db:
+        patient = _patient(db)
+        db.commit()
+        patient_id = str(patient.id)
+
+    trace_id = f"trace-{uuid.uuid4().hex[:8]}"
+    claim = {
+        "claim": "A claim the LLM called supported but the deterministic check couldn't confirm.",
+        "status": "general_knowledge", "requires_evidence": True,
+        "source_ids": [], "passage_ids": [],
+        "deterministic_corroboration": "failed",
+    }
+    persist_answer_claims_for_bundle(
+        trace_id, patient_id,
+        claim_alignment=[claim], uncited_supported_claims=[], claim_correction_applied=False,
+    )
+
+    with session_factory() as db:
+        row = db.execute(
+            text("SELECT llm_only_support FROM answer_claims WHERE trace_id = :tid"),
+            {"tid": trace_id},
+        ).mappings().one()
+    assert row["llm_only_support"] is True
+
+
+def test_persist_answer_claims_for_bundle_answer_blocked_persists_single_row():
+    session_factory = get_session_factory()
+    with session_factory() as db:
+        patient = _patient(db)
+        db.commit()
+        patient_id = str(patient.id)
+
+    trace_id = f"trace-{uuid.uuid4().hex[:8]}"
+    persist_answer_claims_for_bundle(
+        trace_id, patient_id,
+        claim_alignment=[{"claim": "should be ignored", "status": "supported"}],
+        answer_blocked=True,
+    )
+
+    with session_factory() as db:
+        rows = db.execute(
+            text("SELECT status, claim_text FROM answer_claims WHERE trace_id = :tid"),
+            {"tid": trace_id},
+        ).mappings().all()
+    assert len(rows) == 1
+    assert rows[0]["status"] == "unsupported_blocked"
+
+
+# ---------------------------------------------------------------------------
+# Evidence Ledger v2: Safety Review / Trial Finder traceability (#7)
+# ---------------------------------------------------------------------------
+
+def test_persist_safety_review_evidence_persists_only_high_priority_and_dedupes():
+    session_factory = get_session_factory()
+    with session_factory() as db:
+        patient = _patient(db)
+        db.commit()
+        patient_id = str(patient.id)
+
+    review_id = f"safety-{uuid.uuid4().hex[:8]}"
+    reviews = [
+        {
+            "review_id": review_id,
+            "priority": "urgent",
+            "what_changed": "Warfarin and ibuprofen both recorded.",
+            "evidence": [
+                {
+                    "claim": "Warfarin can cause serious bleeding.",
+                    "source_title": "NHS: Warfarin",
+                    "source_url": f"https://test.example/safety-{uuid.uuid4().hex[:8]}",
+                    "passage": "The main side effect of warfarin is an increased risk of bleeding.",
+                }
+            ],
+        },
+        {
+            "review_id": f"safety-{uuid.uuid4().hex[:8]}",
+            "priority": "review",
+            "what_changed": "Low-priority review.",
+            "evidence": [
+                {
+                    "claim": "Low priority claim.",
+                    "source_title": "NHS",
+                    "source_url": "https://test.example/low-priority",
+                    "passage": "irrelevant",
+                }
+            ],
+        },
+    ]
+
+    persist_safety_review_evidence(reviews, patient_id)
+    persist_safety_review_evidence(reviews, patient_id)  # second call must not duplicate
+
+    session_factory = get_session_factory()
+    with session_factory() as db:
+        rows = db.execute(
+            select(AnswerClaim).where(AnswerClaim.patient_id == uuid.UUID(patient_id))
+        ).scalars().all()
+    safety_rows = [r for r in rows if r.module == "safety_review"]
+    assert len(safety_rows) == 1
+    assert safety_rows[0].claim_text == "Warfarin can cause serious bleeding."
+    assert safety_rows[0].status == "supported_cited"
+
+
+def test_persist_trial_finder_matches_persists_one_claim_per_trial():
+    session_factory = get_session_factory()
+    with session_factory() as db:
+        patient = _patient(db)
+        db.commit()
+        patient_id = str(patient.id)
+
+    trace_id = f"trial-finder-{uuid.uuid4().hex[:8]}"
+    persist_trial_finder_matches(
+        trace_id, patient_id,
+        [{"nct_id": "NCT00000123", "title": "A diabetes prevention trial"}],
+    )
+
+    with session_factory() as db:
+        rows = db.execute(
+            text("SELECT claim_text, module, source_ids FROM answer_claims WHERE trace_id = :tid"),
+            {"tid": trace_id},
+        ).mappings().all()
+    assert len(rows) == 1
+    assert rows[0]["module"] == "trial_finder"
+    assert "NCT00000123" in rows[0]["claim_text"]
+    assert rows[0]["source_ids"] == ["NCT00000123"]

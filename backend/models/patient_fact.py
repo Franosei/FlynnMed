@@ -34,12 +34,24 @@ from backend.models.base import Base, TimestampMixin
 CATEGORIES = {"condition", "medication", "allergy", "vital", "symptom", "unknown"}
 # "inferred" is reserved for a future conversation-derived-fact pipeline --
 # not populated by this phase (see backend/patient_fact_ledger.py).
-FACT_STATUSES = {"confirmed", "suspected", "inferred", "unknown"}
+# "retracted" marks a fact whose label was live in a previous snapshot but is
+# absent from the patient's current structured record (deleted, or an
+# allergy/condition later disproved) -- see persist_patient_facts_for_bundle's
+# retraction pass.
+FACT_STATUSES = {"confirmed", "suspected", "inferred", "retracted", "unknown"}
 # "clinician_entered" is reserved -- no write path today distinguishes
 # clinician-entered from patient-entered data (see backend/api.py's
 # save_condition/save_medication/save_allergy/save_vitals/add_symptom, all
 # behind a single current_user dependency with no role split).
-FACT_SOURCES = {"structured_patient_record", "conversation_inferred", "clinician_entered"}
+# "document_extracted" is populated for facts persisted during a
+# document-analysis chat turn (see backend/rag_system.py's
+# stream_document_analysis_events path).
+FACT_SOURCES = {
+    "structured_patient_record",
+    "conversation_inferred",
+    "clinician_entered",
+    "document_extracted",
+}
 
 
 class PatientFact(Base, TimestampMixin):
@@ -70,5 +82,17 @@ class PatientFact(Base, TimestampMixin):
     # tables today).
     recorded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     fact_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    # Explicit supersession chain: set when this row's insert represents an
+    # edit (changed value/status) or retraction of an earlier row for the
+    # same (patient_id, category, label) -- see
+    # backend/patient_fact_ledger.py::persist_patient_fact. SET NULL rather
+    # than CASCADE so deleting an old snapshot never cascades into deleting
+    # its successor.
+    previous_fact_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("patient_facts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     patient: Mapped["Patient"] = relationship()  # noqa: F821

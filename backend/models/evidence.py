@@ -31,7 +31,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -57,6 +57,12 @@ STUDY_DESIGNS = {
 # GRADE framework terminology -- the real-world evidence-based-medicine
 # standard "study design and certainty" maps onto.
 CERTAINTY_LEVELS = {"high", "moderate", "low", "very_low", "unknown"}
+# Deterministic risk-of-bias tag, assigned from study_design alone (see
+# backend/evidence_quality.py::assign_risk_of_bias) -- independent of the
+# LLM-self-reported certainty above, not a substitute for a full RoB2/GRADE
+# assessment (no imprecision/indirectness/inconsistency/publication-bias
+# domains are evaluated).
+RISK_OF_BIAS_LEVELS = {"low", "some_concerns", "high", "unclear"}
 
 
 def _utc_now() -> datetime:
@@ -87,6 +93,11 @@ class SourceArtifact(Base, TimestampMixin):
     # Immutable as-fetched text this row's hash was computed from. Never
     # updated in place -- a changed source gets a new row (new content_hash).
     stored_snapshot_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # Always False today -- no fetch-the-entire-document step exists anywhere
+    # in this codebase (only domain-specific search + paragraph/section
+    # fetch). Present so downstream/UI consumers can be honest about "this is
+    # an excerpt" rather than silently implying full-document capture.
+    is_full_document: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     passages: Mapped[list["EvidencePassage"]] = relationship(
         back_populates="source_artifact", cascade="all, delete-orphan"
@@ -152,6 +163,7 @@ class EvidenceClaim(Base, TimestampMixin):
     outcome: Mapped[str] = mapped_column(String(512), nullable=False, default="")
     study_design: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
     certainty: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    risk_of_bias: Mapped[str] = mapped_column(String(16), nullable=False, default="unclear")
     claim_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
 
     source_artifact: Mapped["SourceArtifact"] = relationship(back_populates="claims")
