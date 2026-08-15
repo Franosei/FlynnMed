@@ -2131,23 +2131,68 @@ def submit_feedback(payload: FeedbackPayload, username: str = Depends(current_us
 def get_evidence_trace(trace_id: str, username: str = Depends(current_user)) -> Dict:
     """Evidence Ledger v2, #11: the answer -> claim -> passage -> source /
     patient-fact lineage for one answer, previously written on every Health
-    Chat turn (see backend/answer_claim_ledger.py) but never exposed. Scoped
-    to traces the requesting account itself owns, the same ownership check
-    submit_feedback already uses -- a trace_id is only ever saved against the
-    account that generated it (see UserStore.save_interaction_trace)."""
+    Chat turn (see backend/answer_claim_ledger.py) but never exposed.
+
+    Authorization is patient-PHI-aware, not just "did this account generate
+    it": a trace whose AnswerClaim rows carry no patient_id (e.g. a
+    clinician's own patient-agnostic self-service question -- clinician
+    accounts have no Patient row, so InteractionTrace/UserStore-based
+    ownership checks never match them, see get_trace_patient_ids' docstring)
+    carries no patient PHI and is viewable by any authenticated account.
+    A trace tied to a real patient is only viewable by that patient
+    themselves, or by a clinician holding an active chat_history-scoped
+    consent grant for that patient -- the same ConsentGrant model
+    backend/clinician_access.py already enforces for previsit access,
+    applied here directly since that module's helpers are keyed by MRN
+    string, not the internal patient UUID AnswerClaim.patient_id stores."""
     trace_id = trace_id.strip()
     if not trace_id:
         raise HTTPException(status_code=400, detail="A trace id is required.")
-    owns_trace = any(
-        item.get("trace_id") == trace_id
-        for item in UserStore.get_interaction_traces(username, limit=None)
-    )
-    if not owns_trace:
+
+    from backend.evidence_trace import build_evidence_trace, get_trace_patient_ids
+
+    patient_ids = get_trace_patient_ids(trace_id)
+    if patient_ids is None:
         raise HTTPException(status_code=404, detail="Could not find that response trace.")
 
-    from backend.evidence_trace import build_evidence_trace
+    if patient_ids and not _can_view_patient_traces(username, patient_ids):
+        raise HTTPException(status_code=404, detail="Could not find that response trace.")
 
     return build_evidence_trace(trace_id)
+
+
+def _can_view_patient_traces(username: str, patient_ids: set) -> bool:
+    """True if `username` may view AnswerClaim rows tied to every id in
+    patient_ids: either it's their own Patient row, or (for a clinician)
+    they hold an active chat_history-scoped ConsentGrant for each one."""
+    from backend.models.consent import ConsentGrant, ConsentScope, ConsentStatus
+
+    own_patient_id = UserStore.get_user_profile(username).get("patient_record_id")
+    if own_patient_id and all(str(pid) == own_patient_id for pid in patient_ids):
+        return True
+
+    session_factory = get_session_factory()
+    with session_factory() as db:
+        account = db.execute(select(Account).where(Account.username == username.strip().lower())).scalar_one_or_none()
+        if account is None or account.account_kind != AccountKind.clinician:
+            return False
+        now = datetime.now(timezone.utc)
+        for patient_id in patient_ids:
+            grant = db.execute(
+                select(ConsentGrant).where(
+                    ConsentGrant.patient_id == patient_id,
+                    ConsentGrant.clinician_account_id == account.id,
+                    ConsentGrant.status == ConsentStatus.active,
+                )
+            ).scalar_one_or_none()
+            grant_valid = (
+                grant is not None
+                and (grant.expires_at is None or grant.expires_at > now)
+                and ConsentScope.chat_history.value in (grant.scope or [])
+            )
+            if not grant_valid:
+                return False
+        return True
 
 
 @app.post("/api/uploads")

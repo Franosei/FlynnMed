@@ -892,12 +892,18 @@ class LLMHelper:
             "source_ids": [str(s) for s in payload.get("source_ids", [])],
         }
 
+    # role_keys whose account is itself a clinician (backend/role_router.py) --
+    # telling this reader to "confirm with a clinician" is nonsensical, since
+    # they are one.
+    _CLINICIAN_ROLE_KEYS = {"doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"}
+
     def apply_claim_corrections(
         self,
         answer_markdown: str,
         unsupported_claims: list[dict],
         source_briefings: list[dict],
         uncited_supported_claims: Optional[list[dict]] = None,
+        role_key: str = "patient",
     ) -> str:
         """
         Two corrections in one pass (kept as a single call to avoid a second
@@ -912,8 +918,12 @@ class LLMHelper:
            make clear it is general clinical knowledge, not something the
            specific sources reviewed for this answer confirm -- and for a
            specific/actionable claim (a treatment, dose, or management step),
-           point the reader to confirm it with a clinician rather than
-           presenting it as established.
+           point the reader to verify it, phrased appropriately for role_key
+           (see _CLINICIAN_ROLE_KEYS): a patient/caregiver reader is told to
+           confirm with a clinician; a clinician reader -- who the "confirm
+           with a clinician" phrasing would nonsensically address to
+           themselves -- is told to verify against current guidance or local
+           protocol instead.
         2. Claims check_claim_source_alignment confirmed ARE backed by a
            specific source, but whose [S#] marker never made it into the
            text, get that citation inserted at the claim, unchanged otherwise.
@@ -931,6 +941,14 @@ class LLMHelper:
             f"[{s['source_id']}] {s.get('title', '')}" for s in source_briefings[:8]
         )
 
+        verify_instruction = (
+            "say it should be verified against current guidance or local protocol before "
+            "acting on it, rather than presenting it as established"
+            if role_key in self._CLINICIAN_ROLE_KEYS
+            else "say it should be confirmed with a clinician rather than presenting it as "
+            "established"
+        )
+
         instruction_sections = []
         if unsupported_claims:
             claims_block = "\n".join(f'- "{c["claim"]}"' for c in unsupported_claims)
@@ -942,9 +960,7 @@ class LLMHelper:
                 "something the specific sources reviewed for this answer confirm. Do "
                 "not just add a hedge word ('often', 'may', 'can be') -- the sentence "
                 "must stop implying it came from the cited evidence. For a specific, "
-                "actionable claim (a treatment, dose, or management step), say it "
-                "should be confirmed with a clinician rather than presenting it as "
-                "established."
+                f"actionable claim (a treatment, dose, or management step), {verify_instruction}."
             )
         if uncited_supported_claims:
             claims_block = "\n".join(

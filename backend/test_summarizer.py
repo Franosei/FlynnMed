@@ -541,6 +541,54 @@ def test_apply_claim_corrections_is_noop_without_flagged_claims():
     assert revised == _UNSUPPORTED_CLAIM_ANSWER
 
 
+def _unsupported_claim_for_hedge_test() -> list[dict]:
+    return [
+        {
+            "claim": "Dicloxacillin is first-line for mastitis.",
+            "status": "general_knowledge",
+            "requires_evidence": True,
+            "source_ids": [],
+        }
+    ]
+
+
+def test_apply_claim_corrections_hedge_instruction_defaults_to_patient_phrasing():
+    """Evidence Ledger v2: default role_key ("patient") must keep telling the
+    reader to confirm with a clinician -- unchanged behavior for the common
+    case, mocked client so this doesn't depend on live LLM phrasing."""
+    helper, completions = _helper_with_fake_client()
+
+    helper.apply_claim_corrections(
+        answer_markdown="Dicloxacillin is first-line for mastitis.",
+        unsupported_claims=_unsupported_claim_for_hedge_test(),
+        source_briefings=_UNSUPPORTED_CLAIM_SOURCES,
+    )
+
+    sent_prompt = completions.last_kwargs["messages"][0]["content"]
+    assert "confirmed with a clinician" in sent_prompt
+    assert "verified against current guidance or local protocol" not in sent_prompt
+
+
+def test_apply_claim_corrections_hedge_instruction_is_clinician_aware():
+    """A clinician-role reader must not be told to "confirm with a
+    clinician" -- that instruction is nonsensically self-referential when
+    the reader already is one (see backend/summarizer.py's
+    _CLINICIAN_ROLE_KEYS)."""
+    for role_key in ("doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"):
+        helper, completions = _helper_with_fake_client()
+
+        helper.apply_claim_corrections(
+            answer_markdown="Dicloxacillin is first-line for mastitis.",
+            unsupported_claims=_unsupported_claim_for_hedge_test(),
+            source_briefings=_UNSUPPORTED_CLAIM_SOURCES,
+            role_key=role_key,
+        )
+
+        sent_prompt = completions.last_kwargs["messages"][0]["content"]
+        assert "verified against current guidance or local protocol" in sent_prompt, role_key
+        assert "confirmed with a clinician" not in sent_prompt, role_key
+
+
 if __name__ == "__main__":
     test_answer_generation()
     test_check_claim_source_alignment_flags_unsupported_specific_claim()

@@ -9,7 +9,7 @@ backend/answer_claim_ledger.py) but had no read path until now.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Set
 from uuid import UUID
 
 from sqlalchemy import select
@@ -26,6 +26,29 @@ def _parse_uuid(value: Any) -> Any:
         return UUID(str(value))
     except (ValueError, AttributeError, TypeError):
         return None
+
+
+def get_trace_patient_ids(trace_id: str) -> Optional[Set[UUID]]:
+    """Authorization helper, called before build_evidence_trace: `None` means
+    no AnswerClaim rows exist at all for this trace_id (genuinely not
+    found -- callers should 404). A set (possibly empty) means the trace
+    exists; an empty set means every row has patient_id=None (a
+    patient-agnostic question, e.g. a clinician's own self-service Health
+    Chat question -- clinician accounts have no Patient row, see
+    backend/repositories/sql_user_store.py's save_interaction_trace/
+    _get_patient), which carries no patient PHI and is safe for any
+    authenticated caller. A non-empty set means the caller must be
+    verified (the trace's own patient, or a clinician holding an active
+    chat_history-scoped consent grant for that patient) before
+    build_evidence_trace is called."""
+    session_factory = get_session_factory()
+    with session_factory() as db:
+        rows = db.execute(
+            select(AnswerClaim.patient_id).where(AnswerClaim.trace_id == trace_id)
+        ).scalars().all()
+        if not rows:
+            return None
+        return {pid for pid in rows if pid is not None}
 
 
 def build_evidence_trace(trace_id: str) -> Dict:

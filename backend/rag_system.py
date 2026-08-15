@@ -1843,6 +1843,11 @@ class RAGEngine:
         # text. Read further down by the Evidence Ledger Phase 4 persistence
         # call to record an "unsupported_blocked" audit row.
         answer_blocked = False
+        # Hoisted above the correction call below (instead of only being read
+        # further down, right before _append_clinical_evidence_trail) so
+        # apply_claim_corrections can phrase its "verify this" instruction
+        # appropriately for who's actually asking (see role_key there).
+        role_config = bundle.get("role_config")
         if combined_sources:
             claim_alignment, alignment_ok = _retry_once(
                 self.llm.check_claim_source_alignment,
@@ -1885,6 +1890,7 @@ class RAGEngine:
                             unsupported_claims=unsupported_claims,
                             source_briefings=combined_sources,
                             uncited_supported_claims=uncited_supported_claims,
+                            role_key=role_config.role_key if role_config else "patient",
                         )
                         if rewritten and rewritten.strip() and rewritten != raw_answer:
                             break
@@ -1897,7 +1903,6 @@ class RAGEngine:
                         answer_blocked = True
                         raw_answer = SAFE_VERIFICATION_FALLBACK_MESSAGE
 
-        role_config = bundle.get("role_config")
         raw_answer = self._append_clinical_evidence_trail(
             raw_answer,
             bundle.get("combined_sources", []),
