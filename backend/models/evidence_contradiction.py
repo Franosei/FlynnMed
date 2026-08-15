@@ -10,7 +10,6 @@ actually being detected and what isn't.
 from __future__ import annotations
 
 import uuid
-from typing import Optional
 
 from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
