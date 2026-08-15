@@ -23,6 +23,28 @@ class PatientAlignmentFact(BaseModel):
     relevance_type: str  # direct_evidence | contraindication | drug_interaction | population_match
 
 
+class StructuredClaim(BaseModel):
+    """
+    Evidence Ledger Phase 2: a normalised clinical claim with an explicit
+    PICO decomposition (Population, Intervention, Comparator, Outcome), study
+    design, and certainty -- only populated when the article states a
+    genuine comparative/interventional finding (see
+    backend/evidence_extractor.py's prompt); most sources won't have one,
+    and an empty list is the correct, common case, not a gap. exact_quote is
+    validated the same way as ArticleEvidence.extracted_passages before
+    being accepted (backend/evidence_extractor.py::_canonicalize_passage) --
+    a claim whose quote can't be verified is dropped entirely.
+    """
+    claim_text: str
+    population: str = ""
+    intervention: str = ""
+    comparator: str = ""
+    outcome: str = ""
+    study_design: str = "unknown"
+    certainty: str = "unknown"
+    exact_quote: str = ""
+
+
 class ArticleEvidence(BaseModel):
     """
     Structured evidence extracted from one source, filtered and mapped to this patient.
@@ -60,6 +82,14 @@ class ArticleEvidence(BaseModel):
     extracted_passages: List[str] = Field(
         default_factory=list,
         description="Verbatim substrings of source_snippet backing this article's extracted facts"
+    )
+
+    # Evidence Ledger Phase 2: normalised PICO claims, only populated for a
+    # genuine comparative/interventional finding -- most articles won't have
+    # one, and an empty list is the expected common case (see StructuredClaim).
+    structured_claims: List[StructuredClaim] = Field(
+        default_factory=list,
+        description="Normalised PICO clinical claims with study design and certainty, only populated for genuine comparative/interventional findings"
     )
 
     # Safety

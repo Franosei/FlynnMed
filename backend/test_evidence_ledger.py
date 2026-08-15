@@ -15,6 +15,7 @@ from sqlalchemy.exc import OperationalError
 
 from backend.db import get_session_factory
 from backend.evidence_ledger import (
+    persist_evidence_claim,
     persist_evidence_for_bundle,
     persist_evidence_passage,
     persist_source_artifact,
@@ -168,3 +169,121 @@ def test_persist_evidence_for_bundle_never_raises_on_bad_input():
     combined_sources = [{"source_id": "S1", "title": "No URL or text"}]
     persist_evidence_for_bundle(combined_sources, None)
     assert "source_version" not in combined_sources[0]
+
+
+def _fake_claim(**overrides):
+    from backend.evidence_schema import StructuredClaim
+
+    defaults = dict(
+        claim_text="Drug X reduced relapse rate compared to placebo.",
+        population="Adults with condition Y",
+        intervention="Drug X",
+        comparator="Placebo",
+        outcome="Relapse rate at 12 months",
+        study_design="rct",
+        certainty="moderate",
+        exact_quote="Drug X reduced relapse rate compared to placebo.",
+    )
+    defaults.update(overrides)
+    return StructuredClaim(**defaults)
+
+
+def test_persist_evidence_claim_dedupes_same_claim(db_session):
+    artifact = persist_source_artifact(
+        db_session,
+        {"url": _unique_url(), "title": "Trial guidance", "detail_snippet": "Trial text here."},
+    )
+    assert artifact is not None
+    claim = _fake_claim()
+
+    first = persist_evidence_claim(db_session, artifact, None, claim)
+    second = persist_evidence_claim(db_session, artifact, None, claim)
+
+    assert first is not None
+    assert second is not None
+    assert first.id == second.id
+
+
+def test_persist_evidence_claim_links_to_source_and_passage(db_session):
+    artifact = persist_source_artifact(
+        db_session,
+        {"url": _unique_url(), "title": "Trial guidance", "detail_snippet": "Trial text here."},
+    )
+    assert artifact is not None
+    passage = persist_evidence_passage(db_session, artifact, "Trial text", "passage 1 of 1")
+    assert passage is not None
+
+    claim = persist_evidence_claim(db_session, artifact, passage, _fake_claim())
+
+    assert claim is not None
+    assert claim.source_artifact_id == artifact.id
+    assert claim.passage_id == passage.id
+
+
+def test_persist_evidence_claim_coerces_unrecognised_study_design_and_certainty(db_session):
+    artifact = persist_source_artifact(
+        db_session,
+        {"url": _unique_url(), "title": "Trial guidance", "detail_snippet": "Trial text here."},
+    )
+    assert artifact is not None
+    claim = _fake_claim(study_design="not_a_real_design", certainty="extremely_high")
+
+    persisted = persist_evidence_claim(db_session, artifact, None, claim)
+
+    assert persisted is not None
+    assert persisted.study_design == "unknown"
+    assert persisted.certainty == "unknown"
+
+
+def test_persist_evidence_claim_returns_none_without_claim_text(db_session):
+    artifact = persist_source_artifact(
+        db_session,
+        {"url": _unique_url(), "title": "Trial guidance", "detail_snippet": "Trial text here."},
+    )
+    assert artifact is not None
+
+    assert persist_evidence_claim(db_session, artifact, None, _fake_claim(claim_text="")) is None
+
+
+def test_persist_evidence_for_bundle_persists_structured_claims():
+    """Integration test: a dossier article with a populated structured_claims
+    list should result in a linked EvidencePassage + EvidenceClaim, discovered
+    the same way passage-only sources already are (see the passage-only
+    integration test above)."""
+    from backend.evidence_schema import ArticleEvidence, ExtractedEvidenceDossier
+
+    url = _unique_url()
+    combined_sources = [
+        {
+            "source_id": "S1",
+            "url": url,
+            "title": "Drug X trial guidance",
+            "detail_snippet": "Drug X reduced relapse rate compared to placebo.",
+        }
+    ]
+    dossier = ExtractedEvidenceDossier(
+        question="How effective is Drug X compared to placebo?",
+        patient_profile_summary="Adult with condition Y.",
+        articles=[
+            ArticleEvidence(
+                source_id="S1",
+                title="Drug X trial guidance",
+                structured_claims=[_fake_claim()],
+            )
+        ],
+    )
+
+    persist_evidence_for_bundle(combined_sources, dossier)
+
+    session_factory = get_session_factory()
+    with session_factory() as db:
+        artifact = db.execute(
+            text("SELECT id FROM source_artifacts WHERE url = :url"), {"url": url}
+        ).scalar_one()
+        claim_row = db.execute(
+            text("SELECT source_artifact_id, passage_id, claim_text FROM evidence_claims WHERE source_artifact_id = :aid"),
+            {"aid": artifact},
+        ).mappings().one()
+        assert claim_row["source_artifact_id"] == artifact
+        assert claim_row["passage_id"] is not None
+        assert claim_row["claim_text"] == "Drug X reduced relapse rate compared to placebo."

@@ -12,9 +12,18 @@ extracted clinical fact was actually grounded in -- see
 backend/evidence_ledger.py for the write path and backend/evidence_extractor.py
 for where exact_quote text originates.
 
-Deliberately does not yet include EvidenceClaim/PatientFact/AnswerClaim --
-those are later phases (normalised PICO claims, patient-fact provenance,
-and full answer-to-evidence audit records respectively).
+Phase 2 adds EvidenceClaim: a normalised clinical claim (Population,
+Intervention, Comparator, Outcome), tagged with study design and certainty,
+linked to the passage it was extracted from -- so a claim can eventually be
+shown as "this is a high-certainty RCT finding", not just "this came from a
+Tier 1 source". Only populated when the source actually states a genuine
+comparative/interventional finding (see evidence_extractor.py's prompt) --
+most sources (a plain NHS "how to take this medicine" page, for instance)
+won't have one, and that's correct, not a gap.
+
+Deliberately does not yet include PatientFact/AnswerClaim -- those are later
+phases (patient-fact provenance, and full answer-to-evidence audit records
+respectively).
 """
 from __future__ import annotations
 
@@ -27,6 +36,27 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.models.base import Base, TimestampMixin
+
+# App-level constrained vocabularies (plain string columns + a Python set
+# check at write time, matching this codebase's existing status/
+# generation_trigger string-column convention on ProposedMedication -- not a
+# DB CHECK constraint or enum type). An unrecognised value from the
+# extraction LLM is coerced to "unknown" rather than rejected outright.
+STUDY_DESIGNS = {
+    "systematic_review",
+    "meta_analysis",
+    "rct",
+    "cohort_study",
+    "case_control",
+    "case_report",
+    "clinical_guideline",
+    "narrative_review",
+    "expert_opinion",
+    "unknown",
+}
+# GRADE framework terminology -- the real-world evidence-based-medicine
+# standard "study design and certainty" maps onto.
+CERTAINTY_LEVELS = {"high", "moderate", "low", "very_low", "unknown"}
 
 
 def _utc_now() -> datetime:
@@ -61,6 +91,9 @@ class SourceArtifact(Base, TimestampMixin):
     passages: Mapped[list["EvidencePassage"]] = relationship(
         back_populates="source_artifact", cascade="all, delete-orphan"
     )
+    claims: Mapped[list["EvidenceClaim"]] = relationship(
+        back_populates="source_artifact", cascade="all, delete-orphan"
+    )
 
 
 class EvidencePassage(Base, TimestampMixin):
@@ -86,3 +119,40 @@ class EvidencePassage(Base, TimestampMixin):
     passage_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
 
     source_artifact: Mapped["SourceArtifact"] = relationship(back_populates="passages")
+
+
+class EvidenceClaim(Base, TimestampMixin):
+    __tablename__ = "evidence_claims"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_artifact_id", "claim_hash", name="uq_claim_source_hash"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_artifact_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("source_artifacts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # SET NULL rather than CASCADE -- a claim can outlive the specific
+    # passage row it was first linked to (e.g. a future re-extraction pass)
+    # without the claim itself needing to disappear.
+    passage_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("evidence_passages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    claim_text: Mapped[str] = mapped_column(Text, nullable=False)
+    population: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    intervention: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    comparator: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    outcome: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    study_design: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
+    certainty: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    claim_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+
+    source_artifact: Mapped["SourceArtifact"] = relationship(back_populates="claims")
+    passage: Mapped[Optional["EvidencePassage"]] = relationship()

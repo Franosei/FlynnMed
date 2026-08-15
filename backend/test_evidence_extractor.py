@@ -176,6 +176,141 @@ def test_extract_one_article_drops_a_non_verbatim_extracted_passage():
     assert result.extracted_passages == []
 
 
+def test_extract_one_article_keeps_a_verified_structured_claim():
+    snippet = (
+        "In a randomised controlled trial, Drug X reduced relapse rate compared to "
+        "placebo in adults with condition Y over 12 months."
+    )
+    llm = _FakeLLM(
+        {
+            "answers_question": True,
+            "question_facts": ["Drug X reduced relapse rate vs placebo."],
+            "patient_aligned_facts": [],
+            "structured_claims": [
+                {
+                    "claim_text": "Drug X reduced relapse rate compared to placebo.",
+                    "population": "Adults with condition Y",
+                    "intervention": "Drug X",
+                    "comparator": "Placebo",
+                    "outcome": "Relapse rate at 12 months",
+                    "study_design": "rct",
+                    "certainty": "moderate",
+                    "exact_quote": "Drug X reduced relapse rate compared to placebo",
+                }
+            ],
+            "alignment_confidence": 0.8,
+        }
+    )
+    source = {"snippet": snippet, "title": "Drug X trial", "source_id": "S1"}
+
+    result = _extract_one_article(
+        llm=llm,
+        source=source,
+        question="How effective is Drug X compared to placebo?",
+        patient_summary="Adult with condition Y.",
+        medications=[],
+        conditions=["Condition Y"],
+    )
+
+    assert len(result.structured_claims) == 1
+    claim = result.structured_claims[0]
+    assert claim.study_design == "rct"
+    assert claim.certainty == "moderate"
+    assert claim.exact_quote in snippet
+
+
+def test_extract_one_article_coerces_unrecognised_study_design_and_certainty():
+    snippet = "Drug X reduced relapse rate compared to placebo in adults with condition Y."
+    llm = _FakeLLM(
+        {
+            "answers_question": True,
+            "structured_claims": [
+                {
+                    "claim_text": "Drug X reduced relapse rate compared to placebo.",
+                    "study_design": "some_made_up_design",
+                    "certainty": "super_duper_high",
+                    "exact_quote": "Drug X reduced relapse rate compared to placebo",
+                }
+            ],
+            "alignment_confidence": 0.8,
+        }
+    )
+    source = {"snippet": snippet, "title": "Drug X trial", "source_id": "S1"}
+
+    result = _extract_one_article(
+        llm=llm,
+        source=source,
+        question="How effective is Drug X compared to placebo?",
+        patient_summary="Adult with condition Y.",
+        medications=[],
+        conditions=[],
+    )
+
+    assert len(result.structured_claims) == 1
+    assert result.structured_claims[0].study_design == "unknown"
+    assert result.structured_claims[0].certainty == "unknown"
+
+
+def test_extract_one_article_drops_structured_claim_with_unverifiable_quote():
+    """A structured claim whose exact_quote can't be matched back to the
+    article text must be dropped entirely, not kept with an unverified
+    quote -- same discipline as extracted_passages."""
+    snippet = "Drug X reduced relapse rate compared to placebo in adults with condition Y."
+    llm = _FakeLLM(
+        {
+            "answers_question": True,
+            "structured_claims": [
+                {
+                    "claim_text": "Drug X cured the condition entirely.",
+                    "study_design": "rct",
+                    "certainty": "high",
+                    # Not present anywhere in the source snippet.
+                    "exact_quote": "Drug X cured every single patient completely",
+                }
+            ],
+            "alignment_confidence": 0.8,
+        }
+    )
+    source = {"snippet": snippet, "title": "Drug X trial", "source_id": "S1"}
+
+    result = _extract_one_article(
+        llm=llm,
+        source=source,
+        question="How effective is Drug X compared to placebo?",
+        patient_summary="Adult with condition Y.",
+        medications=[],
+        conditions=[],
+    )
+
+    assert result.structured_claims == []
+
+
+def test_extract_one_article_empty_structured_claims_for_non_comparative_source():
+    """A source with no structured_claims in the LLM response (e.g. plain
+    dosing instructions with no comparator) must produce an empty list, not
+    a forced/invented claim."""
+    snippet = "Take one tablet of flucloxacillin four times a day with water."
+    llm = _FakeLLM(
+        {
+            "answers_question": True,
+            "question_facts": ["Take one tablet four times a day."],
+            "alignment_confidence": 0.7,
+        }
+    )
+    source = {"snippet": snippet, "title": "Flucloxacillin dosing", "source_id": "S1"}
+
+    result = _extract_one_article(
+        llm=llm,
+        source=source,
+        question="How do I take flucloxacillin?",
+        patient_summary="On flucloxacillin.",
+        medications=["Flucloxacillin"],
+        conditions=[],
+    )
+
+    assert result.structured_claims == []
+
+
 def test_build_evidence_dossier_excludes_confirmed_mismatched_sources(monkeypatch):
     mismatched = ArticleEvidence(
         source_id="S1",

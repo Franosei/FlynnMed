@@ -26,7 +26,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.db import get_session_factory
-from backend.models.evidence import EvidencePassage, SourceArtifact
+from backend.models.evidence import (
+    CERTAINTY_LEVELS,
+    STUDY_DESIGNS,
+    EvidenceClaim,
+    EvidencePassage,
+    SourceArtifact,
+)
 
 
 def _hash_text(text: str) -> str:
@@ -110,6 +116,71 @@ def persist_evidence_passage(
     return passage
 
 
+def persist_evidence_claim(
+    db: Session,
+    source_artifact: SourceArtifact,
+    passage: Optional[EvidencePassage],
+    claim: Any,
+) -> Optional[EvidenceClaim]:
+    """Dedupes on (source_artifact_id, claim_hash), same pattern as
+    persist_evidence_passage: the same claim re-extracted on a later
+    question reuses the existing row rather than duplicating it. `claim` is
+    a StructuredClaim (backend/evidence_schema.py) or anything with the same
+    attributes. study_design/certainty are re-validated here (not just
+    trusted from the caller) so a bad value can never reach the DB even if
+    an extractor-side check is ever bypassed or changed."""
+    claim_text = str(getattr(claim, "claim_text", "")).strip()
+    if not claim_text:
+        return None
+
+    population = str(getattr(claim, "population", "") or "")[:512]
+    intervention = str(getattr(claim, "intervention", "") or "")[:512]
+    comparator = str(getattr(claim, "comparator", "") or "")[:512]
+    outcome = str(getattr(claim, "outcome", "") or "")[:512]
+    study_design = str(getattr(claim, "study_design", "unknown") or "unknown").strip().lower()
+    if study_design not in STUDY_DESIGNS:
+        study_design = "unknown"
+    certainty = str(getattr(claim, "certainty", "unknown") or "unknown").strip().lower()
+    if certainty not in CERTAINTY_LEVELS:
+        certainty = "unknown"
+
+    claim_hash = _hash_text(
+        _normalize_for_hash(claim_text)
+        + "|" + _normalize_for_hash(population)
+        + "|" + _normalize_for_hash(intervention)
+        + "|" + _normalize_for_hash(comparator)
+        + "|" + _normalize_for_hash(outcome)
+    )
+    existing = db.execute(
+        select(EvidenceClaim).where(
+            EvidenceClaim.source_artifact_id == source_artifact.id,
+            EvidenceClaim.claim_hash == claim_hash,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    evidence_claim = EvidenceClaim(
+        source_artifact_id=source_artifact.id,
+        passage_id=passage.id if passage is not None else None,
+        claim_text=claim_text[:2000],
+        population=population,
+        intervention=intervention,
+        comparator=comparator,
+        outcome=outcome,
+        study_design=study_design,
+        certainty=certainty,
+        claim_hash=claim_hash,
+    )
+    db.add(evidence_claim)
+    db.flush()
+    return evidence_claim
+
+
+def _normalize_for_hash(value: str) -> str:
+    return " ".join(value.strip().casefold().split())
+
+
 def _dossier_quotes_by_source_id(evidence_dossier: Any) -> Dict[str, List[str]]:
     """Pulls validated extracted_passages per source_id out of the
     orchestrator's ArticleEvidence dossier (see backend/evidence_extractor.py,
@@ -131,6 +202,24 @@ def _dossier_quotes_by_source_id(evidence_dossier: Any) -> Dict[str, List[str]]:
     return quotes_by_source
 
 
+def _dossier_claims_by_source_id(evidence_dossier: Any) -> Dict[str, List[Any]]:
+    """Pulls validated structured_claims per source_id out of the
+    orchestrator's ArticleEvidence dossier -- each claim's exact_quote has
+    already been verified as a genuine source passage by
+    backend/evidence_extractor.py before it's ever set."""
+    claims_by_source: Dict[str, List[Any]] = {}
+    if evidence_dossier is None:
+        return claims_by_source
+    for article in getattr(evidence_dossier, "articles", []) or []:
+        claims = [
+            c for c in (getattr(article, "structured_claims", None) or [])
+            if getattr(c, "exact_quote", "").strip() and getattr(c, "claim_text", "").strip()
+        ]
+        if claims:
+            claims_by_source[article.source_id] = claims
+    return claims_by_source
+
+
 def persist_evidence_for_bundle(
     combined_sources: List[Dict[str, Any]], evidence_dossier: Any = None
 ) -> None:
@@ -146,6 +235,7 @@ def persist_evidence_for_bundle(
         return
 
     quotes_by_source = _dossier_quotes_by_source_id(evidence_dossier)
+    claims_by_source = _dossier_claims_by_source_id(evidence_dossier)
     session_factory = get_session_factory()
     with session_factory() as db:
         for source in combined_sources:
@@ -174,6 +264,18 @@ def persist_evidence_for_bundle(
                             extra_quote,
                             "additional passage extracted from this source",
                         )
+
+                # Evidence Ledger Phase 2: each claim's exact_quote is persisted
+                # as its own EvidencePassage first (dedupes against the quotes
+                # above if it's the same text), then the claim is linked to that
+                # passage_id -- a claim is always traceable to the exact
+                # passage it was extracted from, not just to the source.
+                for claim in claims_by_source.get(source_id, []):
+                    claim_locator = "passage supporting an extracted structured claim"
+                    claim_passage = persist_evidence_passage(
+                        db, artifact, claim.exact_quote, claim_locator
+                    )
+                    persist_evidence_claim(db, artifact, claim_passage, claim)
             except Exception as exc:  # persistence must never block the answer
                 print(f"[EvidenceLedger] persistence failed for {source_id}: {exc}")
                 continue

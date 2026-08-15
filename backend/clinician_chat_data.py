@@ -79,6 +79,7 @@ def _user_profile_for(patient: Patient) -> Dict:
         "created_at": _iso(account.created_at),
         "last_login": _iso(account.last_login_at),
         "active_conversation_id": None,
+        "patient_record_id": str(patient.id),
     }
 
 

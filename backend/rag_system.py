@@ -1614,6 +1614,23 @@ class RAGEngine:
                 )
             except Exception as exc:
                 print(f"[EvidenceLedger] persist_evidence_for_bundle failed: {exc}")
+            # Evidence Ledger Phase 3: persist a snapshot of the patient's
+            # structured facts (conditions/medications/allergies/vitals/
+            # symptoms) so a future AnswerClaim can cite exactly which
+            # patient fact was used. Same never-blocks-the-answer guarantee.
+            try:
+                from backend.patient_fact_ledger import persist_patient_facts_for_bundle
+
+                persist_patient_facts_for_bundle(
+                    user_profile.get("patient_record_id"),
+                    medications=medications,
+                    conditions=conditions,
+                    allergies=allergies,
+                    vitals=vitals,
+                    symptom_logs=symptom_logs,
+                )
+            except Exception as exc:
+                print(f"[PatientFactLedger] persist_patient_facts_for_bundle failed: {exc}")
         return bundle
 
     def _build_moderation_payload(
@@ -1753,6 +1770,10 @@ class RAGEngine:
         combined_sources = bundle.get("combined_sources", [])
         claim_alignment: List[Dict] = []
         claim_correction_applied = False
+        # Hoisted out of the `if combined_sources:` block below (instead of only
+        # existing inside it) so it's still in scope when Evidence Ledger Phase 4
+        # persists claim classifications after trace_id is computed further down.
+        uncited_supported_claims: List[Dict] = []
         if combined_sources:
             try:
                 claim_alignment = self.llm.check_claim_source_alignment(
@@ -1874,6 +1895,24 @@ class RAGEngine:
             answer_markdown = answer_markdown + safety_net
 
         trace_id = f"trace-{uuid4().hex[:12]}"
+
+        # Evidence Ledger Phase 4: persist the claim-source-alignment check
+        # already run above as first-class AnswerClaim rows, with best-effort
+        # links to the EvidenceClaim/PatientFact rows Phases 2/3 persisted.
+        # Never allowed to block the answer already finalized above.
+        try:
+            from backend.answer_claim_ledger import persist_answer_claims_for_bundle
+
+            persist_answer_claims_for_bundle(
+                trace_id,
+                bundle.get("user_profile", {}).get("patient_record_id"),
+                claim_alignment=claim_alignment,
+                uncited_supported_claims=uncited_supported_claims,
+                claim_correction_applied=claim_correction_applied,
+            )
+        except Exception as exc:
+            print(f"[AnswerClaimLedger] persist_answer_claims_for_bundle failed: {exc}")
+
         from backend.evidence_ranker import EvidenceRanker
 
         tiers_present = EvidenceRanker.get_tiers_present(combined_sources)

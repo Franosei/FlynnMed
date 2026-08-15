@@ -18,7 +18,13 @@ from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 from typing import Dict, List, Optional
 
-from backend.evidence_schema import ArticleEvidence, ExtractedEvidenceDossier, PatientAlignmentFact
+from backend.evidence_schema import (
+    ArticleEvidence,
+    ExtractedEvidenceDossier,
+    PatientAlignmentFact,
+    StructuredClaim,
+)
+from backend.models.evidence import CERTAINTY_LEVELS, STUDY_DESIGNS
 from backend.user_store import compute_current_age
 
 
@@ -149,6 +155,17 @@ def _extract_one_article(
         '  "extracted_passages": ["verbatim substring of ARTICLE TEXT above that supports '
         'question_facts/contraindications/drug_interactions -- copy the exact wording, do not '
         'paraphrase or summarise"],\n'
+        '  "structured_claims": [\n'
+        '    {"claim_text": "normalised statement of the finding", '
+        '"population": "who the finding applies to", '
+        '"intervention": "the treatment/exposure studied", '
+        '"comparator": "what it was compared against, if any", '
+        '"outcome": "the measured result", '
+        '"study_design": "systematic_review|meta_analysis|rct|cohort_study|case_control|'
+        'case_report|clinical_guideline|narrative_review|expert_opinion|unknown", '
+        '"certainty": "high|moderate|low|very_low|unknown", '
+        '"exact_quote": "verbatim substring of ARTICLE TEXT supporting this claim"}\n'
+        "  ],\n"
         '  "alignment_confidence": 0.0-1.0,\n'
         '  "specialty_mismatch": true/false,\n'
         '  "specialty_mismatch_reason": "one sentence, only if specialty_mismatch is true"\n'
@@ -158,6 +175,13 @@ def _extract_one_article(
         "- extracted_passages entries MUST be an exact, verbatim substring of ARTICLE TEXT -- "
         "copy-paste the wording exactly, including punctuation. A passage that is not an exact "
         "substring will be discarded, so do not summarise, combine, or lightly reword it.\n"
+        "- structured_claims: ONLY populate this when the article states a genuine comparative or "
+        "interventional finding with a clear population/intervention/outcome (e.g. a trial or "
+        "guideline recommendation) -- return an empty list for anything else (dosing "
+        "instructions, general advice, a page with no comparator). Do not force a claim that "
+        "isn't really there. exact_quote MUST be an exact, verbatim substring of ARTICLE TEXT, "
+        "same rule as extracted_passages -- a claim whose quote cannot be verified will be "
+        "discarded entirely.\n"
         "- patient_aligned_facts must reference actual values from the patient profile\n"
         "- If article does not match patient's conditions/meds, set patient_aligned_facts: []\n"
         "- SPECIALTY/MEANING MISMATCH: set specialty_mismatch to true ONLY if the PATIENT PROFILE "
@@ -221,6 +245,45 @@ def _extract_one_article(
                 verified_passages.append(canonical)
         verified_passages = verified_passages[:6]
 
+        # Evidence Ledger Phase 2: same verbatim-quote discipline as
+        # extracted_passages above -- a structured claim whose exact_quote
+        # can't be verified against the article text is dropped entirely,
+        # never kept with an unverified quote. Unrecognised study_design/
+        # certainty values are coerced to "unknown" rather than rejected,
+        # since the LLM's classification is a best-effort label, not a gate.
+        structured_claims: List[StructuredClaim] = []
+        for claim_dict in data.get("structured_claims", []):
+            if not isinstance(claim_dict, dict):
+                continue
+            quote = claim_dict.get("exact_quote", "")
+            if not isinstance(quote, str):
+                continue
+            canonical_quote = _canonicalize_passage(quote, snippet)
+            if not canonical_quote:
+                continue
+            claim_text = str(claim_dict.get("claim_text", "")).strip()
+            if not claim_text:
+                continue
+            study_design = str(claim_dict.get("study_design", "unknown")).strip().lower()
+            if study_design not in STUDY_DESIGNS:
+                study_design = "unknown"
+            certainty = str(claim_dict.get("certainty", "unknown")).strip().lower()
+            if certainty not in CERTAINTY_LEVELS:
+                certainty = "unknown"
+            structured_claims.append(
+                StructuredClaim(
+                    claim_text=claim_text[:500],
+                    population=str(claim_dict.get("population", ""))[:512],
+                    intervention=str(claim_dict.get("intervention", ""))[:512],
+                    comparator=str(claim_dict.get("comparator", ""))[:512],
+                    outcome=str(claim_dict.get("outcome", ""))[:512],
+                    study_design=study_design,
+                    certainty=certainty,
+                    exact_quote=canonical_quote,
+                )
+            )
+        structured_claims = structured_claims[:4]
+
         return ArticleEvidence(
             source_id=source_id,
             title=title,
@@ -236,6 +299,7 @@ def _extract_one_article(
             drug_interactions=data.get("drug_interactions", [])[:4],
             patient_relevant_summary=str(data.get("patient_relevant_summary", ""))[:500],
             extracted_passages=verified_passages,
+            structured_claims=structured_claims,
             alignment_confidence=float(data.get("alignment_confidence", 0.5)),
             specialty_mismatch=bool(data.get("specialty_mismatch", False)),
             specialty_mismatch_reason=str(data.get("specialty_mismatch_reason", ""))[:300],
