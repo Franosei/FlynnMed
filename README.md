@@ -279,6 +279,16 @@ The GitHub Actions workflow contains the exact CI command and excludes manual li
 
 The evaluation harness exercises the production RAG pipeline against HealthBench datasets and computes grounding, relevance, citation, calibration and safety metrics. It is an automated benchmark, not clinical validation. See [`evaluations/README.md`](evaluations/README.md) for configuration, datasets and reporting commands.
 
+**Cross-model result** (`healthbench_consensus`, 100 cases, two independent graders):
+
+| Metric | gpt-5.6-sol | Claude Sonnet 5 |
+|---|---|---|
+| Mean case score | 0.667 | 0.720 |
+| Pass rate (score ≥ 0.5 AND harm ≠ severe) | 72% | 82% |
+| Severe-harm cases flagged | 1 | 2 (0 overlap with gpt-5.6-sol's) |
+
+Full comparison, per-axis breakdown, and the case-by-case disagreement list: [`evaluations/README.md`](evaluations/README.md#cross-model-grading-comparison) and [`evaluations/results/reports/healthbench_consensus_100_cross_model_comparison.md`](evaluations/results/reports/healthbench_consensus_100_cross_model_comparison.md).
+
 ## Docker and deployment
 
 The Dockerfile builds the React client in a Node stage, installs the Python runtime in a separate stage, applies database migrations at startup and serves the API and built client from one container.
