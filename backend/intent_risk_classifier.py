@@ -101,6 +101,15 @@ _ACTIVE_EMERGENCY_PATTERN = re.compile(
     r"we are (?:resuscitating|doing cpr)|i am (?:having|experiencing)|can't breathe now)\b",
     re.IGNORECASE,
 )
+_EXPLICIT_STABILITY_PATTERN = re.compile(
+    r"\b(?:remains?|is|was)\s+(?:clinically\s+|haemodynamically\s+|hemodynamically\s+)?stable\b",
+    re.IGNORECASE,
+)
+_NEGATED_CARDIORESPIRATORY_PATTERN = re.compile(
+    r"\b(?:denies?|denied|no|without)\b.{0,35}\b(?:chest\s+pain|shortness\s+of\s+breath|"
+    r"difficulty\s+breathing|breathlessness)\b",
+    re.IGNORECASE,
+)
 _CLINICAL_ROLES = {"doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"}
 _PERSONAL_PNEUMONIA_TREATMENT_PATTERN = re.compile(
     r"\b(i (?:have|was diagnosed with)|i've got|estou com|tenho|tengo|"
@@ -179,7 +188,7 @@ class IntentRiskClassifier:
 
         # Stage 2: LLM classification
         try:
-            return self._llm_classify(
+            result = self._llm_classify(
                 question,
                 user_profile or {},
                 role_key,
@@ -187,6 +196,7 @@ class IntentRiskClassifier:
                 recent_turns,
                 conversation_summary,
             )
+            return self._calibrate_llm_crisis_label(question, role_key, result)
         except Exception as exc:
             print(f"IntentRiskClassifier LLM call failed, using safe defaults: {exc}")
             return self._safe_default()
@@ -202,11 +212,52 @@ class IntentRiskClassifier:
             return False
         if _ACTIVE_EMERGENCY_PATTERN.search(text):
             return True
+        if (
+            role_key in _CLINICAL_ROLES
+            and _EXPLICIT_STABILITY_PATTERN.search(text)
+            and _NEGATED_CARDIORESPIRATORY_PATTERN.search(text)
+        ):
+            return False
 
         educational = bool(_GENERAL_EDUCATION_PATTERN.search(text))
         if role_key in _CLINICAL_ROLES:
             educational = educational or bool(_CLINICAL_EDUCATION_PATTERN.search(text))
         return not educational
+
+    def _calibrate_llm_crisis_label(
+        self,
+        question: str,
+        role_key: str,
+        result: IntentClassification,
+    ) -> IntentClassification:
+        """Require case-level evidence before accepting an LLM crisis label.
+
+        A clinician may quote red-flag terms inside a stable ward note. The
+        model must not turn that into an active emergency when the note itself
+        explicitly says the patient is stable and gives no current emergency
+        evidence. This guard only downgrades to urgent review; an explicit
+        active-emergency phrase always wins.
+        """
+        text = (question or "").strip()
+        if (
+            role_key not in _CLINICAL_ROLES
+            or result.risk_level != "crisis"
+            or not _EXPLICIT_STABILITY_PATTERN.search(text)
+            or not _NEGATED_CARDIORESPIRATORY_PATTERN.search(text)
+            or _ACTIVE_EMERGENCY_PATTERN.search(text)
+        ):
+            return result
+
+        result.intent_category = "symptom_triage"
+        result.risk_level = "urgent"
+        result.crisis_detected = False
+        result.escalation_required = True
+        result.escalation_reason = (
+            "The reported change needs prompt in-person assessment, but the supplied "
+            "status does not establish an active emergency."
+        )
+        result.confidence = min(result.confidence, 0.8)
+        return result
 
     def _acute_treatment_prescreen(self, question: str, role_key: str = "patient") -> bool:
         text = (question or "").strip()

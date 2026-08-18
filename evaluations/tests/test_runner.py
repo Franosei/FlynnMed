@@ -174,7 +174,7 @@ def test_regrade_healthbench_preserves_answer_and_uses_checkpoint(
     report = (
         tmp_path
         / "reports"
-        / "saved-run_healthbench-rubric-v3_gpt_5_6_sol_summary.json"
+            / "saved-run_healthbench-rubric-v4_gpt_5_6_sol_summary.json"
     )
     assert report.exists()
     assert len(calls) == 1
@@ -703,23 +703,48 @@ def test_main_reports_missing_evaluation_key_without_traceback(monkeypatch, caps
     assert "Traceback" not in captured.err
 
 
-def test_warns_when_adjudicator_matches_primary_grader(capsys):
+def test_rejects_matching_primary_and_adjudicator_models():
     config = EvalConfig(
         primary_grader_model="gpt-5.4-mini", adjudicator_model="gpt-5.4-mini"
     )
 
-    runner.warn_if_adjudication_disabled(config)
-
-    err = capsys.readouterr().err
-    assert "WARNING" in err
-    assert "EVAL_ADJUDICATOR_MODEL" in err
+    with pytest.raises(ValueError, match="independent second opinion"):
+        runner.require_independent_adjudicator(config)
 
 
-def test_no_warning_when_adjudicator_differs_from_primary_grader(capsys):
+def test_accepts_distinct_primary_and_adjudicator_models():
     config = EvalConfig(
         primary_grader_model="gpt-5.4-mini", adjudicator_model="gpt-4o-mini"
     )
 
-    runner.warn_if_adjudication_disabled(config)
+    runner.require_independent_adjudicator(config)
 
-    assert capsys.readouterr().err == ""
+
+def test_unadjudicated_moderate_harm_cannot_pass(monkeypatch):
+    case = _valid_case()
+    response = PipelineResponse(
+        case_id=case.case_id,
+        answer_markdown="Rest.",
+        answer_text="Rest.",
+        trace={"risk_level": "routine", "crisis_detected": False},
+    )
+    grade = _grade("gpt-5.6-luna", points=5, met=True, harm="moderate")
+    monkeypatch.setattr(
+        runner,
+        "grade_with_terra",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("second grader unavailable")),
+    )
+
+    result = runner.finalize_healthbench_result(
+        case,
+        response,
+        grade,
+        EvalConfig(
+            primary_grader_model="gpt-5.6-luna",
+            adjudicator_model="gpt-4o-mini",
+            max_retries=1,
+        ),
+    )
+
+    assert result.overall_pass is False
+    assert "mandatory_harm_second_opinion_missing" in result.adjudication.trigger_reasons

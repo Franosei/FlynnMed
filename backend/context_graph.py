@@ -17,6 +17,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
+from backend.relationship_engine import (
+    GENERIC_TRIAGE_CONCERN_LABEL,
+    truncate_at_word_boundary,
+)
 from backend.utils import render_vital_for_prompt
 
 
@@ -93,6 +97,77 @@ class ContextEdge:
             f"{self.source_name} {relation} {self.target_name}"
             + (f" ({self.evidence})" if self.evidence else "")
         )
+
+
+def format_relationships_for_user(
+    edges: List[ContextEdge], max_edges: int = 3
+) -> str:
+    """Render graph edges as plain record context, never as internal prompt syntax."""
+    if not edges or max_edges <= 0:
+        return ""
+
+    relation_templates = {
+        "taken_for": lambda source, target: f"{source} is taken for {target}",
+        "causes": lambda source, target: f"{source} may have caused {target}",
+        "triggers": lambda source, target: f"{source} may trigger {target}",
+        "worsens": lambda source, target: f"{source} may worsen {target}",
+        "improves": lambda source, target: f"{source} may improve {target}",
+        "started_after": lambda source, target: f"{source} started after {target}",
+        "allergic_reaction": lambda source, target: (
+            f"{target} was recorded as a reaction to {source}"
+        ),
+        "associated_with": lambda source, target: (
+            f"{source} was associated with {target}"
+        ),
+        "led_to": lambda source, target: (
+            f"{source} led to the recorded next step, {target}"
+        ),
+        "recorded_in": lambda source, target: f"{source} was recorded in {target}",
+        "recommended_for": lambda source, target: (
+            f"{source} was recommended for {target}"
+        ),
+    }
+    certainty_openings = {
+        "user_suspected": "You previously described this as a possible link: ",
+        "user_reported": "You previously reported that ",
+        "documented": "Your record notes that ",
+        "recorded_association": "Your record contains a possible association: ",
+    }
+
+    sentences = []
+    ranked_edges = sorted(
+        edges, key=lambda edge: edge.relevance_score, reverse=True
+    )[:max_edges]
+    for edge in ranked_edges:
+        source = truncate_at_word_boundary(edge.source_name, 160)
+        target = truncate_at_word_boundary(edge.target_name, 160)
+        if not source or not target:
+            continue
+        # GENERIC_TRIAGE_CONCERN_LABEL is an internal sentinel (see
+        # relationship_engine.py), not real record content -- rendering it
+        # verbatim reads as leaked system state ("Recorded triage concern
+        # led to..."). Present it as what it is: an unspecified prior note.
+        if source == GENERIC_TRIAGE_CONCERN_LABEL:
+            source = "a previous triage note"
+        if target == GENERIC_TRIAGE_CONCERN_LABEL:
+            target = "a previous triage note"
+        formatter = relation_templates.get(
+            edge.relation,
+            lambda source, target: f"{source} was recorded in relation to {target}",
+        )
+        opening = certainty_openings.get(
+            edge.certainty, "Your record contains a possible association: "
+        )
+        sentences.append(opening + formatter(source, target) + ".")
+
+    if not sentences:
+        return ""
+    return (
+        "Relevant record context: "
+        + " ".join(sentences)
+        + " These entries are reports or recorded associations, not proof that one "
+        "thing caused another."
+    )
 
 
 @dataclass

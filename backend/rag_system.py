@@ -1923,6 +1923,18 @@ class RAGEngine:
 
         answer_markdown = self._link_citations(raw_answer, bundle["combined_sources"])
 
+        missing_authorities = bundle.get(
+            "missing_requested_guideline_authorities", []
+        )
+        if missing_authorities:
+            authority_names = ", ".join(missing_authorities)
+            answer_markdown = (
+                "> **Requested guidance unavailable:** I could not verify a source from "
+                f"{authority_names} in the evidence available for this response. Related "
+                "evidence must not be treated as a substitute.\n\n"
+                + answer_markdown
+            )
+
         # Prepend escalation banner to answer if policy triggered one
         policy_decision = bundle.get("policy_decision")
         if policy_decision and policy_decision.escalation_banner:
@@ -1961,6 +1973,7 @@ class RAGEngine:
                 intent=intent,
                 policy_decision=policy_decision,
                 clinical_decision=clinical_decision,
+                sources=combined_sources,
             )
 
         # Append structured safety netting block -- triggers come from triage_summary, no hardcoding
@@ -3011,11 +3024,12 @@ class RAGEngine:
         intent,
         policy_decision,
         clinical_decision=None,
+        sources=None,
     ) -> Dict:
         if clinical_decision is not None:
             fallback = build_default_triage(intent, policy_decision)
             return normalize_triage_output(
-                clinical_decision.build_triage_summary(),
+                clinical_decision.build_triage_summary(sources or []),
                 fallback,
             )
         fallback = build_default_triage(intent, policy_decision)

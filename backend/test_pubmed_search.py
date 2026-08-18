@@ -23,7 +23,13 @@ class _Response:
 
 
 def test_pubmed_search(monkeypatch):
-    monkeypatch.setattr("backend.pubmed_search.requests.get", lambda *args, **kwargs: _Response())
+    calls = []
+
+    def fake_get(*args, **kwargs):
+        calls.append(kwargs)
+        return _Response()
+
+    monkeypatch.setattr("backend.pubmed_search.requests.get", fake_get)
     searcher = PubMedCentralSearcher()
     query = "dexamethasone elderly adverse effects"
 
@@ -31,6 +37,11 @@ def test_pubmed_search(monkeypatch):
 
     assert pmc_ids == ["PMC123"]
     assert searcher.search_cache[f"{query}::3"][0]["year"] == "2025"
+    assert 'LICENSE:"CC BY"' in calls[0]["params"]["query"]
+    assert 'LICENSE:"CC BY-ND"' not in calls[0]["params"]["query"]
+    assert searcher.search_cache[f"{query}::3"][0]["licence_status"] == (
+        "permissive_reuse_allowed"
+    )
 
 
 def test_search_article_records_survives_a_console_encoding_failure(monkeypatch):

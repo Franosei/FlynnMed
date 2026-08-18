@@ -18,7 +18,7 @@ Deterministic safety layer (runs first, always):
 
 Agentic retrieval layer (LLM drives this):
   8. AgenticRetrievalLoop: the model chooses which tools to call
-     - search_nhs_guidance    NHS/NICE Tier 1 evidence
+     - search_nhs_guidance    UK and US Tier 1 government guidance
      - search_pubmed          PubMed Central Tier 2-3 evidence
      - check_drug_interactions openFDA drug label warnings
      - search_patient_documents patient uploaded records
@@ -46,6 +46,7 @@ from backend.clinical_context_guard import (
     source_matches_context,
 )
 from backend.conversation_context import render_verbatim
+from backend.context_graph import format_relationships_for_user
 from backend.evidence_ranker import EvidenceRanker
 from backend.intent_risk_classifier import IntentClassification, IntentRiskClassifier
 from backend.patient_history import PatientHistoryContext, build_patient_history_context
@@ -71,6 +72,40 @@ if TYPE_CHECKING:
     from backend.summarizer import LLMHelper
 
 
+_UNAVAILABLE_DETAIL_PATTERN = re.compile(
+    r"\b(?:i\s+(?:do\s+not|don't|dont|cannot|can't|cant)\s+(?:know|remember)|"
+    r"i\s+have\s+no\s+(?:idea|further\s+information)|not\s+sure|unknown)\b",
+    re.IGNORECASE,
+)
+_BREATHING_SAFETY_PATTERN = re.compile(
+    r"\b(?:breath(?:e|ing|lessness)?|shortness\s+of\s+breath|chok(?:e|es|ed|ing)|"
+    r"gasp(?:s|ing)?|respir(?:er|ation)|[ée]touff(?:e|es|ement)|suffocat(?:e|ing|ion))\b",
+    re.IGNORECASE,
+)
+_DISTRESS_SAFETY_PATTERN = re.compile(
+    r"\b(?:anxious|anxiety|panic|losing\s+sleep|cannot\s+sleep|can't\s+sleep|"
+    r"low\s+mood|depress(?:ed|ion)|postpartum|postnatal|self[- ]harm|suicid(?:e|al))\b",
+    re.IGNORECASE,
+)
+
+_GUIDELINE_AUTHORITY_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "ACOG": ("acog", "american college of obstetricians and gynecologists"),
+    "ADA": ("ada", "american diabetes association"),
+    "AHA": ("aha", "american heart association"),
+    "ASCO": ("asco", "american society of clinical oncology"),
+    "NCCN": ("nccn", "national comprehensive cancer network"),
+    "NICE": ("nice", "national institute for health and care excellence"),
+    "NHS": ("nhs", "national health service"),
+    "WHO": ("who", "world health organization", "world health organisation"),
+    "CDC": ("cdc", "centers for disease control and prevention"),
+    "USPSTF": ("uspstf", "us preventive services task force"),
+    "RCOG": ("rcog", "royal college of obstetricians and gynaecologists"),
+    "ESC": ("esc", "european society of cardiology"),
+    "IDSA": ("idsa", "infectious diseases society of america"),
+    "AAP": ("aap", "american academy of pediatrics"),
+}
+
+
 # ---------------------------------------------------------------------------
 # Agentic retrieval loop
 # ---------------------------------------------------------------------------
@@ -81,7 +116,7 @@ class AgenticRetrievalLoop:
     LLM-driven tool-calling retrieval agent.
 
     Given the clinical question and patient context the model decides which
-    sources to fetch -- NHS guidance, PubMed, drug interactions, personal
+    sources to fetch -- official guidance, PubMed, drug interactions, personal
     documents, clinical trials -- and in what order. It runs until it has
     enough evidence or exhausts its iteration budget.
 
@@ -95,8 +130,9 @@ class AgenticRetrievalLoop:
             "function": {
                 "name": "search_nhs_guidance",
                 "description": (
-                    "Search NHS and NICE official guidance for UK clinical guidelines, "
-                    "treatment recommendations, prescribing information, and patient safety advice. "
+                    "Search trusted UK and US government guidance, including NHS, NICE, "
+                    "MedlinePlus, CDC, MyHealthfinder and VA/DoD sources. Use it for clinical "
+                    "guidelines, treatment recommendations and patient safety advice. "
                     "Call this first for any clinical, medication, or condition question. "
                     "Returns Tier 1 (highest-authority) evidence."
                 ),
@@ -242,7 +278,7 @@ class AgenticRetrievalLoop:
         Run the agentic retrieval loop.
 
         Returns a dict with:
-          collected_sources   list of source dicts (NHS, PubMed, openFDA)
+          collected_sources   list of official-guidance, PubMed and openFDA sources
           personal_context    list of personal-document match dicts
           trial_results       list of clinical trial dicts
           tool_calls_made     audit log of every tool call made
@@ -337,7 +373,7 @@ class AgenticRetrievalLoop:
         hyde_passage = ""
         query_variants: List[str] = []
 
-        # Baseline evidence retrieval is mandatory for every question -- NHS/NICE
+        # Baseline evidence retrieval is mandatory for every question. Official
         # guidance and PubMed/PMC literature must always be attempted at least once,
         # regardless of what the agent decides. This closes the gap where the agent
         # judged a question didn't "need" evidence and the final answer was written
@@ -595,7 +631,7 @@ class AgenticRetrievalLoop:
         sources = self.official_guidance.search([query], 1)
         return {
             "sources": sources,
-            "summary": f"Found {len(sources)} NHS/NICE sources for '{query}'.",
+            "summary": f"Found {len(sources)} official guidance sources for '{query}'.",
         }
 
     def _search_pubmed(self, query: str) -> Dict:
@@ -639,6 +675,9 @@ class AgenticRetrievalLoop:
                         "source_type": "pubmed_literature",
                         "provider": "Europe PMC / PubMed Central",
                         "query": query,
+                        "licence": record.get("licence", ""),
+                        "licence_status": record.get("licence_status", ""),
+                        "licence_url": record.get("licence_url", ""),
                     }
                 )
                 memory_entries.append(
@@ -655,6 +694,9 @@ class AgenticRetrievalLoop:
                             "authors": record.get("authors", ""),
                             "url": record.get("url", ""),
                             "query": query,
+                            "licence": record.get("licence", ""),
+                            "licence_status": record.get("licence_status", ""),
+                            "licence_url": record.get("licence_url", ""),
                             "entry_key": entry_key,
                         },
                         "user": self.user,
@@ -681,6 +723,9 @@ class AgenticRetrievalLoop:
                         "source_type": "pubmed_literature",
                         "provider": "Europe PMC / PubMed Central",
                         "query": query,
+                        "licence": record.get("licence", ""),
+                        "licence_status": record.get("licence_status", ""),
+                        "licence_url": record.get("licence_url", ""),
                     }
                 )
                 memory_entries.append(
@@ -697,6 +742,9 @@ class AgenticRetrievalLoop:
                             "authors": record.get("authors", ""),
                             "url": record.get("url", ""),
                             "query": query,
+                            "licence": record.get("licence", ""),
+                            "licence_status": record.get("licence_status", ""),
+                            "licence_url": record.get("licence_url", ""),
                             "entry_key": abs_key,
                         },
                         "user": self.user,
@@ -739,6 +787,13 @@ class AgenticRetrievalLoop:
                             "provider": "openFDA",
                             "url": "https://open.fda.gov/",
                             "query": f"drug interactions {' '.join(medications)}",
+                            "authority": "US Food and Drug Administration",
+                            "jurisdiction": "US",
+                            "licence_status": "public_domain_us",
+                            "licence_url": (
+                                "https://www.fda.gov/about-fda/about-website/website-policies"
+                            ),
+                            "attribution": "US Food and Drug Administration",
                         }
                     )
             msg = (
@@ -1068,7 +1123,24 @@ class ClinicalOrchestrator:
                 selected_skills = select_skills(intent.intent_category, question)
 
         # -- Step 6: Policy gate (8 hard safety gates) ------------------------
-        clinical_decision = self.decision_support.assess(question, intent, role_config)
+        # Deterministic pathways may only assert findings reported by the user.
+        # Exclude assistant turns so an earlier generated warning cannot become
+        # clinical evidence on the next message.
+        user_case_text = "\n".join(
+            [
+                str(item.get("content", "")).strip()
+                for item in verbatim_recent
+                if item.get("role") == "user"
+                and str(item.get("content", "")).strip()
+            ]
+            + [question]
+        )
+        clinical_decision = self.decision_support.assess(
+            question,
+            intent,
+            role_config,
+            case_text=user_case_text,
+        )
         intent = self.decision_support.apply_to_intent(intent, clinical_decision)
 
         policy_decision = self.policy_engine.gate(
@@ -1089,6 +1161,8 @@ class ClinicalOrchestrator:
             intent.ambiguous_term_detected
             and intent.risk_level not in ("urgent", "crisis")
             and policy_decision.action == "allow"
+            and not self._clarification_detail_unavailable(question)
+            and not self._requests_multiple_interpretations(question)
         ):
             return self._build_clarification_bundle(
                 question, normalized_user, role_config, intent
@@ -1109,7 +1183,10 @@ class ClinicalOrchestrator:
         if (
             intent.clarification_required
             and intent.clarifying_questions
-            and intent.risk_level not in ("urgent", "crisis")
+            and intent.risk_level == "routine"
+            and intent.intent_category not in {
+                "general_info", "administrative", "mental_health"
+            }
             and policy_decision.action == "allow"
         ):
             return self._build_information_clarification_bundle(
@@ -1384,6 +1461,15 @@ class ClinicalOrchestrator:
                 "agentic_multi_source" if tool_calls_made else "live_multi_source"
             )
 
+        requested_guideline_authorities = self._requested_guideline_authorities(
+            question
+        )
+        missing_requested_guideline_authorities = (
+            self._missing_requested_guideline_authorities(
+                requested_guideline_authorities, combined_sources
+            )
+        )
+
         # -- Terminal refusal: never let the answer LLM run on zero evidence ---
         # If, even after the retry above, nothing passed the quality gate, the
         # system must not answer from unbacked general knowledge. Short-circuit
@@ -1402,6 +1488,9 @@ class ClinicalOrchestrator:
                 patient_history=patient_history,
                 question_medications=question_medications,
                 context_graph=context_graph,
+                missing_requested_guideline_authorities=(
+                    missing_requested_guideline_authorities
+                ),
             )
 
         # -- Step 12: Build role-aware LLM context ----------------------------
@@ -1421,6 +1510,18 @@ class ClinicalOrchestrator:
         )
         if completion_block:
             full_context = f"{full_context}\n\n{completion_block}".strip()
+        if missing_requested_guideline_authorities:
+            missing_names = ", ".join(missing_requested_guideline_authorities)
+            authority_instruction = (
+                "REQUESTED GUIDANCE SOURCE CHECK: No retrieved source from "
+                f"{missing_names} was verified. State this explicitly. Do not attribute "
+                "the answer to those organisations and do not present another source as "
+                "a substitute for their guidance."
+            )
+            full_context = f"{full_context}\n\n{authority_instruction}".strip()
+            completion_block = (
+                f"{completion_block}\n\n{authority_instruction}".strip()
+            )
 
         return {
             "kind": "answer",
@@ -1452,6 +1553,10 @@ class ClinicalOrchestrator:
             "current_location": current_location,
             "task_mode": task_mode,
             "question_medications": question_medications,
+            "requested_guideline_authorities": requested_guideline_authorities,
+            "missing_requested_guideline_authorities": (
+                missing_requested_guideline_authorities
+            ),
         }
 
     # -- Bundle builders ------------------------------------------------------
@@ -1698,6 +1803,7 @@ class ClinicalOrchestrator:
         patient_history: PatientHistoryContext,
         question_medications: Optional[List[str]] = None,
         context_graph: Optional["ContextGraph"] = None,
+        missing_requested_guideline_authorities: Optional[List[str]] = None,
     ) -> Dict:
         limited_answer = self._build_limited_evidence_response(
             question=question,
@@ -1708,6 +1814,14 @@ class ClinicalOrchestrator:
             question_medications=question_medications or [],
             context_graph=context_graph,
         )
+        if missing_requested_guideline_authorities:
+            missing_names = ", ".join(missing_requested_guideline_authorities)
+            limited_answer = (
+                "> **Requested guidance unavailable:** I could not verify a source from "
+                f"{missing_names} in the evidence available for this response. Related "
+                "evidence must not be treated as a substitute.\n\n"
+                + limited_answer
+            )
         return {
             "kind": "final",
             "payload": {
@@ -1728,6 +1842,9 @@ class ClinicalOrchestrator:
                     "risk_level": intent.risk_level,
                     "escalation_triggered": policy_decision.action != "allow",
                     "policy_gates_applied": policy_decision.gates_as_dicts(),
+                    "missing_requested_guideline_authorities": (
+                        missing_requested_guideline_authorities or []
+                    ),
                 },
             },
         }
@@ -1918,11 +2035,15 @@ class ClinicalOrchestrator:
                 )
                 evidence_parts.append(
                     f"[{tier_label}] {source.get('title', 'Source')} "
-                    f"(quality: {quality_status}; use: {use_label}): {snippet}"
+                    f"(authority: {source.get('authority') or source.get('provider', 'unknown')}; "
+                    f"jurisdiction: {source.get('jurisdiction', 'unspecified')}; "
+                    f"quality: {quality_status}; use: {use_label}): {snippet}"
                     + (f"\nQuality notes: {quality_notes}" if quality_notes else "")
                 )
             parts.append(
-                "Biomedical evidence (tiered by source authority):\n"
+                "Biomedical evidence (tiered by source authority). Apply jurisdiction-specific "
+                "recommendations only when they match the user's setting, and describe differences "
+                "rather than silently combining conflicting UK and US guidance:\n"
                 + "\n\n".join(evidence_parts)
             )
         # No `elif` for the empty-sources case: the caller (ClinicalOrchestrator's
@@ -2274,9 +2395,72 @@ class ClinicalOrchestrator:
                     ),
                     "source_type": metadata.get("source_type", "pubmed_literature"),
                     "provider": "Europe PMC / PubMed Central",
+                    "licence": metadata.get("licence", ""),
+                    "licence_status": metadata.get("licence_status", ""),
+                    "licence_url": metadata.get("licence_url", ""),
                 }
             )
         return sources
+
+    @staticmethod
+    def _clarification_detail_unavailable(question: str) -> bool:
+        """Return true when the user has already said the requested detail is unknown."""
+        return bool(_UNAVAILABLE_DETAIL_PATTERN.search(question or ""))
+
+    @staticmethod
+    def _requests_multiple_interpretations(question: str) -> bool:
+        """Do not force a choice when the user explicitly asks for a comparison."""
+        return bool(
+            re.search(
+                r"\b(?:both|compare|comparison|versus|vs\.?|each)\b",
+                question or "",
+                re.IGNORECASE,
+            )
+        )
+
+    @staticmethod
+    def _requested_guideline_authorities(question: str) -> List[str]:
+        text = question or ""
+        requested: List[str] = []
+        for authority, aliases in _GUIDELINE_AUTHORITY_ALIASES.items():
+            for alias in aliases:
+                flags = 0 if alias in {"who", "nice"} else re.IGNORECASE
+                search_term = authority if alias in {"who", "nice"} else alias
+                if re.search(rf"\b{re.escape(search_term)}\b", text, flags):
+                    requested.append(authority)
+                    break
+        return requested
+
+    @staticmethod
+    def _missing_requested_guideline_authorities(
+        requested: List[str], sources: List[Dict]
+    ) -> List[str]:
+        missing: List[str] = []
+        for authority in requested:
+            aliases = _GUIDELINE_AUTHORITY_ALIASES.get(authority, (authority,))
+            found = False
+            for source in sources:
+                if source.get("source_type") != "official_guidance":
+                    continue
+                source_text = " ".join(
+                    str(source.get(field, ""))
+                    for field in (
+                        "provider",
+                        "title",
+                        "url",
+                    )
+                )
+                if any(
+                    re.search(
+                        rf"\b{re.escape(alias)}\b", source_text, re.IGNORECASE
+                    )
+                    for alias in aliases
+                ):
+                    found = True
+                    break
+            if not found:
+                missing.append(authority)
+        return missing
 
     @staticmethod
     def _select_best_pubmed_section(sections: Dict[str, str]) -> Tuple[str, str]:
@@ -2331,18 +2515,11 @@ class ClinicalOrchestrator:
                 "I already have the current medicine list, so you do not need to repeat it."
             )
         if context_graph and context_graph.edges:
-            known_facts.append(
-                "Recorded relationships: "
-                + "; ".join(
-                    edge.prompt_line()
-                    for edge in sorted(
-                        context_graph.edges,
-                        key=lambda item: item.relevance_score,
-                        reverse=True,
-                    )[:3]
-                )
-                + ". These remain attributed links, not proof of causation."
+            relationship_context = format_relationships_for_user(
+                context_graph.edges, max_edges=3
             )
+            if relationship_context:
+                known_facts.append(relationship_context)
 
         allergy_is_decision_relevant = bool(
             patient_history.known_allergies
@@ -2369,7 +2546,20 @@ class ClinicalOrchestrator:
         else:
             opening = "I need these answers before I can tell you what this means for you."
 
-        parts = [item for item in (safety_line, opening) if item]
+        substantive_line = ""
+        if intent.intent_category == "medication_query" and not safety_line:
+            substantive_line = (
+                "Until this is clear, do not start, stop, double, or otherwise change a "
+                "medicine based on this chat. Check the label and contact the prescriber "
+                "or a pharmacist if a dose is due."
+            )
+        elif not safety_line:
+            substantive_line = (
+                "I can give conditional information now, but the missing detail may change "
+                "what applies. Avoid relying on one interpretation until it is confirmed."
+            )
+
+        parts = [item for item in (safety_line, substantive_line, opening) if item]
         if known_facts:
             parts.append(" ".join(known_facts))
         parts.append(
@@ -2406,8 +2596,8 @@ class ClinicalOrchestrator:
             },
         }
 
-    @staticmethod
     def _build_limited_evidence_response(
+        self,
         question: str,
         personal_context: List[Dict],
         role_config: RoleConfig,
@@ -2423,25 +2613,47 @@ class ClinicalOrchestrator:
         allergy_text = "; ".join(patient_history.known_allergies[:5])
         medicine_text = ", ".join(question_medications[:3]) or "the medicine"
         condition_text = "; ".join(patient_history.known_conditions[:5])
-        relevant_edges = (
-            sorted(
-                context_graph.edges,
-                key=lambda edge: edge.relevance_score,
-                reverse=True,
-            )[:3]
-            if context_graph
-            else []
-        )
-
         def include_recorded_relationships(answer: str) -> str:
-            if not relevant_edges:
+            relationship_context = format_relationships_for_user(
+                context_graph.edges if context_graph else [], max_edges=3
+            )
+            if not relationship_context:
                 return answer
-            lines = "; ".join(edge.prompt_line() for edge in relevant_edges)
-            return (
-                answer
-                + "\n\nThe record also contains these attributed relationships: "
-                + lines
-                + ". These are recorded links, not proof of medical causation."
+            return answer + "\n\n" + relationship_context
+
+        if intent.risk_level in {"elevated", "urgent"} and _BREATHING_SAFETY_PATTERN.search(
+            question or ""
+        ):
+            if is_clinical:
+                safety_opening = (
+                    "If the patient is currently struggling to breathe, choking, unable to "
+                    "speak, becoming cyanosed or unresponsive, or rapidly deteriorating, "
+                    "activate the local emergency pathway now. If the episode has stopped but "
+                    "is recurring, arrange prompt clinical assessment."
+                )
+            else:
+                safety_opening = (
+                    "If the person is currently struggling to breathe, choking, unable to "
+                    "speak, turning pale, blue or grey, becoming unresponsive, or rapidly "
+                    "worsening, call local emergency services now. If the episode has stopped "
+                    "but is recurring, arrange prompt clinical assessment."
+                )
+            return include_recorded_relationships(safety_opening)
+
+        if _DISTRESS_SAFETY_PATTERN.search(question or ""):
+            if is_clinical:
+                return include_recorded_relationships(
+                    "Acknowledge the distress and assess current safety, including thoughts of "
+                    "self-harm, inability to care for self or a baby, psychotic symptoms, and "
+                    "rapid deterioration. Use the urgent local mental-health or maternity pathway "
+                    "if any are present; otherwise arrange timely clinical follow-up rather than "
+                    "returning only clarification questions."
+                )
+            return include_recorded_relationships(
+                "This sounds distressing, especially when it is disrupting sleep. If there are "
+                "thoughts of self-harm, immediate danger, severe confusion, or an inability to "
+                "care safely for yourself or a baby, seek emergency help now. Otherwise, arrange "
+                "a timely review with a GP or maternity team and tell someone you trust today."
             )
 
         if intent.intent_category == "medication_query":
@@ -2488,6 +2700,15 @@ class ClinicalOrchestrator:
                 opening
                 + " What did the doctor say it was treating, and have you taken any doses yet? "
                 "With that, I can focus on the exact use and explain it in plain language."
+            )
+
+        if intent.intent_category in {"general_info", "administrative"}:
+            return include_recorded_relationships(
+                "I could not verify a reliable current source for the specific guidance or code, "
+                "so I will not invent one. Check the current official coding manual or the named "
+                "guideline body for your jurisdiction. If you share the coding system, edition, "
+                "and country, I can retry a focused source check. If the decision is time-sensitive, "
+                "consult a clinician or coding specialist directly."
             )
 
         if is_clinical:

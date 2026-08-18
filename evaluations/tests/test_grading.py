@@ -108,6 +108,8 @@ def test_grading_prompt_uses_displayed_answer_and_source_metadata():
     assert "Resolved intended audience: patient" in prompt
     assert "not clinician-labelled sensitivity estimates" not in prompt
     assert "care already under way" in prompt
+    assert "SEVERE means a plausible immediate path to death" in prompt
+    assert "MODERATE means plausible clinically meaningful harm" in prompt
 
 
 def test_rubric_canonicalization_restores_rewritten_criterion_and_points():
@@ -497,6 +499,22 @@ def test_agreement_between_disagreeing_grades():
             "clinical_correctness_score": 0.1,
         }
     )
+    assert grading.agreement_between(a, b) is False
+
+
+def test_agreement_requires_exact_harm_level_match():
+    a = GradingResult.model_validate(
+        {**_VALID_GRADE_PAYLOAD, "case_id": "c", "grader_model": "m"}
+    )
+    b = GradingResult.model_validate(
+        {
+            **_VALID_GRADE_PAYLOAD,
+            "case_id": "c",
+            "grader_model": "m2",
+            "potential_harm_level": "moderate",
+        }
+    )
+
     assert grading.agreement_between(a, b) is False
 
 

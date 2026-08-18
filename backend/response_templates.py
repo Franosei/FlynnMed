@@ -32,7 +32,18 @@ This describes an active emergency presentation.
 
 - Activate your local emergency or resuscitation pathway now.
 - Continue immediate assessment and treatment within your scope and current local protocol.
-- Mobilize the appropriate senior, resuscitation, anaesthetic, obstetric, or specialty support without delay.
+- Mobilise the appropriate senior, resuscitation or relevant speciality support without delay.
+- Use verified point-of-care guidance rather than waiting for an educational evidence review.
+"""
+
+MIDWIFERY_CRISIS_RESPONSE = """\
+## Active Maternity Emergency
+
+This describes an active maternity emergency presentation.
+
+- Activate your local emergency or resuscitation pathway now.
+- Continue immediate assessment and treatment within your scope and current local protocol.
+- Mobilise senior maternity, obstetric, anaesthetic or neonatal support as the presentation requires.
 - Use verified point-of-care guidance rather than waiting for an educational evidence review.
 """
 
@@ -56,6 +67,8 @@ def build_tier_badge(tier: int) -> str:
 
 def build_crisis_response(role_key: str = "patient") -> str:
     """Return emergency guidance appropriate to the established user role."""
+    if role_key == "midwife":
+        return MIDWIFERY_CRISIS_RESPONSE
     if role_key in ("doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"):
         return CLINICAL_CRISIS_RESPONSE
     return CRISIS_RESPONSE

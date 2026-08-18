@@ -39,6 +39,17 @@ _TIER1_PROVIDERS = {
     "uk health security agency",
     "ukhsa",
     "gov.uk",
+    "cdc",
+    "centers for disease control and prevention",
+    "medlineplus",
+    "national library of medicine",
+    "myhealthfinder",
+    "office of disease prevention and health promotion",
+    "odphp",
+    "openfda",
+    "food and drug administration",
+    "va/dod",
+    "department of veterans affairs",
 }
 
 # Tier 2 signals in article titles / journals.
@@ -166,6 +177,13 @@ class TieredSource:
     detail_snippet: str = ""
     source_type: str = ""
     provider: str = ""
+    authority: str = ""
+    jurisdiction: str = ""
+    licence: str = ""
+    licence_status: str = ""
+    licence_url: str = ""
+    attribution: str = ""
+    updated_at: str = ""
     pmcid: str = ""
     query: str = ""
     similarity: float = 0.0
@@ -203,6 +221,13 @@ class TieredSource:
             detail_snippet=source.get("detail_snippet", source.get("snippet", "")),
             source_type=source.get("source_type", ""),
             provider=source.get("provider", ""),
+            authority=source.get("authority", ""),
+            jurisdiction=source.get("jurisdiction", ""),
+            licence=source.get("licence", ""),
+            licence_status=source.get("licence_status", ""),
+            licence_url=source.get("licence_url", ""),
+            attribution=source.get("attribution", ""),
+            updated_at=source.get("updated_at", ""),
             pmcid=source.get("pmcid", ""),
             query=source.get("query", ""),
             similarity=float(source.get("similarity", source.get("relevance", 0.0))),
@@ -235,6 +260,13 @@ class TieredSource:
             "detail_snippet": self.detail_snippet,
             "source_type": self.source_type,
             "provider": self.provider,
+            "authority": self.authority,
+            "jurisdiction": self.jurisdiction,
+            "licence": self.licence,
+            "licence_status": self.licence_status,
+            "licence_url": self.licence_url,
+            "attribution": self.attribution,
+            "updated_at": self.updated_at,
             "pmcid": self.pmcid,
             "query": self.query,
             "similarity": self.similarity,
@@ -549,6 +581,14 @@ class EvidenceRanker:
                 "gov.uk",
                 "medlineplus.gov",
                 "bnf.nice.org.uk",
+                "cdc.gov",
+                "odphp.health.gov",
+                # healthquality.va.gov intentionally excluded: TLS fetches to
+                # this host currently fail verification, so any source from
+                # it reflects a failed fetch, not verified content -- don't
+                # auto-trust it. See official_guidance.py's disabled
+                # _search_va_dod for the retrieval-side fix.
+                "fda.gov",
             )
         )
 

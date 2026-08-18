@@ -51,6 +51,14 @@ export type Source = {
   year?: string | number;
   url?: string;
   snippet?: string;
+  provider?: string;
+  authority?: string;
+  jurisdiction?: string;
+  attribution?: string;
+  updated_at?: string;
+  licence?: string;
+  licence_status?: string;
+  licence_url?: string;
   evidence_tier?: number;
   tier_label?: string;
   tier_description?: string;

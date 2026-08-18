@@ -20,7 +20,7 @@ load_dotenv()
 # Bumped by hand when the harness's own grading prompt templates change
 # materially (not FlynnMed's internal prompts, which this harness doesn't
 # own or version -- see reporting.py's pipeline_version for that).
-HEALTHBENCH_GRADING_PROMPT_VERSION = "healthbench-rubric-v3"
+HEALTHBENCH_GRADING_PROMPT_VERSION = "healthbench-rubric-v4"
 RAG_METRICS_PROMPT_VERSION = "rag-claim-audit-v4"
 
 DATASET_URLS = {
@@ -61,15 +61,15 @@ class EvalConfig:
     # Pin evaluation generation independently from the application's model so
     # benchmark runs remain reproducible when OPENAI_MODEL changes.
     generator_model: str = field(
-        default_factory=lambda: os.getenv("EVAL_GENERATOR_MODEL", "gpt-4o-mini")
+        default_factory=lambda: os.getenv("EVAL_GENERATOR_MODEL", "gpt-5.4-mini")
     )
-    # HealthBench rubric graders. A second call is skipped automatically when
-    # primary and adjudicator resolve to the same model.
+    # HealthBench rubric graders must be distinct so triggered safety cases
+    # receive an independent second opinion.
     primary_grader_model: str = field(
         default_factory=lambda: os.getenv("EVAL_PRIMARY_GRADER_MODEL", "gpt-5.6-luna")
     )
     adjudicator_model: str = field(
-        default_factory=lambda: os.getenv("EVAL_ADJUDICATOR_MODEL", "gpt-5.6-luna")
+        default_factory=lambda: os.getenv("EVAL_ADJUDICATOR_MODEL", "gpt-4o-mini")
     )
     rag_metrics_model: str = field(
         default_factory=lambda: os.getenv("EVAL_RAG_METRICS_MODEL", "gpt-5.6-luna")

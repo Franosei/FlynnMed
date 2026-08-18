@@ -659,6 +659,190 @@ def test_underspecified_prescription_asks_patient_aware_questions_before_retriev
     assert "working impression" not in answer.lower()
 
 
+def test_elevated_breathing_concern_does_not_short_circuit_to_questions_only(
+    monkeypatch,
+):
+    orchestrator = _build_orchestrator(monkeypatch)
+    orchestrator.intent_classifier.classify = lambda *a, **kw: IntentClassification(
+        intent_category="symptom_triage",
+        risk_level="elevated",
+        pathway_hint="general_triage",
+        clarification_required=True,
+        clarification_reason="the cause is unknown",
+        clarifying_questions=["How long has this happened?"],
+    )
+    monkeypatch.setattr(
+        AgenticRetrievalLoop,
+        "run",
+        lambda self, *a, **kw: {
+            "collected_sources": [],
+            "personal_context": [],
+            "trial_results": [],
+            "tool_calls_made": [],
+        },
+    )
+
+    bundle = orchestrator.prepare_bundle(
+        question=(
+            "Mon frère se réveille en toussant, parfois il s'étouffe et a du mal à respirer."
+        ),
+        user="patient1",
+        user_profile={},
+        longitudinal_memory_summary="",
+    )
+
+    assert bundle["payload"]["trace"]["retrieval_mode"] != (
+        "information_clarification_requested"
+    )
+    assert "struggling to breathe" in bundle["payload"]["answer_markdown"].lower()
+    assert "emergency" in bundle["payload"]["answer_markdown"].lower()
+
+
+def test_unrelated_elevated_concern_does_not_receive_breathing_boilerplate(
+    monkeypatch,
+):
+    orchestrator = _build_orchestrator(monkeypatch)
+    orchestrator.intent_classifier.classify = lambda *a, **kw: IntentClassification(
+        intent_category="symptom_triage",
+        risk_level="elevated",
+        pathway_hint="general_triage",
+    )
+    monkeypatch.setattr(
+        AgenticRetrievalLoop,
+        "run",
+        lambda self, *a, **kw: {
+            "collected_sources": [],
+            "personal_context": [],
+            "trial_results": [],
+            "tool_calls_made": [],
+        },
+    )
+
+    bundle = orchestrator.prepare_bundle(
+        question="My knee pain has worsened over the last three days.",
+        user="patient1",
+        user_profile={},
+        longitudinal_memory_summary="",
+    )
+
+    answer = bundle["payload"]["answer_markdown"].lower()
+    assert "struggling to breathe" not in answer
+    assert "choking" not in answer
+
+
+def test_general_reference_question_does_not_short_circuit_to_clarification(
+    monkeypatch,
+):
+    orchestrator = _build_orchestrator(monkeypatch)
+    orchestrator.intent_classifier.classify = lambda *a, **kw: IntentClassification(
+        intent_category="general_info",
+        risk_level="routine",
+        pathway_hint="general_triage",
+        clarification_required=True,
+        clarification_reason="the code subcategory is unknown",
+        clarifying_questions=["Which subcategory are you considering?"],
+    )
+    monkeypatch.setattr(
+        AgenticRetrievalLoop,
+        "run",
+        lambda self, *a, **kw: {
+            "collected_sources": [],
+            "personal_context": [],
+            "trial_results": [],
+            "tool_calls_made": [],
+        },
+    )
+
+    bundle = orchestrator.prepare_bundle(
+        question="Which ICD-10 subcategory applies to suspected elder abuse?",
+        user="nurse1",
+        user_profile={"clinical_role": "nurse"},
+        longitudinal_memory_summary="",
+    )
+
+    assert bundle["payload"]["trace"]["retrieval_mode"] != (
+        "information_clarification_requested"
+    )
+    assert "will not invent" in bundle["payload"]["answer_markdown"].lower()
+    assert "official coding manual" in bundle["payload"]["answer_markdown"].lower()
+
+
+def test_unknown_ambiguous_detail_is_not_asked_again(monkeypatch):
+    orchestrator = _build_orchestrator(monkeypatch)
+    intent = IntentClassification(
+        intent_category="medication_query",
+        risk_level="routine",
+        pathway_hint="medications",
+        ambiguous_term_detected=True,
+        ambiguous_term="tea",
+        ambiguity_clarifying_question="What specific herbs are in the tea?",
+        ambiguity_reply_options=[
+            {"display": "Known herbs", "prompt": "The tea contains named herbs."}
+        ],
+    )
+    orchestrator.intent_classifier.classify = lambda *a, **kw: intent
+    monkeypatch.setattr(
+        AgenticRetrievalLoop,
+        "run",
+        lambda self, *a, **kw: {
+            "collected_sources": [],
+            "personal_context": [],
+            "trial_results": [],
+            "tool_calls_made": [],
+        },
+    )
+
+    bundle = orchestrator.prepare_bundle(
+        question="I do not know what is in the tea. Is it safe for my baby or should I skip it?",
+        user="patient1",
+        user_profile={},
+        longitudinal_memory_summary="",
+    )
+
+    assert bundle["payload"]["trace"]["retrieval_mode"] != "clarification_requested"
+    assert "What specific herbs" not in bundle["payload"]["answer_markdown"]
+
+
+def test_named_guideline_authority_must_be_present_in_retrieved_sources():
+    requested = ClinicalOrchestrator._requested_guideline_authorities(
+        "Please use ACOG and NICE guidance for this review."
+    )
+    missing = ClinicalOrchestrator._missing_requested_guideline_authorities(
+        requested,
+        [
+            {
+                "title": "NICE antenatal care guidance",
+                "provider": "nice",
+                "url": "https://www.nice.org.uk/guidance/ng201",
+                "source_type": "official_guidance",
+            }
+        ],
+    )
+
+    assert requested == ["ACOG", "NICE"]
+    assert missing == ["ACOG"]
+
+    pubmed_mention_only = ClinicalOrchestrator._missing_requested_guideline_authorities(
+        ["ACOG"],
+        [
+            {
+                "title": "A review discussing ACOG recommendations",
+                "provider": "Europe PMC",
+                "source_type": "pubmed_literature",
+            }
+        ],
+    )
+    assert pubmed_mention_only == ["ACOG"]
+
+
+def test_common_words_do_not_trigger_guideline_authority_checks():
+    requested = ClinicalOrchestrator._requested_guideline_authorities(
+        "Who can explain this in a nice, simple way?"
+    )
+
+    assert requested == []
+
+
 def test_medication_lifestyle_follow_up_resolves_prior_user_medicine_without_assistant_diagnosis(
     monkeypatch,
 ):

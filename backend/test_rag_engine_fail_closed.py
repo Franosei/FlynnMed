@@ -125,3 +125,24 @@ def test_correction_succeeding_on_retry_does_not_block():
 
     assert result["answer_markdown"].strip() != SAFE_VERIFICATION_FALLBACK_MESSAGE
     assert call_count["n"] == 2
+
+
+def test_missing_requested_authority_notice_is_enforced_after_generation():
+    rag = _rag()
+    bundle = _minimal_bundle(
+        [{"source_id": "S1", "title": "Unrelated review", "evidence_tier": 1}]
+    )
+    bundle["missing_requested_guideline_authorities"] = ["ACOG"]
+
+    with patch.object(rag.llm, "check_claim_source_alignment", return_value=[]):
+        result = rag._finalize_answer_payload(
+            question="What does ACOG recommend?",
+            raw_answer="Here is some related evidence [S1].",
+            bundle=bundle,
+        )
+
+    assert result["answer_markdown"].startswith(
+        "> **Requested guidance unavailable:**"
+    )
+    assert "could not verify a source from ACOG" in result["answer_markdown"]
+    assert "must not be treated as a substitute" in result["answer_markdown"]

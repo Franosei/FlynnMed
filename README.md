@@ -63,7 +63,20 @@ Chat requests pass through a governed pipeline that performs:
 5. policy checks and role-appropriate response generation; and
 6. claim, evidence and interaction trace persistence where the relational workflow applies.
 
-The main live sources are NHS and NICE guidance, MedlinePlus, Europe PMC, PubMed Central, openFDA and ClinicalTrials.gov. Results depend on the availability and quality of those external services.
+The live retrieval layer covers official UK and US guidance, medicines data, biomedical literature and clinical studies. Every source record carries its provider and jurisdiction. Reuse and attribution metadata are also retained where the publisher supplies it.
+
+| Source | Coverage | Source handling |
+| --- | --- | --- |
+| NHS and NICE | UK patient information and clinical guidance | Original URL and UK jurisdiction retained; publisher terms apply |
+| CDC | US public health information | Restricted to CDC-owned results; federal reuse notice retained |
+| MedlinePlus | US consumer health information | National Library of Medicine attribution and content notice retained |
+| MyHealthfinder | US prevention and screening information | ODPHP attribution, logo, source update date and API terms retained |
+| VA/DoD | US joint clinical practice guidelines | Retrieved through the official Health.mil catalogue with direct guideline links |
+| openFDA | US medicines and product safety data | FDA authority, jurisdiction and federal reuse notice retained |
+| Europe PMC and PubMed Central | Biomedical abstracts and full text | Retrieval is limited to the permissive CC BY and CC0 open-access subsets |
+| ClinicalTrials.gov | Recruiting and registered clinical studies | Used by the separate trial-matching workflow |
+
+Jurisdiction is exposed to the response pipeline so UK and US recommendations are not silently presented as interchangeable. External content remains subject to its own notices, and a public website is not assumed to be openly licensed merely because it is freely accessible. Results also depend on the availability and quality of each external service.
 
 ### Clinical evidence pipeline
 
@@ -274,6 +287,14 @@ Run the frontend checks from `frontend/`:
 npm test
 npm run build
 ```
+
+Run the read-only live source check from the repository root when network access is available:
+
+```powershell
+py scripts\check_health_sources.py
+```
+
+This verifies MedlinePlus, CDC, MyHealthfinder, VA/DoD, openFDA, the permissively licensed PMC subset and ClinicalTrials.gov. It does not call a language model or incur model usage charges.
 
 The GitHub Actions workflow contains the exact CI command and excludes manual live-API smoke scripts that require network access and a real API key.
 

@@ -16,7 +16,7 @@ def test_default_evaluation_models_are_role_specific(monkeypatch):
 
     assert config.generator_model == "gpt-5.4-mini"
     assert config.primary_grader_model == "gpt-5.6-luna"
-    assert config.adjudicator_model == "gpt-5.6-luna"
+    assert config.adjudicator_model == "gpt-4o-mini"
     assert config.rag_metrics_model == "gpt-5.6-luna"
     assert config.evaluator_fallback_model == "gpt-5.6-luna"
 

@@ -11,6 +11,14 @@ import re
 from typing import Dict, Iterable, List, Optional
 
 
+GENERIC_TRIAGE_CONCERN_LABEL = "Recorded triage concern"
+"""Sentinel used as source_name when no structured pathway_label exists and
+the only alternative would be dumping a long free-text note into a relation
+name (see test_triage_relationship_does_not_store_a_free_text_note_as_its_name).
+This is a placeholder, not real record content -- anything that renders
+relationships as patient-facing prose (see context_graph.format_relationships_for_user)
+must special-case this value rather than presenting it as a specific fact."""
+
 ALLOWED_RELATIONS = {
     "taken_for",
     "causes",
@@ -44,6 +52,23 @@ _EXPLICIT_LINK_RE = re.compile(
     r"improved\s+by|after\s+starting|associated\s+with)\s+(?P<target>[^.;,]+)",
     re.IGNORECASE,
 )
+
+
+def truncate_at_word_boundary(value: object, max_chars: int) -> str:
+    """Return compact text without exposing a partial trailing word."""
+    normalized = " ".join(str(value or "").split())
+    if max_chars <= 0:
+        return ""
+    if len(normalized) <= max_chars:
+        return normalized
+    if max_chars <= 3:
+        return "." * max_chars
+
+    prefix = normalized[: max_chars - 3]
+    boundary = prefix.rfind(" ")
+    if boundary <= 0:
+        return "..."
+    return prefix[:boundary].rstrip(" ,;:-") + "..."
 
 
 def _stable_id(parts: Iterable[str]) -> str:
@@ -274,21 +299,22 @@ def derive_relationships(
             )
 
     for triage in triage_summaries or []:
-        concern = str(
-            triage.get("impression")
-            or triage.get("decision_summary")
-            or triage.get("question")
-            or ""
-        ).strip()
+        has_concern = any(
+            str(triage.get(field) or "").strip()
+            for field in ("pathway_label", "impression", "decision_summary", "question")
+        )
+        concern_label = str(triage.get("pathway_label") or "").strip()
+        if not concern_label:
+            concern_label = GENERIC_TRIAGE_CONCERN_LABEL
         next_step = str(triage.get("next_step") or "").strip()
-        if concern and next_step:
+        if has_concern and next_step:
             candidates.append(
                 {
                     "source_type": "triage",
-                    "source_name": concern[:180],
+                    "source_name": truncate_at_word_boundary(concern_label, 180),
                     "relation": "led_to",
                     "target_type": "care_action",
-                    "target_name": next_step,
+                    "target_name": truncate_at_word_boundary(next_step, 180),
                     "certainty": "documented",
                     "evidence": "Recorded triage decision",
                     "source": source,
@@ -308,7 +334,7 @@ def derive_relationships(
                 candidates.append(
                     {
                         "source_type": "care_action",
-                        "source_name": action[:240],
+                        "source_name": truncate_at_word_boundary(action, 240),
                         "relation": "recommended_for",
                         "target_type": "condition",
                         "target_name": condition,
@@ -325,10 +351,10 @@ def derive_relationships(
             candidates.append(
                 {
                     "source_type": "clinical_assessment",
-                    "source_name": assessment[:240],
+                    "source_name": truncate_at_word_boundary(assessment, 240),
                     "relation": "led_to",
                     "target_type": "care_action",
-                    "target_name": plan[:240],
+                    "target_name": truncate_at_word_boundary(plan, 240),
                     "certainty": "documented",
                     "evidence": "Saved clinical note assessment and plan",
                     "source": source,
@@ -358,10 +384,10 @@ def derive_relationships(
             candidates.append(
                 {
                     "source_type": str(fact.get("record_type") or "patient_fact").lower(),
-                    "source_name": fact_name[:240],
+                    "source_name": truncate_at_word_boundary(fact_name, 240),
                     "relation": "led_to",
                     "target_type": "safety_action",
-                    "target_name": action[:240],
+                    "target_name": truncate_at_word_boundary(action, 240),
                     "certainty": "documented",
                     "evidence": str(review.get("category") or "Safety review"),
                     "source": source,

@@ -89,6 +89,7 @@ class PolicyEngine:
 
         self._gate_urgent_escalation(intent, role_config, decision)
         self._gate_pregnancy(intent, role_config, question, decision)
+        self._gate_postpartum_newborn(intent, decision)
         self._gate_paediatric(intent, all_flags, decision)
         self._gate_allergy_contraindication(intent, role_config, patient_history, decision)
         self._gate_medication_dosage(intent, role_config, question, decision)
@@ -169,10 +170,13 @@ class PolicyEngine:
         question: str,
         decision: PolicyDecision,
     ) -> None:
-        has_pregnancy_flag = "pregnancy" in (intent.vulnerable_flags + role_config.vulnerable_population_flags)
+        # The role describes the user, not the patient in the current question.
+        # Only a question-specific pregnancy flag or an explicit pregnancy and
+        # medicine phrase should activate pregnancy-only guidance.
+        has_pregnancy_flag = "pregnancy" in intent.vulnerable_flags
         has_pregnancy_med = bool(_PREGNANCY_MED_PATTERN.search(question))
 
-        if not (has_pregnancy_flag or has_pregnancy_med or intent.intent_category == "maternity"):
+        if not (has_pregnancy_flag or has_pregnancy_med):
             return
 
         gate = PolicyGateRecord(
@@ -215,6 +219,57 @@ class PolicyEngine:
             "Never extrapolate adult guidance to children without stating it. "
             "Refer to BNFC and NICE paediatric pathways."
         )
+
+    def _gate_postpartum_newborn(
+        self,
+        intent: IntentClassification,
+        decision: PolicyDecision,
+    ) -> None:
+        """Apply precise postnatal context without reusing pregnancy wording."""
+        flags = set(intent.vulnerable_flags)
+        if "postpartum" in flags:
+            decision.add_gate(
+                PolicyGateRecord(
+                    gate_name="postpartum_safety",
+                    applied=True,
+                    reason="Postpartum context detected; applying postnatal guidance.",
+                )
+            )
+            decision.context_notes.append(
+                "POLICY NOTE: Postpartum context is present. Use postnatal guidance and "
+                "do not describe the patient as pregnant unless pregnancy is separately "
+                "established. Consider breastfeeding-specific medicine advice only when "
+                "breastfeeding is confirmed."
+            )
+
+        if "newborn" in flags:
+            decision.add_gate(
+                PolicyGateRecord(
+                    gate_name="newborn_safety",
+                    applied=True,
+                    reason="Newborn context detected; applying neonatal guidance.",
+                )
+            )
+            decision.context_notes.append(
+                "POLICY NOTE: Newborn context is present. Use neonatal guidance and "
+                "age- and weight-specific medicine thresholds. Do not substitute "
+                "pregnancy or general adult advice."
+            )
+
+        if intent.intent_category != "medication_query":
+            return
+        if "newborn" in flags:
+            decision.vulnerability_notice = (
+                "> **Newborn medicine check:** Newborn medicines require age- and "
+                "weight-specific review. Confirm the exact product and dose with the "
+                "child's clinician or a pharmacist before giving or changing it.\n\n"
+            )
+        elif "postpartum" in flags:
+            decision.vulnerability_notice = (
+                "> **Postpartum medicine check:** Medicine safety can differ after birth, "
+                "particularly when breastfeeding. Confirm the exact medicine with a "
+                "midwife, GP or pharmacist before changing it.\n\n"
+            )
 
     def _gate_allergy_contraindication(
         self,

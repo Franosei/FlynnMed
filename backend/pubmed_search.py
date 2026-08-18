@@ -13,6 +13,7 @@ class PubMedCentralSearcher:
 
     SEARCH_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
     FULLTEXT_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML"
+    COMMERCIAL_REUSE_FILTER = '(LICENSE:"CC BY" OR LICENSE:"CC0")'
 
     def __init__(self) -> None:
         self.search_cache: Dict[str, List[Dict[str, str]]] = {}
@@ -29,7 +30,9 @@ class PubMedCentralSearcher:
             return [dict(record) for record in cached]
 
         params = {
-            "query": query + " OPEN_ACCESS:Y",
+            "query": (
+                f"({query}) AND OPEN_ACCESS:Y AND {self.COMMERCIAL_REUSE_FILTER}"
+            ),
             "format": "json",
             "pageSize": max_results,
             "resultType": "core",
@@ -57,6 +60,9 @@ class PubMedCentralSearcher:
                         "url": f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/",
                         "query": query,
                         "abstract": self._clean_abstract(item.get("abstractText", "")),
+                        "licence": item.get("license", "permissive OA subset"),
+                        "licence_status": "permissive_reuse_allowed",
+                        "licence_url": "https://pmc.ncbi.nlm.nih.gov/tools/openftlist/",
                     }
                 )
 

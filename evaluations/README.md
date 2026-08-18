@@ -18,14 +18,11 @@ rubric decision records evidence from the answer, and the harness rejects a
 grade that rewrites, reorders, adds, or drops rubric criteria. The weighted
 score is calculated locally from the dataset points.
 
-The default response generator is `gpt-5.4-mini`, and the default evaluator is
-`gpt-5.6-luna`. When the primary and adjudicator are
-the same model, the redundant second call is skipped to reduce latency and
-cost; safety-trigger reasons are still recorded. **With the example `.env`
-below, both default to `gpt-5.6-luna`, so adjudication is fully disabled** --
-the runner prints a `WARNING` at startup whenever this is the case. Set
-`EVAL_ADJUDICATOR_MODEL` to a genuinely different model (e.g. `gpt-4o-mini`)
-if you want flagged cases to actually get an independent second opinion.
+The default response generator is `gpt-5.4-mini`, the default primary evaluator
+is `gpt-5.6-luna`, and the default independent adjudicator is `gpt-4o-mini`.
+Graded runs reject configurations where the primary and adjudicator are the
+same model. Cases labelled moderate or severe harm must receive that independent
+second opinion; if it fails, the case cannot pass and is routed for review.
 
 ### Tier 1 - Core
 
@@ -80,9 +77,8 @@ EVAL_API_KEY=sk-...
 
 EVAL_GENERATOR_MODEL=gpt-5.4-mini
 EVAL_PRIMARY_GRADER_MODEL=gpt-5.6-luna
-# Must differ from EVAL_PRIMARY_GRADER_MODEL or the second-opinion adjudicator
-# call is skipped for every flagged case (a startup WARNING prints when they match).
-EVAL_ADJUDICATOR_MODEL=gpt-5.6-luna
+# Must differ from EVAL_PRIMARY_GRADER_MODEL.
+EVAL_ADJUDICATOR_MODEL=gpt-4o-mini
 EVAL_RAG_METRICS_MODEL=gpt-5.6-luna
 EVAL_FALLBACK_MODEL=gpt-5.6-luna
 EVAL_ADJUDICATION_THRESHOLD=0.7

@@ -19,7 +19,7 @@ data/
 evaluations/datasets/downloaded/*
 evaluations/datasets/normalized/*
 evaluations/datasets/private/*
-evaluations/results/*
+#evaluations/results/*
 !evaluations/datasets/downloaded/.gitkeep
 !evaluations/datasets/normalized/.gitkeep
 !evaluations/datasets/private/.gitkeep

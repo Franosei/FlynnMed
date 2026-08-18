@@ -54,3 +54,8 @@ def test_crisis_response_is_role_appropriate():
     clinical = build_crisis_response("doctor")
     assert "resuscitation pathway" in clinical
     assert "local emergency number" not in clinical
+    assert "obstetric" not in clinical.lower()
+
+    maternity = build_crisis_response("midwife")
+    assert "maternity" in maternity.lower()
+    assert "resuscitation pathway" in maternity

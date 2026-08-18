@@ -19,6 +19,8 @@ import {
   LogOut,
   MessageSquare,
   Mic,
+  Monitor,
+  Moon,
   PanelLeft,
   PanelRight,
   Pill,
@@ -30,6 +32,7 @@ import {
   Sparkles,
   Stethoscope,
   StopCircle,
+  Sun,
   ThumbsDown,
   ThumbsUp,
   Trash2,
@@ -99,6 +102,12 @@ import {
   unique,
   vitalLabel
 } from "./utils";
+import {
+  applyTheme,
+  loadThemePreference,
+  saveThemePreference,
+  type ThemePreference,
+} from "./theme";
 
 type View = "workspace" | "safety" | "chat" | "timeline" | "trials" | "care-plans" | "patients" | "access";
 
@@ -109,10 +118,10 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
     if (this.state.error) {
       const msg = (this.state.error as Error).message;
       return (
-        <main style={{ padding: "2rem", fontFamily: "sans-serif", color: "#122227", background: "#f7f9f7", minHeight: "100vh" }}>
-          <h2 style={{ color: "#c0392b" }}>Something went wrong</h2>
-          <p style={{ color: "#627174" }}>Please refresh the page. If this keeps happening, contact support.</p>
-          <pre style={{ background: "#fff", border: "1px solid #d8e2df", borderRadius: 6, padding: "0.8rem", fontSize: "0.8rem", overflowX: "auto" }}>{msg}</pre>
+        <main className="error-screen">
+          <h2>Something went wrong</h2>
+          <p>Please refresh the page. If this keeps happening, contact support.</p>
+          <pre>{msg}</pre>
         </main>
       );
     }
@@ -121,11 +130,11 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 }
 
 const PATIENT_URGENCY: Record<string, { label: string; color: string; bg: string }> = {
-  routine:  { label: "Routine",             color: "var(--green)",  bg: "#edf8f4" },
-  elevated: { label: "Worth monitoring",    color: "var(--gold)",   bg: "#fff8e5" },
-  high:     { label: "See your GP soon",    color: "var(--accent)", bg: "#fff6f2" },
-  urgent:   { label: "Seek urgent care",    color: "var(--danger)", bg: "#fff0ed" },
-  crisis:   { label: "Call 999 / 911 now", color: "var(--danger)", bg: "#fff0ed" },
+  routine:  { label: "Routine",             color: "var(--green)",  bg: "var(--success-soft)" },
+  elevated: { label: "Worth monitoring",    color: "var(--gold)",   bg: "var(--warning-soft)" },
+  high:     { label: "See your GP soon",    color: "var(--accent)", bg: "var(--accent-soft)" },
+  urgent:   { label: "Seek urgent care",    color: "var(--danger)", bg: "var(--danger-soft)" },
+  crisis:   { label: "Call 999 / 911 now", color: "var(--danger)", bg: "var(--danger-soft)" },
 };
 
 const STARTER_PROMPTS = [
@@ -172,11 +181,23 @@ const MAX_IMAGE_UPLOAD_BYTES = 5 * 1024 * 1024;
 const MAX_DOCUMENT_UPLOAD_BYTES = 15 * 1024 * 1024;
 
 function App() {
+  const [themePreference, setThemePreference] = useState<ThemePreference>(loadThemePreference);
   const [config, setConfig] = useState<ProductConfig | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [view, setView] = useState<View>("workspace");
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const syncTheme = () => applyTheme(themePreference, media.matches);
+    syncTheme();
+    saveThemePreference(themePreference);
+    if (themePreference !== "system") return;
+
+    media.addEventListener("change", syncTheme);
+    return () => media.removeEventListener("change", syncTheme);
+  }, [themePreference]);
 
   useEffect(() => {
     let mounted = true;
@@ -235,7 +256,14 @@ function App() {
   }
 
   if (!snapshot) {
-    return <AuthScreen config={config} onSuccess={handleAuth} />;
+    return (
+      <AuthScreen
+        config={config}
+        onSuccess={handleAuth}
+        themePreference={themePreference}
+        setThemePreference={setThemePreference}
+      />
+    );
   }
 
   const role = snapshot.profile.clinical_role || snapshot.profile.role;
@@ -243,7 +271,15 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <Shell snapshot={snapshot} view={view} setView={setView} signOut={signOut} notice={notice}>
+      <Shell
+        snapshot={snapshot}
+        view={view}
+        setView={setView}
+        signOut={signOut}
+        notice={notice}
+        themePreference={themePreference}
+        setThemePreference={setThemePreference}
+      >
         {view === "workspace" && (
           clinician
             ? <ClinicianWorkspace snapshot={snapshot} setView={setView} setNotice={setNotice} />
@@ -265,7 +301,56 @@ function Req() {
   return <span className="req" aria-label="required">*</span>;
 }
 
-function AuthScreen({ config, onSuccess }: { config: ProductConfig; onSuccess: (response: AuthResponse) => void }) {
+function ThemeControl({
+  value,
+  onChange,
+}: {
+  value: ThemePreference;
+  onChange: (theme: ThemePreference) => void;
+}) {
+  const options: Array<{
+    value: ThemePreference;
+    label: string;
+    icon: LucideIcon;
+  }> = [
+    { value: "light", label: "Light theme", icon: Sun },
+    { value: "dark", label: "Dark theme", icon: Moon },
+    { value: "system", label: "Use system theme", icon: Monitor },
+  ];
+
+  return (
+    <div className="theme-control" role="group" aria-label="Colour theme">
+      {options.map((option) => {
+        const Icon = option.icon;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            className={value === option.value ? "active" : ""}
+            aria-label={option.label}
+            aria-pressed={value === option.value}
+            title={option.label}
+            onClick={() => onChange(option.value)}
+          >
+            <Icon size={16} />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function AuthScreen({
+  config,
+  onSuccess,
+  themePreference,
+  setThemePreference,
+}: {
+  config: ProductConfig;
+  onSuccess: (response: AuthResponse) => void;
+  themePreference: ThemePreference;
+  setThemePreference: (theme: ThemePreference) => void;
+}) {
   const [mode, setMode] = useState<"Sign in" | "Create account">("Sign in");
   const [role, setRole] = useState(config.role_options[0]);
   const [error, setError] = useState("");
@@ -338,6 +423,9 @@ function AuthScreen({ config, onSuccess }: { config: ProductConfig; onSuccess: (
 
   return (
     <main className="auth-page">
+      <div className="auth-theme-control">
+        <ThemeControl value={themePreference} onChange={setThemePreference} />
+      </div>
       <section className="auth-intro">
         <div className="eyebrow">Secure health workspace</div>
         <h1>{config.product_name}</h1>
@@ -521,7 +609,9 @@ function Shell({
   view,
   setView,
   signOut,
-  notice
+  notice,
+  themePreference,
+  setThemePreference,
 }: {
   children: React.ReactNode;
   snapshot: Snapshot;
@@ -529,6 +619,8 @@ function Shell({
   setView: (view: View) => void;
   signOut: () => void;
   notice: string;
+  themePreference: ThemePreference;
+  setThemePreference: (theme: ThemePreference) => void;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const role = snapshot.profile.clinical_role || snapshot.profile.role;
@@ -596,9 +688,12 @@ function Shell({
               <h1>{name}</h1>
             </div>
           </div>
-          <button className="icon-button" onClick={signOut} title="Sign out" aria-label="Sign out">
-            <LogOut size={20} />
-          </button>
+          <div className="topbar-actions">
+            <ThemeControl value={themePreference} onChange={setThemePreference} />
+            <button className="icon-button" onClick={signOut} title="Sign out" aria-label="Sign out">
+              <LogOut size={20} />
+            </button>
+          </div>
         </header>
         {notice && <div className="notice">{notice}</div>}
         {children}
@@ -2546,10 +2641,37 @@ function SourceList({ sources }: { sources: NonNullable<Message["sources"]> }) {
                 ? "Question-aligned"
                 : "";
           return (
-            <a key={source.source_id ?? index} href={source.url || undefined} target="_blank" rel="noreferrer">
+            <article key={source.source_id ?? index} className="source-card">
               <span>{source.source_id ?? `S${index + 1}`}</span>
-              <strong>{clean(source.title, "Untitled source")}</strong>
-              <small>{unique([source.journal, source.year, source.tier_label]).join(" - ")}</small>
+              <strong>
+                {source.url ? (
+                  <a className="source-title-link" href={source.url} target="_blank" rel="noreferrer">
+                    {clean(source.title, "Untitled source")}
+                  </a>
+                ) : (
+                  clean(source.title, "Untitled source")
+                )}
+              </strong>
+              {source.provider === "myhealthfinder" && (
+                <a href="https://odphp.health.gov/myhealthfinder" title="MyHealthfinder" target="_blank" rel="noreferrer">
+                  <img
+                    className="source-attribution-logo"
+                    src="https://odphp.health.gov/themes/custom/healthfinder/images/MyHF.svg"
+                    alt="MyHealthfinder"
+                  />
+                </a>
+              )}
+              <small>
+                {unique([
+                  source.authority || source.journal,
+                  source.jurisdiction,
+                  source.year,
+                  source.tier_label,
+                ]).join(" - ")}
+              </small>
+              {source.updated_at && (
+                <small>Source last updated: {formatTimestamp(source.updated_at)}</small>
+              )}
               {qualityLabel && (
                 <em className={`source-quality ${source.usable_for_patient_specific_guidance ? "aligned" : ""}`}>
                   {qualityLabel}
@@ -2572,7 +2694,7 @@ function SourceList({ sources }: { sources: NonNullable<Message["sources"]> }) {
                   </footer>
                 </blockquote>
               )}
-            </a>
+            </article>
           );
         })}
       </div>
@@ -3979,11 +4101,11 @@ function TrialCard({ trial, index }: { trial: Dict<any>; index: number }) {
 // ── Care Plans ───────────────────────────────────────────────────────────────
 
 const URGENCY_META: Record<string, { label: string; color: string; bg: string }> = {
-  call_999:   { label: "Call 999 now",    color: "#fff", bg: "#c0392b" },
-  a_and_e:    { label: "Go to A&E",       color: "#c0392b", bg: "#fff0ed" },
-  gp_same_day:{ label: "See GP today",    color: "#b07d00", bg: "#fff8e5" },
-  gp_routine: { label: "Book GP visit",   color: "#1a6b5a", bg: "#edf8f4" },
-  self_monitor:{ label: "Self-monitor",   color: "#4a7a8a", bg: "#edf4f3" },
+  call_999:   { label: "Call 999 now",    color: "var(--inverse-ink)", bg: "var(--danger-solid)" },
+  a_and_e:    { label: "Go to A&E",       color: "var(--danger)", bg: "var(--danger-soft)" },
+  gp_same_day:{ label: "See GP today",    color: "var(--warning-ink)", bg: "var(--warning-soft)" },
+  gp_routine: { label: "Book GP visit",   color: "var(--success-ink)", bg: "var(--success-soft)" },
+  self_monitor:{ label: "Self-monitor",   color: "var(--muted)", bg: "var(--neutral-soft)" },
 };
 
 const TIME_OF_DAY_ICON: Record<string, string> = {
@@ -4016,7 +4138,7 @@ function ProgressRing({ done, total, size = 52 }: { done: number; total: number;
   const dash = circ * pct;
   return (
     <svg width={size} height={size} className="progress-ring">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e0eceb" strokeWidth={6} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--line)" strokeWidth={6} />
       <circle
         cx={size / 2} cy={size / 2} r={r}
         fill="none"
@@ -4466,12 +4588,18 @@ function CarePlanDetail({
               If you experience any of the following, act as described. Always call 999 for life-threatening emergencies.
             </p>
             {plan.escalation_thresholds.map((esc: EscalationThreshold) => {
-              const meta = URGENCY_META[esc.urgency ?? "gp_routine"];
+              const urgency = esc.urgency ?? "gp_routine";
+              const meta = URGENCY_META[urgency];
+              const borderColour = ["call_999", "a_and_e"].includes(urgency)
+                ? "var(--danger)"
+                : urgency === "gp_same_day"
+                  ? "var(--gold)"
+                  : "var(--primary)";
               return (
                 <div
                   key={esc.id}
                   className="cp-esc-card"
-                  style={{ borderLeftColor: meta.bg === "#fff0ed" ? "var(--danger)" : meta.bg === "#fff8e5" ? "var(--gold)" : "var(--primary)" }}
+                  style={{ borderLeftColor: borderColour }}
                 >
                   <div className="cp-esc-top">
                     <strong>{esc.symptom}</strong>

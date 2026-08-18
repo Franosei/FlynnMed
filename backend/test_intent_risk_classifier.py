@@ -218,6 +218,45 @@ def test_active_clinician_emergency_still_triggers_crisis_prescreen():
     assert classifier._crisis_prescreen(question, role_key="doctor") is True
 
 
+def test_explicitly_stable_clinical_note_cannot_become_unqualified_crisis(monkeypatch):
+    payload = {
+        **_AMBIGUOUS_PEAK_FLOW_PAYLOAD,
+        "intent_category": "crisis",
+        "risk_level": "crisis",
+        "escalation_required": True,
+        "escalation_reason": "Drowsiness may indicate deterioration.",
+        "presentation_hint": "none",
+        "ambiguous_term_detected": False,
+        "ambiguity_clarifying_question": "",
+        "ambiguity_reply_options": [],
+    }
+    classifier = _classifier_with_response(monkeypatch, payload)
+    note = (
+        "A 70-year-old gentleman is more drowsy than usual. He remains clinically stable, "
+        "denies chest pain or shortness of breath, and the nurse is about to record his vital signs."
+    )
+
+    result = classifier.classify(note, role_key="nurse")
+
+    assert result.risk_level == "urgent"
+    assert result.intent_category == "symptom_triage"
+    assert result.crisis_detected is False
+    assert result.escalation_required is True
+    assert "does not establish an active emergency" in result.escalation_reason
+
+
+def test_explicit_active_emergency_overrides_stability_wording():
+    classifier = object.__new__(IntentRiskClassifier)
+
+    result = classifier.classify(
+        "The note says stable, but the patient is unresponsive and not breathing right now.",
+        role_key="nurse",
+    )
+
+    assert result.risk_level == "crisis"
+    assert result.crisis_detected is True
+
+
 def test_witnessed_collapse_triggers_active_emergency_prescreen():
     classifier = object.__new__(IntentRiskClassifier)
 

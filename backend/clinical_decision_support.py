@@ -8,14 +8,16 @@ No keyword lists, regex, or hardcoded symptom terms are used here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Dict, List, Optional, TYPE_CHECKING
+from urllib.parse import urlsplit, urlunsplit
 
 if TYPE_CHECKING:
     from backend.intent_risk_classifier import IntentClassification
     from backend.role_router import RoleConfig
 
 
-CLINICAL_LOGIC_VERSION = "2026.04.13-general-triage-v2"
+CLINICAL_LOGIC_VERSION = "2026.08.18-grounded-triage-v3"
 
 RISK_LEVEL_RANK = {
     "routine": 1,
@@ -25,6 +27,50 @@ RISK_LEVEL_RANK = {
 }
 
 CLINICAL_ROLES = {"doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"}
+
+
+_SEPSIS_CONFUSION_PATTERN = re.compile(
+    r"\b(confus(?:ed|ion)|disorient(?:ed|ation)|altered\s+(?:mental\s+)?state|"
+    r"new\s+(?:drowsiness|agitation)|hard\s+to\s+wake)\b",
+    re.IGNORECASE,
+)
+_SEPSIS_FEVER_PATTERN = re.compile(
+    r"\b(fever|febrile|high\s+temperature|temperature\s+(?:of\s+)?(?:3[89]|4\d)(?:\.\d+)?)\b",
+    re.IGNORECASE,
+)
+_SEPSIS_URINE_PATTERN = re.compile(
+    r"\b(reduced|decreased|low|little|minimal|no)\s+(?:urine|urinary)\s*(?:output)?\b|"
+    r"\b(?:passing|passed|producing|produced)\s+(?:very\s+)?(?:little|no)\s+urine\b|"
+    r"\b(?:not|hasn['\u2019]?t|haven['\u2019]?t)\s+(?:passed|passing|urinated|urinating)\b|"
+    r"\b(?:oliguria|anuria)\b",
+    re.IGNORECASE,
+)
+_FINDING_NEGATION_PATTERN = re.compile(
+    r"\b(no|not|without|denies|denied|isn['\u2019]?t|aren['\u2019]?t|"
+    r"wasn['\u2019]?t|hasn['\u2019]?t|haven['\u2019]?t)\b(?:\W+\w+){0,3}\W*$",
+    re.IGNORECASE,
+)
+
+
+def _has_non_negated_finding(text: str, pattern: re.Pattern) -> bool:
+    """Return true only when a required finding is affirmatively reported."""
+    for match in pattern.finditer(text or ""):
+        prefix = (text or "")[max(0, match.start() - 48):match.start()]
+        if not _FINDING_NEGATION_PATTERN.search(prefix):
+            return True
+    return False
+
+
+def _possible_sepsis_is_grounded(case_text: str) -> bool:
+    """Require every finding claimed by the deterministic sepsis pathway."""
+    return all(
+        _has_non_negated_finding(case_text, pattern)
+        for pattern in (
+            _SEPSIS_CONFUSION_PATTERN,
+            _SEPSIS_FEVER_PATTERN,
+            _SEPSIS_URINE_PATTERN,
+        )
+    )
 
 
 @dataclass
@@ -108,7 +154,7 @@ class ClinicalDecision:
             "logic_version": self.logic_version,
         }
 
-    def build_triage_summary(self) -> Dict:
+    def build_triage_summary(self, sources: Optional[List[Dict]] = None) -> Dict:
         return {
             "urgency_level": self.urgency_level,
             "next_step": self.next_step,
@@ -120,16 +166,19 @@ class ClinicalDecision:
             "escalation_triggers": list(self.escalation_triggers),
             "communication_points": list(self.communication_points),
             "rule_hits": [item.as_dict() for item in self.triggered_rules],
-            "guideline_references": [item.as_dict() for item in self.guideline_references],
+            "guideline_references": [
+                item.as_dict()
+                for item, _markers in self._validated_guideline_references(sources or [])
+            ],
             "logic_version": self.logic_version,
         }
 
     def render_markdown(self, role_key: str, sources: Optional[List[Dict]] = None) -> str:
-        official_markers = self._official_source_markers(sources or [])
+        validated_guidelines = self._validated_guideline_references(sources or [])
         evidence_line = (
-            f"Retrieved formal guidance was prioritised for this pathway {official_markers}."
-            if official_markers
-            else "This pathway was built from deterministic triage logic mapped to formal NICE/NHS guidance."
+            "Named pathway guidance was verified against the retrieved sources."
+            if validated_guidelines
+            else "No named pathway guideline was verified against the retrieved sources."
         )
 
         sections = []
@@ -165,10 +214,12 @@ class ClinicalDecision:
                 sections.append(self._bullet_section("## Key Advice", self.communication_points))
 
         guideline_lines = [evidence_line]
-        for guideline in self.guideline_references:
+        for guideline, markers in validated_guidelines:
             line = f"{guideline.authority}: {guideline.title}"
             if guideline.note:
                 line += f" - {guideline.note}"
+            if markers:
+                line += " " + "".join(markers)
             guideline_lines.append(line)
         guideline_lines.append(f"Logic version: {self.logic_version}")
         sections.append(self._bullet_section("## Guideline Basis", guideline_lines))
@@ -194,6 +245,69 @@ class ClinicalDecision:
                 break
         return "".join(markers)
 
+    def _validated_guideline_references(
+        self, sources: List[Dict]
+    ) -> List[tuple[GuidelineReference, List[str]]]:
+        validated: List[tuple[GuidelineReference, List[str]]] = []
+        for guideline in self.guideline_references:
+            matching = [
+                source
+                for source in sources
+                if self._source_matches_guideline(source, guideline)
+            ]
+            if not matching:
+                continue
+            markers = [
+                f"[{source['source_id']}]"
+                for source in matching
+                if source.get("source_id")
+            ][:3]
+            validated.append((guideline, markers))
+        return validated
+
+    @staticmethod
+    def _source_matches_guideline(
+        source: Dict, guideline: GuidelineReference
+    ) -> bool:
+        if source.get("source_type") != "official_guidance":
+            return False
+
+        def normalise_url(value: str) -> str:
+            try:
+                parts = urlsplit((value or "").strip().lower())
+                return urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), "", ""))
+            except ValueError:
+                return (value or "").strip().lower().rstrip("/")
+
+        expected_url = normalise_url(guideline.url)
+        source_url = normalise_url(str(source.get("url", "")))
+        if expected_url and source_url and (
+            source_url == expected_url
+            or source_url.startswith(expected_url + "/")
+        ):
+            return True
+
+        source_text = " ".join(
+            str(source.get(key, ""))
+            for key in ("provider", "title", "snippet", "detail_snippet")
+        ).lower()
+        authority = guideline.authority.lower()
+        title_tokens = {
+            token
+            for token in re.findall(r"[a-z0-9]+", guideline.title.lower())
+            if len(token) >= 4
+        }
+        source_tokens = set(re.findall(r"[a-z0-9]+", source_text))
+        distinctive = {
+            token
+            for token in title_tokens
+            if re.fullmatch(r"(?:cg|ng|qs)\d+", token)
+        }
+        if distinctive and distinctive & source_tokens:
+            return True
+        overlap = len(title_tokens & source_tokens)
+        return authority in source_text and overlap >= min(4, max(2, len(title_tokens) // 2))
+
 
 class ClinicalDecisionSupportEngine:
     """
@@ -210,8 +324,24 @@ class ClinicalDecisionSupportEngine:
         question: str,
         intent: "IntentClassification",
         role_config: "RoleConfig",
+        case_text: Optional[str] = None,
     ) -> ClinicalDecision:
         presentation = getattr(intent, "presentation_hint", "none") or "none"
+        if presentation == "possible_sepsis" and not _possible_sepsis_is_grounded(
+            case_text or question
+        ):
+            # A presentation hint is only a routing suggestion. Never let it
+            # manufacture the findings quoted by a deterministic response.
+            intent.presentation_hint = "none"
+            intent.crisis_detected = False
+            if intent.risk_level == "crisis":
+                intent.risk_level = "urgent"
+            intent.escalation_required = intent.risk_level == "urgent"
+            if intent.risk_level == "urgent":
+                intent.escalation_reason = (
+                    "The reported acute symptoms warrant prompt clinical assessment."
+                )
+            presentation = "none"
         dispatch = {
             "thunderclap_headache":      self._decision_thunderclap_headache,
             "possible_sepsis":           self._decision_possible_sepsis,

@@ -9,6 +9,55 @@ class _FallbackMemory:
         raise RuntimeError("force fallback scoring")
 
 
+def test_us_government_guidance_domains_are_trusted():
+    for provider, url in (
+        ("cdc", "https://www.cdc.gov/flu/about/index.html"),
+        ("myhealthfinder", "https://odphp.health.gov/myhealthfinder/topic"),
+        ("va/dod", "https://www.healthquality.va.gov/guidelines/CD/asthma/"),
+        ("openFDA", "https://open.fda.gov/apis/drug/"),
+    ):
+        status, score, _reason = EvidenceRanker._validate_source(
+            {
+                "title": "Official US guidance",
+                "url": url,
+                "provider": provider,
+                "source_type": "official_guidance",
+                "detail_snippet": "A sufficiently detailed official guidance excerpt.",
+            }
+        )
+
+        assert status == "valid"
+        assert score == 1.0
+
+
+def test_us_source_provenance_survives_ranking():
+    source = {
+        "title": "CDC influenza guidance",
+        "url": "https://www.cdc.gov/flu/about/index.html",
+        "provider": "cdc",
+        "source_type": "official_guidance",
+        "query": "influenza symptoms",
+        "detail_snippet": "Influenza may cause fever, cough and other respiratory symptoms.",
+        "authority": "Centers for Disease Control and Prevention",
+        "jurisdiction": "US",
+        "licence_status": "public_domain_us",
+        "licence_url": "https://www.cdc.gov/other/agencymaterials.html",
+        "attribution": "Centers for Disease Control and Prevention",
+        "updated_at": "2026-01-15T00:00:00Z",
+    }
+
+    ranked, _report = _rank(
+        [source],
+        "What are influenza symptoms?",
+        PatientHistoryContext(),
+    )
+
+    assert ranked[0]["authority"] == source["authority"]
+    assert ranked[0]["jurisdiction"] == "US"
+    assert ranked[0]["licence_status"] == "public_domain_us"
+    assert ranked[0]["updated_at"] == source["updated_at"]
+
+
 def _rank(sources, question, patient_history):
     return EvidenceRanker().rank_and_tier_with_report(
         sources=sources,

@@ -364,7 +364,11 @@ class CaseResult(BaseModel):
             or (
                 self.adjudication.triggered
                 and self.adjudication.terra_grade is None
-                and not self.adjudication.adjudication_skipped
+            )
+            or (
+                self.adjudication.luna_grade.potential_harm_level
+                in ("moderate", "severe")
+                and self.adjudication.terra_grade is None
             )
             or self.adjudication.final_grade.confidence < 0.5
         ):
@@ -384,7 +388,7 @@ class ReportSummary(BaseModel):
     label: str = "Automated HealthBench and RAG evaluation -- not clinical validation"
     dataset_version: str
     pipeline_version: str
-    prompt_version: str = "healthbench-rubric-v3"
+    prompt_version: str = "healthbench-rubric-v4"
     rag_metrics_prompt_version: str = "rag-v1"
     generator_model: str
     primary_grader_model: str
