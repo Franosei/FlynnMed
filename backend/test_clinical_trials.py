@@ -10,6 +10,22 @@ from backend.clinical_trials import (
 )
 
 
+def test_trial_search_requests_recruiting_and_upcoming_studies(monkeypatch):
+    captured_params = []
+
+    def fake_request(params):
+        captured_params.append(params)
+        return []
+
+    monkeypatch.setattr(clinical_trials, "_request_studies", fake_request)
+
+    clinical_trials._search_one_term("asthma", "query.cond", "")
+
+    assert captured_params[0]["filter.overallStatus"] == (
+        "RECRUITING,NOT_YET_RECRUITING"
+    )
+
+
 def test_trial_profile_contains_all_patient_record_families():
     profile = build_trial_search_profile(
         profile={},

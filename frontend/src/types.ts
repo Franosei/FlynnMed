@@ -355,6 +355,7 @@ export type TrialSearchResult = {
   condition_terms: string[];
   medication_terms: string[];
   location: string;
+  recruitment_statuses?: string[];
   error?: string;
   context_status?: string;
   clinical_context?: Dict<any>;

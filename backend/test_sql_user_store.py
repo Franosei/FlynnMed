@@ -189,7 +189,10 @@ def test_care_plan_lifecycle():
         "condition": "Type 2 Diabetes",
         "status": "active",
         "goals": [{"text": "Walk 30 min/day"}],
-        "daily_tasks": [{"id": "t1", "text": "Check blood sugar"}],
+        "daily_tasks": [
+            {"id": "t1", "text": "Check blood sugar"},
+            {"id": "t2", "text": "Take a short walk"},
+        ],
     })
     assert plan["condition"] == "Type 2 Diabetes"
     assert plan["goals"][0]["id"]  # _stamp_ids assigns an id
@@ -199,6 +202,14 @@ def test_care_plan_lifecycle():
 
     toggled = SqlCarePlanStore.toggle_task(username, plan["id"], "t1", True)
     assert toggled["daily_tasks"][0]["completed_dates"]
+
+    SqlCarePlanStore.toggle_task(username, plan["id"], "t2", True)
+    with_both_tasks_done = SqlCarePlanStore.get_plan(username, plan["id"])
+    assert {
+        task["id"]
+        for task in with_both_tasks_done["daily_tasks"]
+        if task.get("completed_dates")
+    } == {"t1", "t2"}
 
     with_note = SqlCarePlanStore.add_after_visit_note(username, plan["id"], "Discussed insulin options")
     assert with_note["after_visit_notes"][0]["text"] == "Discussed insulin options"

@@ -5,6 +5,7 @@ import inspect
 import json
 import os
 import uuid
+from copy import deepcopy
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -88,7 +89,7 @@ class CarePlanStore:
 
     @staticmethod
     def toggle_task(username: str, plan_id: str, task_id: str, done: bool) -> Optional[Dict]:
-        plan = CarePlanStore.get_plan(username, plan_id)
+        plan = deepcopy(CarePlanStore.get_plan(username, plan_id))
         if not plan:
             return None
         today = _today()

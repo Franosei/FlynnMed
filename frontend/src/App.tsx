@@ -3978,8 +3978,8 @@ function TrialsView({
       <section className="workspace-band">
         <div>
           <span className="eyebrow">Clinical trials</span>
-          <h2>Find recruiting studies.</h2>
-          <p>Results use saved health context and need confirmation by a study team or clinician.</p>
+          <h2>Find recruiting and upcoming studies.</h2>
+          <p>Results use saved health context for preliminary matching and need confirmation by a study team or clinician.</p>
         </div>
         <div className="trial-search">
           <select value={location} onChange={(event) => setLocation(event.target.value)}>
@@ -4026,7 +4026,7 @@ function TrialsView({
             </div>
           )}
           <div className="toolbar-card">
-            <span>Recruiting only</span>
+            <span>Recruiting + upcoming</span>
             <span>Top {result.trials.length} ranked matches</span>
             <span>Country: {result.location}</span>
             <span>{formatTimestamp(result.searched_at) || "Saved search"}</span>
@@ -4039,7 +4039,7 @@ function TrialsView({
           {result.trials.length ? (
             result.trials.map((trial, index) => <TrialCard trial={trial} index={index + 1} key={clean(trial.nct_id, String(index))} />)
           ) : (
-            <div className="empty-state">No recruiting trials were returned for this context and location.</div>
+            <div className="empty-state">No recruiting or upcoming trials were returned for this context and location.</div>
           )}
         </section>
       )}
@@ -4052,6 +4052,9 @@ function TrialCard({ trial, index }: { trial: Dict<any>; index: number }) {
   const bestLocation = (trial.best_location ?? {}) as Dict<any>;
   const contacts = Array.isArray(trial.contacts) ? trial.contacts : [];
   const officials = Array.isArray(trial.officials) ? trial.officials : [];
+  const interventions = Array.isArray(trial.interventions) ? trial.interventions : [];
+  const ageStatus = clean(trial.age_status, "unknown").toLowerCase();
+  const sexStatus = clean(trial.sex_status, "unknown").toLowerCase();
   return (
     <article className="trial-card">
       <div className="trial-head">
@@ -4064,6 +4067,23 @@ function TrialCard({ trial, index }: { trial: Dict<any>; index: number }) {
         <span>{clean(trial.status, "Recruiting")}</span>
         <span>{clean(trial.phase, "Phase not listed")}</span>
         <span>{clean(trial.study_type, "Study type not listed")}</span>
+      </div>
+      {trial.summary && <p className="trial-summary">{String(trial.summary)}</p>}
+      <div className="trial-eligibility" aria-label="Preliminary eligibility screening">
+        <div className="trial-eligibility-head">
+          <strong>Preliminary eligibility screen</strong>
+          <span>Study team must confirm</span>
+        </div>
+        <div className="trial-eligibility-grid">
+          <div>
+            <span className={`eligibility-status ${ageStatus}`}>Age: {ageStatus}</span>
+            <p>{clean(trial.age_reason, "Age eligibility needs manual review.")}</p>
+          </div>
+          <div>
+            <span className={`eligibility-status ${sexStatus}`}>Sex: {sexStatus}</span>
+            <p>{clean(trial.sex_reason, "Sex eligibility needs manual review.")}</p>
+          </div>
+        </div>
       </div>
       <div className="trial-detail-grid">
         <div>
@@ -4092,8 +4112,27 @@ function TrialCard({ trial, index }: { trial: Dict<any>; index: number }) {
         <summary>Why this score?</summary>
         <p>Alignment {trial.alignment_score ?? 0}/50, coverage {trial.coverage_score ?? 0}/30, location {trial.location_score ?? 0}/20.</p>
         {trial.llm_reasoning && <p>{String(trial.llm_reasoning)}</p>}
+        {Array.isArray(trial.aligned_conditions) && trial.aligned_conditions.length > 0 && <p>Aligned record items: {trial.aligned_conditions.join("; ")}</p>}
+        {Array.isArray(trial.found_for_conditions) && trial.found_for_conditions.length > 0 && <p>Search matches: {trial.found_for_conditions.join("; ")}</p>}
         {Array.isArray(trial.exclusion_risks) && trial.exclusion_risks.length > 0 && <p>Potential exclusion factors: {trial.exclusion_risks.join("; ")}</p>}
       </details>
+      {(interventions.length > 0 || trial.eligibility) && (
+        <details className="details-block trial-study-details">
+          <summary>Study interventions and eligibility criteria</summary>
+          {interventions.length > 0 && (
+            <div>
+              <strong>Interventions</strong>
+              <p>{interventions.join(", ")}</p>
+            </div>
+          )}
+          {trial.eligibility && (
+            <div>
+              <strong>Published eligibility criteria</strong>
+              <p className="trial-criteria">{String(trial.eligibility)}</p>
+            </div>
+          )}
+        </details>
+      )}
     </article>
   );
 }
@@ -4122,6 +4161,28 @@ function todayStr() {
 
 function isTaskDoneToday(task: CarePlanTask): boolean {
   return (task.completed_dates ?? []).includes(todayStr());
+}
+
+function setTaskDoneToday(plan: CarePlan, taskId: string, done: boolean): CarePlan {
+  const today = todayStr();
+  const updateTasks = (tasks: CarePlanTask[] = []) => tasks.map((task) => {
+    if (task.id !== taskId) return task;
+    const completedDates = new Set(task.completed_dates ?? []);
+    if (done) completedDates.add(today);
+    else completedDates.delete(today);
+    return { ...task, completed_dates: [...completedDates] };
+  });
+  return {
+    ...plan,
+    daily_tasks: updateTasks(plan.daily_tasks),
+    weekly_tasks: updateTasks(plan.weekly_tasks),
+  };
+}
+
+function taskDoneInPlan(plan: CarePlan, taskId: string, fallback: boolean): boolean {
+  const task = [...(plan.daily_tasks ?? []), ...(plan.weekly_tasks ?? [])]
+    .find((candidate) => candidate.id === taskId);
+  return task ? isTaskDoneToday(task) : fallback;
 }
 
 function planProgress(plan: CarePlan): { done: number; total: number } {
@@ -4400,13 +4461,35 @@ function CarePlanDetail({
   const [gpBusy, setGpBusy] = useState(false);
   const [afterVisitText, setAfterVisitText] = useState("");
   const [savingNote, setSavingNote] = useState(false);
+  const [pendingTaskIds, setPendingTaskIds] = useState<Set<string>>(new Set());
+  const toggleQueue = useRef<Promise<void>>(Promise.resolve());
 
-  async function handleToggle(taskId: string, done: boolean) {
-    try {
-      const updated = await toggleCarePlanTask(plan.id, taskId, done);
-      setPlan(updated);
+  function handleToggle(taskId: string, done: boolean) {
+    setPlan((current) => setTaskDoneToday(current, taskId, done));
+    setPendingTaskIds((current) => new Set(current).add(taskId));
+
+    const operation = toggleQueue.current.then(async () => {
+      const updated = await toggleCarePlanTask(initialPlan.id, taskId, done);
+      setPlan((current) => setTaskDoneToday(
+        current,
+        taskId,
+        taskDoneInPlan(updated, taskId, done),
+      ));
       onUpdated(updated);
-    } catch { /* ignore */ }
+    });
+
+    // Serialize plan-document writes while allowing every checkbox to update
+    // optimistically as soon as it is tapped.
+    toggleQueue.current = operation.catch(() => undefined);
+    void operation
+      .catch(() => setPlan((current) => setTaskDoneToday(current, taskId, !done)))
+      .finally(() => {
+        setPendingTaskIds((current) => {
+          const next = new Set(current);
+          next.delete(taskId);
+          return next;
+        });
+      });
   }
 
   async function handleGpPrep() {
@@ -4499,6 +4582,8 @@ function CarePlanDetail({
                   <input
                     type="checkbox"
                     checked={done}
+                    disabled={pendingTaskIds.has(task.id)}
+                    aria-busy={pendingTaskIds.has(task.id)}
                     onChange={(e) => handleToggle(task.id, e.target.checked)}
                   />
                   <span className="cp-task-time">{TIME_OF_DAY_ICON[task.time_of_day ?? "any"]}</span>

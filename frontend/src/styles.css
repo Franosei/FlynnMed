@@ -2479,6 +2479,10 @@ label {
   color: var(--muted);
 }
 
+.trial-summary {
+  line-height: 1.55;
+}
+
 .trial-chip-row {
   display: flex;
   flex-wrap: wrap;
@@ -2500,6 +2504,73 @@ label {
 
 .trial-detail-grid p {
   margin: 0.3rem 0 0;
+}
+
+.trial-eligibility {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0.8rem 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  padding: 0.75rem;
+}
+
+.trial-eligibility-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.trial-eligibility-head span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.trial-eligibility-grid {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.trial-eligibility-grid > div {
+  min-width: 0;
+}
+
+.trial-eligibility-grid p {
+  margin: 0.35rem 0 0;
+  line-height: 1.45;
+}
+
+.eligibility-status {
+  display: inline-flex;
+  border-radius: 999px;
+  background: var(--neutral-soft);
+  padding: 0.28rem 0.5rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 850;
+  text-transform: capitalize;
+}
+
+.eligibility-status.included {
+  background: var(--success-soft);
+  color: var(--success-ink);
+}
+
+.eligibility-status.excluded {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.trial-study-details > div {
+  margin-top: 0.75rem;
+}
+
+.trial-criteria {
+  white-space: pre-line;
+  line-height: 1.5;
 }
 
 .open-link {
@@ -3539,6 +3610,10 @@ label {
   }
 
   .trial-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .trial-eligibility-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

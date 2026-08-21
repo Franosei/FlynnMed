@@ -9,6 +9,7 @@ accounts behave like "not found").
 from __future__ import annotations
 
 import uuid
+from copy import deepcopy
 from datetime import date, datetime, timezone
 from typing import Dict, List, Optional
 
@@ -69,14 +70,26 @@ def _row_to_dict(row: CarePlan) -> Dict:
     }
 
 
-def _find_plan(db, patient: Optional[Patient], plan_id: str) -> Optional[CarePlan]:
+def _find_plan(
+    db,
+    patient: Optional[Patient],
+    plan_id: str,
+    *,
+    for_update: bool = False,
+) -> Optional[CarePlan]:
     if patient is None or not plan_id:
         return None
     try:
         parsed_id = uuid.UUID(str(plan_id))
     except ValueError:
         return None
-    return db.execute(select(CarePlan).where(CarePlan.patient_id == patient.id, CarePlan.id == parsed_id)).scalar_one_or_none()
+    statement = select(CarePlan).where(
+        CarePlan.patient_id == patient.id,
+        CarePlan.id == parsed_id,
+    )
+    if for_update:
+        statement = statement.with_for_update()
+    return db.execute(statement).scalar_one_or_none()
 
 
 class SqlCarePlanStore:
@@ -147,11 +160,15 @@ class SqlCarePlanStore:
         session_factory = get_session_factory()
         with session_factory() as db:
             patient = _get_patient(db, username)
-            row = _find_plan(db, patient, plan_id)
+            # The entire plan is stored in one JSON document. Lock the row so
+            # two rapid checkbox requests cannot overwrite each other's task.
+            row = _find_plan(db, patient, plan_id, for_update=True)
             if row is None:
                 return None
 
-            body = dict(row.body or {})
+            # JSON values are nested; a shallow copy can evade SQLAlchemy's
+            # dirty tracking when only completed_dates changes.
+            body = deepcopy(row.body or {})
             today = _today()
             for task in body.get("daily_tasks", []) + body.get("weekly_tasks", []):
                 if task.get("id") == task_id:

@@ -5,8 +5,9 @@ Three-phase pipeline:
   1. Extract  -- LLM reads the full patient context and returns individual
                 medical condition/symptom terms and drug names as lists.
   2. Search   -- One ClinicalTrials.gov API call per term (query.cond /
-                query.intr + query.locn).  Results merged by NCT ID; each
-                trial records which patient conditions found it.
+                query.intr + query.locn) for recruiting and upcoming studies.
+                Results are merged by NCT ID; each trial records which patient
+                conditions found it.
   3. Score    -- Deterministic pre-scoring (coverage + location) narrows the
                 candidate set, then an LLM is used to assess condition
                 alignment and age/sex eligibility with clinical accuracy.
@@ -52,7 +53,8 @@ from backend.utils import render_vital_for_prompt
 load_dotenv()
 
 API_BASE_URL = "https://clinicaltrials.gov/api/v2"
-RECRUITING_STATUS = "RECRUITING"
+OPEN_RECRUITMENT_STATUSES = ("RECRUITING", "NOT_YET_RECRUITING")
+OPEN_RECRUITMENT_STATUS_FILTER = ",".join(OPEN_RECRUITMENT_STATUSES)
 
 STOPWORDS = {
     "about", "after", "again", "against", "also", "and", "are", "because",
@@ -265,7 +267,8 @@ def _search_one_term(term: str, param_key: str, location_query: str,
                      page_size: int = 25) -> List[Dict]:
     params: Dict[str, str] = {
         "format": "json", "pageSize": str(page_size),
-        "countTotal": "true", "filter.overallStatus": RECRUITING_STATUS,
+        "countTotal": "true",
+        "filter.overallStatus": OPEN_RECRUITMENT_STATUS_FILTER,
         param_key: term,
     }
     if location_query.strip():
@@ -829,6 +832,7 @@ def find_matching_trials(
             "searched_at": datetime.now(timezone.utc).isoformat(),
             "trials": [], "condition_terms": [], "medication_terms": [],
             "location": location_query,
+            "recruitment_statuses": list(OPEN_RECRUITMENT_STATUSES),
             "error": (
                 "Trial search paused because the patient context is ambiguous or conflicting. "
                 + (context_decision.clarifying_question or "Confirm the exact test or condition first.")
@@ -874,6 +878,7 @@ def find_matching_trials(
             "searched_at": datetime.now(timezone.utc).isoformat(),
             "trials": [], "condition_terms": [], "medication_terms": [],
             "location": location_query,
+            "recruitment_statuses": list(OPEN_RECRUITMENT_STATUSES),
             "error": (
                 "No specific medical conditions or medications could be found in your saved data. "
                 "Chat with FlynnMed about your health concerns -- the assistant builds a "
@@ -946,6 +951,7 @@ def find_matching_trials(
         "condition_terms": condition_terms,
         "medication_terms": medication_terms,
         "location": location_query,
+        "recruitment_statuses": list(OPEN_RECRUITMENT_STATUSES),
         "error": "",
         "context_status": context_decision.status if context_decision else "insufficient",
         "clinical_context": context_decision.as_dict() if context_decision else {},
