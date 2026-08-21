@@ -62,13 +62,7 @@ class OfficialGuidanceEngine:
             self._search_medlineplus,
             self._search_cdc,
             self._search_myhealthfinder,
-            # _search_va_dod is disabled: every fetch to healthquality.va.gov
-            # fails TLS verification (missing Federal PKI intermediate in the
-            # public trust store), and the failure was silently swallowed
-            # while the source stayed in the cited list -- producing
-            # unfetchable, topically unrelated citations. Re-enable once the
-            # CA trust chain is fixed and _search_va_dod's relevance
-            # threshold is tightened.
+            self._search_va_dod,
         )
         futures = []
         with ThreadPoolExecutor(
