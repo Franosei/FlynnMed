@@ -23,6 +23,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://flynnmed:flynnmed_dev_only@db:5432/flynnmed
       DATA_BACKEND: sql
+      SEED_DEMO_ACCOUNTS: "true"
     env_file:
       - .env
     ports:

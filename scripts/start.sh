@@ -14,6 +14,10 @@ if [ -n "${DATABASE_URL:-}" ]; then
     echo "Migrating any legacy Railway accounts..."
     DATA_BACKEND=legacy python -m backend.scripts.migrate_json_to_sql --source legacy-postgres
     export DATA_BACKEND=sql
+    if [ "${SEED_DEMO_ACCOUNTS:-true}" = "true" ]; then
+        echo "Seeding fictional demo accounts..."
+        python -m backend.scripts.seed_demo_accounts
+    fi
 else
     echo "DATABASE_URL is not set. Clinician access and MRNs will be unavailable."
 fi

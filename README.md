@@ -246,6 +246,7 @@ The main environment variables are listed below. Evaluation-specific variables a
 | `OPENAI_EMBEDDING_MODEL` | Embedding model, defaulting to `text-embedding-3-small` |
 | `DATABASE_URL` | PostgreSQL connection string for relational accounts, patient records, consent and audit workflows |
 | `DATA_BACKEND` | Set to `sql` for the relational application store. `legacy` remains for migration and isolated evaluation use |
+| `SEED_DEMO_ACCOUNTS` | Seeds the fictional Jane Whitfield patient chart and Dr. Omar Farouk clinician consent on startup (defaults to `true` in `scripts/start.sh`; set to `false` for any non-demo deployment) |
 | `APP_SECRET` or `SECRET_KEY` | Signs the session tokens currently issued by `backend/api.py`. Set a strong value outside local development |
 | `JWT_SECRET_KEY` | Secret used by the SQL-backed JWT utilities. Set a strong value for deployed environments |
 | `ENVIRONMENT` | Runtime mode, normally `development` or `production` |
@@ -255,6 +256,23 @@ The main environment variables are listed below. Evaluation-specific variables a
 | `EHR_PROVIDER` | EHR provider selection. Only `none` is implemented at present |
 | `VITE_API_BASE_URL` | Optional frontend API base URL |
 | `VITE_DEV_PROXY_TARGET` | Optional Vite development proxy target |
+
+### Seeded demo accounts
+
+Container and Procfile deployments seed these fictional records after database
+migrations. The operation is idempotent, so restarts do not duplicate the demo
+charts. To seed a database manually, run `py -m backend.scripts.seed_demo_accounts`.
+
+| Account | Username | Password | Demo details |
+| --- | --- | --- | --- |
+| Jane Whitfield | `demo.patient.jane` | `DemoPatient!2026` | Patient, MRN `FM-CKTD-724Z` |
+| Michael Reed | `demo.patient.michael` | `DemoMichael!2026` | Patient, MRN `FM-H8DJ-10M1` |
+| Aisha Khan | `demo.patient.aisha` | `DemoAisha!2026` | Patient, MRN `FM-YE5X-1AMA` |
+| Dr. Omar Farouk | `demo.dr.omar` | `DemoClinician!2026` | Doctor with active record and chat-history grants for all three patients |
+
+These credentials are public demo credentials. Keep `SEED_DEMO_ACCOUNTS=true`
+only on a demonstration deployment with fictional data, never on a system that
+stores real patient information.
 
 ## Data migration
 
