@@ -4199,9 +4199,11 @@ function CarePlanCard({
 function NewPlanPanel({
   snapshot,
   onCreated,
+  onCancel,
 }: {
   snapshot: Snapshot;
   onCreated: (plan: CarePlan) => void;
+  onCancel: () => void;
 }) {
   const knownConditions = (snapshot.conditions ?? []).map((c: Dict) => c.name as string).filter(Boolean);
   const suggestFirst = knownConditions.length > 0 ? knownConditions[0] : "";
@@ -4266,38 +4268,58 @@ function NewPlanPanel({
   }
 
   return (
-    <div className="cp-new-panel">
+    <section className="cp-new-panel" aria-labelledby="new-care-plan-title">
       <div className="cp-new-header">
-        <Sparkles size={22} color="var(--primary)" />
+        <span className="cp-new-icon" aria-hidden="true">
+          <Sparkles size={22} />
+        </span>
         <div>
-          <h3>Create a care plan</h3>
-          <p>The AI agent searches NHS/NICE guidelines and clinical evidence to build a personalised plan.</p>
+          <span className="cp-step-label">New personalised plan</span>
+          <h3 id="new-care-plan-title">What would you like help managing?</h3>
+          <p>Choose a condition or type your own. FlynnMed will use your saved health context and search clinical guidance.</p>
         </div>
+        <button
+          className="cp-new-close"
+          onClick={onCancel}
+          type="button"
+          aria-label="Close new care plan form"
+          disabled={busy}
+        >
+          <X size={18} />
+        </button>
       </div>
 
       {!clarify && knownConditions.length > 0 && (
-        <div className="cp-condition-chips">
-          {knownConditions.map((c) => (
-            <button
-              key={c}
-              className={`cp-chip${effectiveCondition === c ? " active" : ""}`}
-              onClick={() => setCondition(c)}
-              type="button"
-            >
-              {c}
-            </button>
-          ))}
+        <div className="cp-condition-picker">
+          <span className="cp-field-label">Choose from your health record</span>
+          <div className="cp-condition-chips" aria-label="Conditions in your health record">
+            {knownConditions.map((c) => (
+              <button
+                key={c}
+                className={`cp-chip${effectiveCondition === c ? " active" : ""}`}
+                onClick={() => setCondition(c)}
+                type="button"
+              >
+                {c}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
       {!clarify && (
-        <div className="cp-condition-row">
+        <div className="cp-condition-entry">
+          <label className="cp-field-label" htmlFor="care-plan-condition">
+            Or enter a different health concern
+          </label>
           <input
+            id="care-plan-condition"
             value={condition}
             onChange={(e) => setCondition(e.target.value)}
-            placeholder="e.g. Migraine, Psoriasis…"
+            placeholder="For example: migraine or asthma"
             className="cp-custom-input"
           />
+          <small>Use one clear condition or concern so the plan stays focused.</small>
         </div>
       )}
 
@@ -4353,12 +4375,12 @@ function NewPlanPanel({
       )}
 
       {!clarify && (
-        <button className="primary" disabled={busy || !effectiveCondition} onClick={handleGenerate} type="button">
+        <button className="primary cp-generate-btn" disabled={busy || !effectiveCondition} onClick={handleGenerate} type="button">
           <Sparkles size={16} />
-          {busy ? "Building plan…" : "Generate evidence-based plan"}
+          {busy ? "Building your plan…" : "Create my care plan"}
         </button>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -4720,13 +4742,20 @@ function CarePlanScreen({ snapshot }: { snapshot: Snapshot }) {
           <h2>Care Plans</h2>
           <p>Personalised, evidence-based plans built from NHS/NICE guidelines and your health context.</p>
         </div>
-        <button className="primary" onClick={() => setShowNew(true)} type="button">
-          <Plus size={16} /> New plan
-        </button>
+        {!showNew && (
+          <button
+            className="primary cp-new-plan-trigger"
+            onClick={() => setShowNew(true)}
+            type="button"
+            aria-expanded={false}
+          >
+            <Plus size={16} /> Make a care plan
+          </button>
+        )}
       </div>
 
       {showNew && (
-        <NewPlanPanel snapshot={snapshot} onCreated={handleCreated} />
+        <NewPlanPanel snapshot={snapshot} onCreated={handleCreated} onCancel={() => setShowNew(false)} />
       )}
 
       {loading ? (
