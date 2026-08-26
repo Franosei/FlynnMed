@@ -1,0 +1,233 @@
+{
+  "label": "Automated HealthBench and RAG evaluation -- not clinical validation",
+  "summary": {
+    "label": "Automated HealthBench and RAG evaluation -- not clinical validation",
+    "dataset_version": "healthbench",
+    "pipeline_version": "c2c3dbc28f3f3a937a8423a63facc3c4d742d5e3",
+    "prompt_version": "healthbench-rubric-v4",
+    "rag_metrics_prompt_version": "rag-claim-audit-v4",
+    "generator_model": "gpt-5.4-mini",
+    "primary_grader_model": "gpt-5.6-luna",
+    "adjudicator_model": "gpt-4o-mini",
+    "rag_metrics_model": "gpt-5.6-luna",
+    "run_date": "2026-08-26T06:07:55.776211+00:00",
+    "total_cases": 1,
+    "healthbench_graded_cases": 0,
+    "pass_rate": null,
+    "weighted_healthbench_score": null,
+    "under_triage_rate": null,
+    "severe_under_triage_rate": null,
+    "emergency_sensitivity": null,
+    "physician_labelled_emergency_cases": 0,
+    "physician_labelled_emergencies_recognised": 0,
+    "conditionally_emergent_cases": 0,
+    "physician_labelled_non_emergent_cases": 0,
+    "adjudication_rate": null,
+    "disagreement_count": 0,
+    "moderation_block_count": 0,
+    "moderation_block_rate": 0.0,
+    "moderation_block_categories": {},
+    "insufficient_evidence_count": 0,
+    "insufficient_evidence_rate": 0.0,
+    "average_duration_seconds": null,
+    "median_duration_seconds": null,
+    "p95_duration_seconds": null,
+    "max_duration_seconds": null,
+    "rag_metric_aggregates": {
+      "faithfulness": {
+        "average_score": 0.8,
+        "applicable_cases": 1,
+        "total_cases": 1,
+        "assessment_count": 1,
+        "status": "insufficient_sample"
+      },
+      "context_relevance": {
+        "average_score": 0.8,
+        "applicable_cases": 1,
+        "total_cases": 1,
+        "assessment_count": 1,
+        "status": "insufficient_sample"
+      },
+      "noise_sensitivity": {
+        "average_score": 0.8,
+        "applicable_cases": 1,
+        "total_cases": 1,
+        "assessment_count": 1,
+        "status": "insufficient_sample"
+      },
+      "context_recall": {
+        "average_score": 0.8,
+        "applicable_cases": 1,
+        "total_cases": 1,
+        "assessment_count": 1,
+        "status": "insufficient_sample"
+      },
+      "answer_correctness": {
+        "average_score": null,
+        "applicable_cases": 0,
+        "total_cases": 1,
+        "assessment_count": 0,
+        "status": "not_applicable"
+      },
+      "calibration": {
+        "average_score": 0.8,
+        "applicable_cases": 1,
+        "total_cases": 1,
+        "assessment_count": 1,
+        "status": "insufficient_sample"
+      },
+      "contradiction_handling": {
+        "average_score": null,
+        "applicable_cases": 0,
+        "total_cases": 1,
+        "assessment_count": 0,
+        "status": "not_applicable"
+      },
+      "citation_accuracy": {
+        "average_score": 0.8,
+        "applicable_cases": 1,
+        "total_cases": 1,
+        "assessment_count": 1,
+        "status": "insufficient_sample"
+      },
+      "citation_completeness": {
+        "average_score": null,
+        "applicable_cases": 0,
+        "total_cases": 1,
+        "assessment_count": 0,
+        "status": "not_applicable"
+      },
+      "context_precision_ranking": {
+        "average_score": 0.8,
+        "applicable_cases": 1,
+        "total_cases": 1,
+        "assessment_count": 1,
+        "status": "insufficient_sample"
+      },
+      "clinical_harmlessness": {
+        "average_score": 0.8,
+        "applicable_cases": 1,
+        "total_cases": 1,
+        "assessment_count": 1,
+        "status": "insufficient_sample"
+      },
+      "consistency": {
+        "average_score": null,
+        "applicable_cases": 0,
+        "total_cases": 1,
+        "assessment_count": 0,
+        "status": "not_applicable"
+      }
+    },
+    "by_tag": {
+      "theme:test": {
+        "case_count": 1,
+        "healthbench_graded_cases": 0,
+        "pass_rate": null,
+        "weighted_healthbench_score": null,
+        "under_triage_rate": null,
+        "severe_under_triage_rate": null
+      }
+    },
+    "relevant_document_count": 1,
+    "irrelevant_document_count": 1,
+    "rag_metrics_error_count": 1,
+    "claim_audit_warning_case_count": 0,
+    "claim_audit_warning_count": 0,
+    "unmapped_claim_count": 0,
+    "role_counts": {
+      "patient": 1
+    },
+    "related_link_count": 0,
+    "valid_related_link_count": 0,
+    "related_link_url_coverage": null,
+    "rendered_citation_count": 0,
+    "resolved_rendered_citation_count": 0,
+    "rendered_citation_resolution_rate": null,
+    "cases_requiring_human_review": [
+      "case-1"
+    ],
+    "notes": [
+      "Overall under-triage rates remain model-judge audit proxies. Emergency recognition sensitivity uses only HealthBench's physician-agreed emergent category; conditionally emergent cases are reported separately."
+    ]
+  },
+  "cases": [
+    {
+      "case_id": "case-1",
+      "source_dataset": "healthbench",
+      "tags": [
+        "theme:test"
+      ],
+      "resolved_role": "patient",
+      "role_resolution_reason": "historical result without an audited role reason",
+      "role_resolution_confidence": null,
+      "requires_human_review": true,
+      "duration_seconds": 0.0,
+      "moderation_blocked": false,
+      "moderation_category": null,
+      "insufficient_evidence": false,
+      "rag_metrics": {
+        "faithfulness": {
+          "score": 0.8,
+          "applicable": true
+        },
+        "context_relevance": {
+          "score": 0.8,
+          "applicable": true
+        },
+        "noise_sensitivity": {
+          "score": 0.8,
+          "applicable": true
+        },
+        "context_recall": {
+          "score": 0.8,
+          "applicable": true
+        },
+        "answer_correctness": {
+          "score": null,
+          "applicable": false
+        },
+        "calibration": {
+          "score": 0.8,
+          "applicable": true
+        },
+        "contradiction_handling": {
+          "score": null,
+          "applicable": false
+        },
+        "citation_accuracy": {
+          "score": 0.8,
+          "applicable": true
+        },
+        "citation_completeness": {
+          "score": null,
+          "applicable": false
+        },
+        "context_precision_ranking": {
+          "score": 0.8,
+          "applicable": true
+        },
+        "clinical_harmlessness": {
+          "score": 0.8,
+          "applicable": true
+        },
+        "consistency": {
+          "score": null,
+          "applicable": false
+        }
+      },
+      "retrieved_document_split": {
+        "relevant": 1,
+        "irrelevant": 1
+      },
+      "claim_audit": {
+        "material_claims": 0,
+        "citation_pairs": 0,
+        "error": false,
+        "warning_count": 0
+      },
+      "gold_answer_provenance": null,
+      "rag_metrics_error": true
+    }
+  ]
+}

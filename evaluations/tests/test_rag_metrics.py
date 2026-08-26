@@ -88,6 +88,7 @@ def _claim_payload(answer="Use the relevant advice [S1].", cited=True):
 
 def test_json_completion_falls_back_and_records_actual_model(monkeypatch):
     calls = []
+    monkeypatch.setenv("EVAL_API_KEY", "test-evaluator-key")
 
     def _create(**kwargs):
         calls.append(kwargs)
