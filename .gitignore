@@ -20,6 +20,9 @@ evaluations/datasets/downloaded/*
 evaluations/datasets/normalized/*
 evaluations/datasets/private/*
 #evaluations/results/*
+# Model-grading checkpoints contain full prompts/responses and may be large.
+evaluations/results/raw/**/rag_regrade_*.jsonl
+evaluations/results/raw/**/*_checkpoint.jsonl
 !evaluations/datasets/downloaded/.gitkeep
 !evaluations/datasets/normalized/.gitkeep
 !evaluations/datasets/private/.gitkeep
@@ -36,6 +39,10 @@ mono_crash.*
 [Dd]ebugPublic/
 [Rr]elease/
 [Rr]eleases/
+# "release" is a generic Visual Studio output name, but this directory holds
+# versioned FlynnMed evaluation policy/data definitions rather than build output.
+!evaluations/release/
+!evaluations/release/**
 x64/
 x86/
 [Ww][Ii][Nn]32/

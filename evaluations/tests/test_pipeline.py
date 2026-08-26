@@ -214,3 +214,21 @@ def test_build_rag_engine_sets_generator_model_without_touching_source(monkeypat
         assert backend.summarizer.LLMHelper.ANSWER_MODEL == "gpt-5.4-mini"
     finally:
         backend.summarizer.LLMHelper.ANSWER_MODEL = original_answer_model
+
+
+def test_build_rag_engine_can_disable_query_expansion_for_ablation(monkeypatch):
+    import backend.rag_system
+
+    class _FakeOrchestrator:
+        query_expander = object()
+
+    class _FakeRAGEngine:
+        def __init__(self):
+            self.query_expander = object()
+            self._orchestrator = _FakeOrchestrator()
+
+    monkeypatch.setattr(backend.rag_system, "RAGEngine", _FakeRAGEngine)
+    engine = build_rag_engine(EvalConfig(query_expansion_enabled=False))
+
+    assert engine.query_expander is None
+    assert engine._orchestrator.query_expander is None

@@ -69,7 +69,7 @@ def _prepare_cases(dataset_name: str, force_download: bool) -> List[EvalCase]:
     return load_cases(norm_path)
 
 
-def _load_case_manifest(path: Path) -> List[str]:
+def _load_case_manifest(path: Path, partition: str | None = None) -> List[str]:
     """Load ordered case IDs from a report JSON or a plain JSON list."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     entries = payload.get("cases") if isinstance(payload, dict) else payload
@@ -77,6 +77,12 @@ def _load_case_manifest(path: Path) -> List[str]:
         raise ValueError(
             "Case manifest must contain a JSON list or a report 'cases' list."
         )
+    if partition:
+        entries = [
+            entry
+            for entry in entries
+            if isinstance(entry, dict) and entry.get("partition") == partition
+        ]
     case_ids = [
         str(entry.get("case_id") if isinstance(entry, dict) else entry).strip()
         for entry in entries
@@ -89,9 +95,9 @@ def _load_case_manifest(path: Path) -> List[str]:
 
 
 def _select_manifest_cases(
-    cases: List[EvalCase], manifest_path: Path
+    cases: List[EvalCase], manifest_path: Path, partition: str | None = None
 ) -> List[EvalCase]:
-    case_ids = _load_case_manifest(manifest_path)
+    case_ids = _load_case_manifest(manifest_path, partition=partition)
     by_id = {case.case_id: case for case in cases}
     missing = [case_id for case_id in case_ids if case_id not in by_id]
     if missing:
@@ -360,8 +366,15 @@ def run_dataset(
     case_manifest = getattr(args, "case_manifest", None)
     random_seed = getattr(args, "random_seed", None)
     if case_manifest:
-        cases = _select_manifest_cases(cases, Path(case_manifest))
-        print(f"[{dataset_name}] selected {len(cases)} cases from {case_manifest}.")
+        case_partition = getattr(args, "case_partition", None)
+        cases = _select_manifest_cases(
+            cases, Path(case_manifest), partition=case_partition
+        )
+        suffix = f" partition={case_partition}" if case_partition else ""
+        print(
+            f"[{dataset_name}] selected {len(cases)} cases from "
+            f"{case_manifest}{suffix}."
+        )
     elif random_seed is not None:
         random.Random(random_seed).shuffle(cases)
         print(f"[{dataset_name}] randomized case order with seed {random_seed}.")
@@ -485,20 +498,34 @@ def _regrade_saved_rag_metrics(
             )
 
     regraded_by_id = dict(completed)
+    pending = [result for result in saved if result.case.case_id not in completed]
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_mode = "a" if checkpoint_path.exists() else "w"
     checkpoint_fh = open(checkpoint_path, checkpoint_mode, encoding="utf-8")
     try:
-        for index, result in enumerate(saved, start=1):
-            case_id = result.case.case_id
-            if case_id in completed:
-                continue
-            print(f"[{dataset_name}] RAG re-grade ({index}/{len(saved)}) {case_id}")
-            regraded = _attach_rag_metrics(result, config)
-            regraded_by_id[case_id] = regraded
-            if regraded.rag_metrics and not regraded.rag_metrics.evaluation_error:
-                checkpoint_fh.write(regraded.model_dump_json() + "\n")
-                checkpoint_fh.flush()
+        print(
+            f"[{dataset_name}] RAG re-grading {len(pending)} saved answers with "
+            f"{config.rag_regrade_workers} worker(s)"
+        )
+        with ThreadPoolExecutor(max_workers=config.rag_regrade_workers) as executor:
+            future_to_result = {
+                executor.submit(_attach_rag_metrics, result, config): result
+                for result in pending
+            }
+            completed_now = 0
+            for future in as_completed(future_to_result):
+                original = future_to_result[future]
+                regraded = future.result()
+                case_id = original.case.case_id
+                regraded_by_id[case_id] = regraded
+                completed_now += 1
+                print(
+                    f"[{dataset_name}] RAG re-grade "
+                    f"({len(completed) + completed_now}/{len(saved)}) {case_id}"
+                )
+                if regraded.rag_metrics and not regraded.rag_metrics.evaluation_error:
+                    checkpoint_fh.write(regraded.model_dump_json() + "\n")
+                    checkpoint_fh.flush()
     finally:
         checkpoint_fh.close()
 
@@ -704,6 +731,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="Use the exact ordered case IDs from a prior summary JSON or JSON list.",
     )
     parser.add_argument(
+        "--case-partition",
+        help="Select only entries with this partition from --case-manifest.",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="Resume a previous run, skipping already-completed cases.",
@@ -753,6 +784,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         parser.error(
             "--case-manifest cannot be combined with --sample or --random-seed"
         )
+    if args.case_partition and not args.case_manifest:
+        parser.error("--case-partition requires --case-manifest")
     if args.generate_only and (args.regrade_rag or args.regrade_healthbench):
         parser.error("--generate-only cannot be combined with --regrade-rag or --regrade-healthbench")
     if args.regrade_rag and args.regrade_healthbench:

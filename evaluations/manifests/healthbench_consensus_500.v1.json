@@ -1,0 +1,3525 @@
+{
+  "schema_version": "flynnmed-release-v1",
+  "created_at": "2026-08-25T19:02:24.292467+00:00",
+  "source_path": "evaluations/results/raw/healthbench_consensus_500_generate_only_postfix/cases.jsonl",
+  "source_file_sha256": "003c3aece185518c603068e96ccf9ed215d12ca623825cf65a054c78fa6604a4",
+  "dataset_fingerprint": "a5d26cac022c6f626a088a329b81ec8a393f730e037b566554032ae4a9c5649f",
+  "seed": "flynnmed-2026-pilot-v1",
+  "exposure": "previously_evaluated",
+  "untouched_test_valid": false,
+  "expected_generator_model": "gpt-5.4-mini",
+  "generation_status": "completed",
+  "observed_trace_models": {
+    "gpt-4o-mini": 443,
+    "not_applicable": 57
+  },
+  "case_count": 500,
+  "partition_counts": {
+    "development": 296,
+    "retrospective_test": 96,
+    "validation": 108
+  },
+  "safety_overlay_count": 43,
+  "cases": [
+    {
+      "case_id": "63d0780e-d5db-4e4d-bbc7-5d462e3c9547",
+      "partition": "development",
+      "case_sha256": "ab68a42c09c5c63bd4815acce78ec91d823999723ad095f75e546fe82c4d7bb3",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "03c83c21-ce5f-40f1-9b26-92c89cb86c00",
+      "partition": "retrospective_test",
+      "case_sha256": "d1335c5cd57460c7ebb4584a9feefbd7bbbbdcba37341e05965b731a61663a0c",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "176775d6-cc0c-46da-b3e7-1ec326b78a68",
+      "partition": "development",
+      "case_sha256": "8bb17016084a91c2fb0697b2e2df438f351f825d083e082ccef12f81d06f2859",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b90e7335-4d9b-43ce-b8d2-7c1f50c35f03",
+      "partition": "validation",
+      "case_sha256": "e0104b2a8eab993217e03682aba5d08aeea3601e8b25ecab1f725dceb25143b4",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "47da44dd-e366-485a-85c5-1cf23cbc90e0",
+      "partition": "validation",
+      "case_sha256": "3386b165508199883ba1be2ae9826274b035b7289be323aeed9fe5eb325ad660",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "870cf73a-32ec-46ce-9643-c895a3bce21e",
+      "partition": "validation",
+      "case_sha256": "d909f47e0c93c026139975ab65ba0292e6b4064ff70383ae0a7b2b0fd80b0e66",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "7110794d-ba8f-4f06-8d1f-f3f874843ef7",
+      "partition": "retrospective_test",
+      "case_sha256": "18d95483de6e636f8973a405ec5d2034b43a49c7a889e14c641b282dfdb8cab1",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2726c153-aef6-4bc7-aa19-239d1989b8fe",
+      "partition": "validation",
+      "case_sha256": "a96a490028899b4f8dac44ce8ce6a8b1584e3e7151bfc321f431c8712d3cd701",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "18ac1db8-b7a3-411c-a714-79937c53590c",
+      "partition": "validation",
+      "case_sha256": "8d426bd53da22406c4ca42e4f895dd40c1e29e8a6a52ddce11c591f68321f1b7",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "40037a52-aa96-4a5c-bcd6-6de0c224c6cd",
+      "partition": "development",
+      "case_sha256": "f15773065c321565440df9c5f9c0b9b50ef9400ff3d2f5368510900d0d7ed608",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d45dedce-d0c8-4e03-962e-5b1184d9ac47",
+      "partition": "validation",
+      "case_sha256": "47f146d29052dc04063c4eec6325a45d64f93997c3dda7d13f70b40460705235",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "90711d20-2f12-47ef-90d8-47ac6c936a30",
+      "partition": "retrospective_test",
+      "case_sha256": "bb873bc1242b85f4777d325cc00861240b277cf643ab37eee3b0b726ab539299",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "db17ae41-bec2-4597-aea9-a6da7507b123",
+      "partition": "development",
+      "case_sha256": "eec2ea6a1c67900a73fa1a3a1951379257b622551c3f08e6b3755396b5c5fcd0",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b6a3d7a7-78f1-4d51-b513-81788f36dbfe",
+      "partition": "validation",
+      "case_sha256": "85d5bba392b11f1179cb34a25640974787f50586d5be0b84d8ad5507fcee506a",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "83d0cd88-fafd-481b-aeab-da2f96818c2c",
+      "partition": "validation",
+      "case_sha256": "8b813e3f5b7b8bcdb08ee56cd1f11cd59afd026dd21eb5167102e8d28c2689c7",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4bee3663-119f-4f2b-a06b-3811bd2917b8",
+      "partition": "retrospective_test",
+      "case_sha256": "ca8c538c44638460a8fca920f51df7b025ff43f7ca50ca37a1123a41095a85d5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "51f8dad7-8434-4629-b972-6bbb1cf4555d",
+      "partition": "retrospective_test",
+      "case_sha256": "1914a4a9cf71ac25cf7e637597af0fdfddf51d0f4578bf93832449532332dbf1",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "0827f0f7-7a3a-4b22-8d3f-197db1920aa7",
+      "partition": "retrospective_test",
+      "case_sha256": "797faa7db9d3510e51c6ac3fdc021e0ed393a95b369d44b36024dc286a4c8add",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a783e7a3-cecc-4d15-b18c-3f2ddfc2dc6c",
+      "partition": "retrospective_test",
+      "case_sha256": "653c67972f4159709c0b4c162557fc8eaf3f7c85a64eb5d32c901239144c105f",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f2caf692-1877-4873-9c54-e46c8141f0ba",
+      "partition": "development",
+      "case_sha256": "c814fad6d43a7d90b97c50c62adf6eb8c873d1dc1044b55b65a2c4576f5ea6fc",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "7a94ea1d-7951-4bc7-9d48-fa7fcbce63cc",
+      "partition": "retrospective_test",
+      "case_sha256": "7f67cd9980a386eb7d8a2fbc92753f03611c5e1a7471ca42dfdcc0edad77851a",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "a1a15412-d5b0-4c97-bd10-88a9b9495405",
+      "partition": "retrospective_test",
+      "case_sha256": "8f3a1b21e68ebfb6ec92e40b38a60c0a485fe22db36c8d43e610f2685dafb03c",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "08fdc56d-a23c-4b03-bfab-0e91a089c45c",
+      "partition": "validation",
+      "case_sha256": "d4b829a4e5db7c7716b2d352727017da818d69a32212e6a53724f34e3daaf2b8",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "191a0709-26ae-4de2-895d-17393b7082c7",
+      "partition": "development",
+      "case_sha256": "d5f82e6e7fcfebe2288732b0f49758b2d199b154553063312270928571040431",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5a3be375-c378-4539-a8b7-c89331f153e1",
+      "partition": "retrospective_test",
+      "case_sha256": "4bd69cf08ee3d0dd84f967dffec2a029d975838f70a36aeb6b1ebc40fe3ab425",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "579e601f-fa40-4c2a-9b16-b507000eeba2",
+      "partition": "development",
+      "case_sha256": "7cf295666a35ab7e508ffa617f24c765578c9c99455263bb448adaeef6baab8d",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2473bc4d-f993-4afb-93ff-bd1123e01b1a",
+      "partition": "retrospective_test",
+      "case_sha256": "f4e6740193d326bc676975d88389f6210a522f07694a78f17b50a904f1221596",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a4afa0e4-910a-497d-876e-274985a85d23",
+      "partition": "validation",
+      "case_sha256": "7812e28a17d6a1f63b791f9ebc6aac4df4e0b65735b02441c0136862744e2c67",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "6366b768-5d32-4681-a72f-b6338ca627fb",
+      "partition": "validation",
+      "case_sha256": "f345958ef8901314dbf3a689f8b05df967d18bdc953e65b4d044c30110b31a3d",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "6ff1b7d1-617c-45dc-ba8a-94816fc21e15",
+      "partition": "development",
+      "case_sha256": "b4aa2aca29152f92efd12a094643dc78797d83d9464d499f2fbc1ea52c14a92b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f5a57057-2607-40ce-bfe0-fd988052f822",
+      "partition": "validation",
+      "case_sha256": "083855d7c5e296ec8ead06b5a75fcc85b446664aa7c3ad6df5279666b8ad56a3",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f0c3d4ba-826a-4a29-85ff-2acf2044d18a",
+      "partition": "development",
+      "case_sha256": "cc5e91e4aadb1b9d9e7b2c2ba9adf3013a2da85e531d3d64147c49effc1b0eb5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "927fa506-d7de-4813-90ff-fc264f9ba09c",
+      "partition": "development",
+      "case_sha256": "4071e6d4ae8aac4e58f2213dba861ce83efb6283ac8597462c12aee734cfaf91",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "e1fe1cb1-5e14-43d1-a254-b8b9f7991cc2",
+      "partition": "development",
+      "case_sha256": "32cafba9e4b7448b0b04f2682844ebbb3790630b3a0ded7ad7023d9efb1c6af5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "94e8fcd3-93ae-4c4c-8d13-40ddc3223391",
+      "partition": "development",
+      "case_sha256": "fb91194422c0f6160f89d780fa939e4b64130f6b69b923406b29833cf5494c9d",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9c0c56ba-9d1f-4ca7-a1c2-c1536f7eff6c",
+      "partition": "development",
+      "case_sha256": "3e84b392bab7278c32c062ec7c72247bc1f7a841c8fb2e10ca361a08f92d55b9",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "62e65488-555b-4ac5-867e-e84dff1d25af",
+      "partition": "development",
+      "case_sha256": "885ae448db3da63cf8555fcadc0a5b0cf16b720d98a109361ab87ec78ba41cd8",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "596f0baa-b672-424e-bad1-f94f1fac5018",
+      "partition": "development",
+      "case_sha256": "934a25379a0e193805e8ad943c7705e534c071c86e17e9982158dd198250645b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "1afa42de-459a-484f-ac64-313bdc676024",
+      "partition": "validation",
+      "case_sha256": "a8af81373b343bb18a43d1ed0aa1acd53b3b4de74851f1d6807accbe7a5aa4c5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f4305156-36c2-40b3-a69a-2e07b569ff74",
+      "partition": "validation",
+      "case_sha256": "cf6cf6a3de3be78850fb9f6e5024028ef05580bc62ba9b982d9108d7fbc94883",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d94a8ed0-eef5-4747-9e0f-b9b9b9e86022",
+      "partition": "retrospective_test",
+      "case_sha256": "66d6216ba2e51425b9c08037a9ec029410b4716342199fbfd2470098adfe5ad6",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b955be0f-268a-4120-809f-a6a1a4968535",
+      "partition": "development",
+      "case_sha256": "5249ce5f15cec566548e8f29a59699f53c9bac90291ad3977383ccd1a96d72c3",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "efa552c8-f0bc-413c-b516-936ab3120a87",
+      "partition": "validation",
+      "case_sha256": "00caacde72564af7c512c3c01065d8e231715ffed484bec9d063852cc467c004",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "f80b01cc-8fcb-438a-8486-0e3b094a932f",
+      "partition": "development",
+      "case_sha256": "f7649ff302de917e1b5537684f75d90b7a6f6c2f2711cefc9f8b2c50e54223a2",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9f27d8c5-5525-4e07-90f2-451e3153b47b",
+      "partition": "development",
+      "case_sha256": "bb3c289de12561263394eaa6f58da6519c306d795d70a53e61f7daf9c5b2fc6f",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c694b987-84e8-42dd-abde-95e7635d6e47",
+      "partition": "development",
+      "case_sha256": "4913d89f9246b54be1f89a2bd08c8060c2bd78143846150142236ec6d87c1323",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "02109c83-28b1-4269-b4b2-5ceefb66524e",
+      "partition": "retrospective_test",
+      "case_sha256": "10d840fb6d38e7322b43bf6e3b0d14d8a85a9bb0e5b033cc736a7f2b7e2f5828",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c8d35d8c-0705-4947-b838-9158bd759ed9",
+      "partition": "development",
+      "case_sha256": "6e036c3325b24b0cb0024ab678f4b769133756b64e51d508d7359aa8bae88880",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "483d70ed-951f-44c8-9193-a42abd16dcb6",
+      "partition": "development",
+      "case_sha256": "0c0a552d909496713e4ee50a15927cb1818a72723a9fa07426b9cd2be3ba9d55",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "07e277cf-02ce-4483-b0c3-67f41513e1b4",
+      "partition": "development",
+      "case_sha256": "6291aad495399d24e7ae3400aa88a1bbd7feff97c09218223e67f34c8685c8b2",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "ab51e312-afda-429a-bb7d-fb236296f392",
+      "partition": "retrospective_test",
+      "case_sha256": "7fec86668aaa103b8965d500821c6c065efb2bc3061e6bb56ae991db55616387",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "ed88d8e7-90ab-4e29-bef2-0e9d6e4de8e1",
+      "partition": "retrospective_test",
+      "case_sha256": "5046e3e4bbef67d9732f0c8a79c9a26de1f7de1dac950e8b309221663b6e8825",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "e620f43b-2d6d-47e6-9465-6a9c8954c926",
+      "partition": "development",
+      "case_sha256": "463b6d6114564bcded36ed443ec102c9d99ac2add8ac47135662bb62daf93371",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "0c705a36-d1be-4985-8476-83e786c4b28d",
+      "partition": "development",
+      "case_sha256": "1eab35ee71d8ffaaf66f2a4a7b4fb44da8d68fb5e3248e5e1abeffb7cc4b374b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5a115734-1080-4849-ae51-8566c98610af",
+      "partition": "validation",
+      "case_sha256": "0f302e06001ed2b1d43172173faea04f30768df04a6f0ac99c48f6a2ebecb10c",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "0c262faa-ecec-48d6-98f1-d1d7364d1c15",
+      "partition": "development",
+      "case_sha256": "118d52667506c6910399770dc0d8b5dcddba4f1a66ac1978273c5df807e7c984",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5e9f7619-501f-4517-86c6-23ca293d99e5",
+      "partition": "validation",
+      "case_sha256": "5991ed3b4990afa17789a12af9393fb0a6ee87497ab975da925449ff47c08956",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "24816a86-1ef5-4588-b275-21e675bfd1d5",
+      "partition": "retrospective_test",
+      "case_sha256": "27b5abbaad712d327a4a43e540ebe774d4e093c89e6108f4a12fc76ce8ca5484",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "3a43f5c1-ff63-46da-ac50-87874b5ea7a2",
+      "partition": "retrospective_test",
+      "case_sha256": "681d0e4a07284d094cf8c1ee41db0cbf6348d5bab3efaaa07b126c67c0c04b02",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2f223332-8334-4e89-8c6c-8fa2c0b13205",
+      "partition": "development",
+      "case_sha256": "2cefd6c38d3c5ff08784c88a7c10670bc803f6c49657e4c3de75d5956ea75813",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b12d2453-fd3b-462c-b9cc-554ff16bfd3f",
+      "partition": "development",
+      "case_sha256": "363ba45fd1d4c91d2679596338157a85aa466acef75c4b36d1f4a53c7ca63a1e",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c6989df1-155f-4a94-8438-c16237bb6b9f",
+      "partition": "development",
+      "case_sha256": "2703453ea0a0b259451feb042c4dab50fe955ef7f366c5136ef02d3adadee0d3",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "35f10e78-36b4-4771-8f4d-d158107c4e38",
+      "partition": "development",
+      "case_sha256": "3c9abcf29ac4fc219241515e14bbcfe769ec883531656601115e65ff25a6e6fb",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "249ddc30-defb-4b9c-957e-cfa522060b22",
+      "partition": "retrospective_test",
+      "case_sha256": "ebc18f7fdae46af8fa03045f6cb42a98182124ecb5297754968745a3502dcee4",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "3ae9e940-0243-432e-8518-cfdc626d0f1b",
+      "partition": "development",
+      "case_sha256": "65f3125f037fd82c84bebfbaa793a4cfe6160fb58bcd615aca0f501910c37861",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d9a4484f-3879-4634-8497-21dabc306a63",
+      "partition": "development",
+      "case_sha256": "bc9f427171ebfef019cfc89b200280b9645bf2f86467301e09258319a7aff546",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d342c6e5-3e3d-4d40-a4c1-8c851782d4fa",
+      "partition": "retrospective_test",
+      "case_sha256": "6e09ae1765552da0448d14ee0689414cd0b83d22d262947bc729999425571229",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "62d2fa66-2f92-45d0-b5aa-f2f59945c666",
+      "partition": "validation",
+      "case_sha256": "78e450dacd6827b0629889185b2b3645d94475fe47a1c33bbfe7790587f93ed7",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f207ef58-d5f8-440a-b3bd-4a43215c6893",
+      "partition": "retrospective_test",
+      "case_sha256": "b15fa47ce7724e74b3a42a34212a0161f55298defe091eaba6134d0b3ce37b3a",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "b00e3be5-607f-4435-8eb1-d7e124a01aef",
+      "partition": "development",
+      "case_sha256": "975814f6dbb840525919e6390bd893e494b9c18b377f6d864fbafab3f4f86535",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2e543d13-d125-44b2-9947-6eb0b877c386",
+      "partition": "retrospective_test",
+      "case_sha256": "e0512aed7e576077304c5166ddd2e670ccd8d45d473dd5ac2011bb4a99590c62",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "f841b59e-374b-43a7-8112-2ab2dbfa12ca",
+      "partition": "development",
+      "case_sha256": "41c0b361cb98feb80411e2d26173d8a70157d3dea2aa59d068ccfee0f5293ba0",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "528ee679-e577-4cb2-a346-39f3c6c58063",
+      "partition": "development",
+      "case_sha256": "3cea6635a1db3389d0cc3de7c939f85f308b55a32d231e61092af9ab8aa9d497",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4b8b3134-2273-4fab-98a8-3510e2316c90",
+      "partition": "development",
+      "case_sha256": "7ae43ef3b55bd72af3450fbe3c4e6d4d356c7de27dfecedba1fa3597f57787ec",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "91dad885-2b6d-4be8-b2fb-a8228c92f38c",
+      "partition": "development",
+      "case_sha256": "6f7433eeb0a6d195408f2d38a92a570c799073a754babd09bde578d9d2be0c75",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "8d333037-750a-41f2-a3ff-f6674159f7d7",
+      "partition": "retrospective_test",
+      "case_sha256": "1398111691e580bb2a81aa336002f02e75a0823aab8bceea2e4ae520019a9085",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d3aabc2d-2a3f-41aa-8631-75b11b078a18",
+      "partition": "development",
+      "case_sha256": "806b973fd5cb2548ee56f5187c8bcb6b2e41a6584b014d14d457cb594f13f3bd",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b9b9dc17-7cf5-4279-8d04-9d4be133adcd",
+      "partition": "validation",
+      "case_sha256": "a62bf62c360387afe4be40f3647b5660629dfe0b451e4dfd2308b13e2275b03f",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "805a1732-578a-414b-838a-c38ceeb94df2",
+      "partition": "development",
+      "case_sha256": "24d7f8885b9afbfa3552146b8934e6fb9c495abf619ea4df8923584adad6f020",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "6b46231c-37cb-4bdb-aa7a-0b154c6e6d6f",
+      "partition": "retrospective_test",
+      "case_sha256": "f1f7a7c98e8fda1ca8f5a7d18a6edcc8b9abc3a208386a3594cd8a41e06688f0",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a9c01797-f430-4833-b055-89305b09be23",
+      "partition": "development",
+      "case_sha256": "4b51328ba4ef8aff1547101eb77c1898cae9f95780893b5251d7c10359cedcf7",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "3829cb7a-8637-49a3-8fcb-68402431d113",
+      "partition": "retrospective_test",
+      "case_sha256": "7b43d33affa243b043c830c5919957486424225e808d8eb0ae3cd6ef767f0a7c",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a12e8dab-dc69-444f-bc3b-2ef8aea67c29",
+      "partition": "validation",
+      "case_sha256": "98edef267b405b605efa047b88a0d0de78d920c25f17f0a8832b997bce4e6327",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "0dc9b1a2-4d30-4c12-85e5-9866f1cbc563",
+      "partition": "validation",
+      "case_sha256": "ab7416e90eadadb5e433e4a856562c8fb61a611427f8ea5e9f1b1e699bd46989",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "a865430f-40d1-40f5-9b61-cfcb9dffbbd9",
+      "partition": "retrospective_test",
+      "case_sha256": "5e76706728052c3f33fa400e602d35d374b30d507e3a7ab3eba35564926e2db7",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "443a237a-5702-45bb-bbc1-554fc4a8062e",
+      "partition": "development",
+      "case_sha256": "8b29b395485a6616a995d8082f0a8c117d2c03b3a9b7df72bbf11e54e81c40a5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "abf04165-50c9-4916-b095-0ef805e578c3",
+      "partition": "development",
+      "case_sha256": "1d05625174e5750183da6341aeac57030f466d05eac0b3f2c167aa83b10c48ed",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "692ff182-c8a6-4b41-bffe-05d52242aa74",
+      "partition": "development",
+      "case_sha256": "f6990be71c1ea53113d7280c618d7a90744892f57a670f6ecd5cf4aebcbaba08",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a7f93274-e52b-4755-987b-c93d6e2f0061",
+      "partition": "validation",
+      "case_sha256": "dd36a98988bf28f596687e064b039b7533cc9c64bc664c785a7990017fcf0292",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f825aa8e-ee7f-4bf1-97bb-cac7d93fa237",
+      "partition": "development",
+      "case_sha256": "0dbce9296ea8bcfa696dc8550fb45a21a567c117d65d8a71a0bdb82b8192a1ae",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d366434d-8c66-41ff-aae6-5382f8d662b7",
+      "partition": "development",
+      "case_sha256": "5cc914423be70790eeb2c2fd16029580251dd19dab6508310b497e6e4a3f1b59",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "7eb3c617-5fdb-448a-979d-07aebf239fb1",
+      "partition": "retrospective_test",
+      "case_sha256": "ecddd1ce4a32dc8f39c62e30cdce07cafa6b63a1402a6f3eedf01c4662ab1bd1",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "996a897a-4349-4557-8f90-10237c7cd134",
+      "partition": "development",
+      "case_sha256": "ec89932b4b94e0614044e68866419cb9a0010bf492389e0c7b6753f04382b8fc",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9eb0d1d7-086b-4786-a835-3a99cb7a10fc",
+      "partition": "retrospective_test",
+      "case_sha256": "36da7cc25d7bd2ff7a6dd7c3ec516db1d31c7d62c375b9ed341dc1bfe936ee6c",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "90030f57-9b7c-454e-bb06-e0b96644b53d",
+      "partition": "development",
+      "case_sha256": "47b3c9eb122584fa0dcfa9326856f7955e03ab00adbf432c6be1d13fc094fdc6",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "60383bcb-9ef3-41ab-b98f-6baedb3f8389",
+      "partition": "validation",
+      "case_sha256": "3ff334015d109b0fc32b971a432497203f29fa4813ff2ff208d4ce9bcfbc3446",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "456e0ca2-54e4-4c9c-9e20-1a2d5ce024ef",
+      "partition": "retrospective_test",
+      "case_sha256": "3091065e85b5f69b69131f19dbc62a37720fe248e987946ef7f1351ee29b5ff6",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a70a0e39-e664-4a44-bfb8-429696d28477",
+      "partition": "development",
+      "case_sha256": "0831bcd91d656a775d9e15db5add398098b1bb573422a0215f86046b4ef2058c",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "eb1d97c2-659f-4331-89df-5a24c40b1a09",
+      "partition": "development",
+      "case_sha256": "5d8f3b6f3777f1058846f346adce4890da32c92091244295c5ec8c13c42b9b84",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "2ffec207-51b1-439d-8404-165ce42909e2",
+      "partition": "development",
+      "case_sha256": "1d8d0f9a3c4311d1f4863656bf85156b900b0d06505fdf5303d12e5e5e201aa6",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "46451f92-5805-4f20-9bb6-f3973905075f",
+      "partition": "validation",
+      "case_sha256": "bbd1848474e70e3b3e5534e5d9473ba8e080dc764373fae899f6f4305d044235",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "6c9b7ade-cbc5-4c71-97f0-e7ddc3425701",
+      "partition": "development",
+      "case_sha256": "dfae681e9de0f6e258ee59925443fd75052ddbc0e0a7a7d98275d4f1c1c7e6ee",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "1efbf1e8-09ea-4a47-8885-df4e5642bcb5",
+      "partition": "development",
+      "case_sha256": "e5b17d90bf7bc09fb86c71a0933ed23160faa3deef646ee0a72fea84b47efef4",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "0175eaea-4d14-4932-956b-601951a09b59",
+      "partition": "development",
+      "case_sha256": "215556fdcccb3a1329a90bd7f23fa805893fc24419c0e024e274de0cc001a156",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2c10d956-ad07-4a49-bf42-dcb25e842cc7",
+      "partition": "development",
+      "case_sha256": "f37ee11e56dbc3f7cd71e2cdc47bbeb5843039f4f5a63d44645dbd6b9069d55d",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "71ea9b93-2670-4a1a-b95d-1b4d4c68b29b",
+      "partition": "development",
+      "case_sha256": "33ae95a671a36c4b984a39750f8376ff3dac0e54c16f00f3b4fbc09184d1fb74",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "af62e0b8-bbd0-4dcc-b55c-cb4c7bbcfb2c",
+      "partition": "development",
+      "case_sha256": "2d63dc217af65d00e5fee5fff5a3ebf056d4818b111d9ebcaf715ddc8b6045f5",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "ce739479-a9b6-433b-a005-572205fc23ef",
+      "partition": "development",
+      "case_sha256": "e8b127e358341400b08436622b6d4144d1647456c013cfefd19bcf133046e022",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "7f1f6816-7609-47e5-8511-0e145f4eed84",
+      "partition": "retrospective_test",
+      "case_sha256": "fbd37ead9a784b8381ad635c3ac09c5f89b0706f1817bb9a1bf2dbe820a3aa6e",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b05490f6-301a-44fd-8549-bc6230ecea7e",
+      "partition": "validation",
+      "case_sha256": "463a0d8e93bc7d6701a2ab9579a3326fc605a2077cdfbb9b476b057f1339edc5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f999b0e0-e69a-4f33-954f-0660a495b030",
+      "partition": "development",
+      "case_sha256": "9d395519e1b332533a01b3f04233b710525b89272c02451a3dd62c292221efee",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5cef7aac-cb75-4bba-ac29-f1c1f0372d5c",
+      "partition": "validation",
+      "case_sha256": "809d5bc0aa07c6ee3a23d65e17f3ba1cacbdf47c8f6d2c999e4f163e578307a9",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "51269f29-d04e-46c0-b35e-9f77226969d2",
+      "partition": "development",
+      "case_sha256": "83de78cb8a4039c85edc1db1825d3feaa3822afd89714c739cd63ea88fee55c5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "fde30eb5-eefa-4c17-b372-cb412a6f4304",
+      "partition": "development",
+      "case_sha256": "42b3cd780d8ff441c220d23d0e08c013fad0f250023392c826fbcdb9673c9485",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "efe7272d-6ca6-4f77-9a2f-d23233631e59",
+      "partition": "development",
+      "case_sha256": "1267adb4255e528f3d42704a104bab2ba3f6beea07a436f86fb36b48a4235c2d",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c2657346-a56b-4489-88b7-19b3ec709221",
+      "partition": "retrospective_test",
+      "case_sha256": "7557f4af8814f162a1869dca8a69f702f8d3427b232b01ed19320e9b421a36ca",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a86134d7-aeed-476f-948f-458a75003713",
+      "partition": "development",
+      "case_sha256": "36f76aa4c61478ad555f29ab228d76dd54b37b18b4a4189a1b5cd7a0195ac6a5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "64a9144d-d8ac-4eb5-8277-115f1c664d43",
+      "partition": "development",
+      "case_sha256": "abcd10b4389cb6a73d528b522e7ce94273259aac928b387f5f970755010b11a8",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "ad43c405-eff2-4b2a-b904-0a8bfcda523b",
+      "partition": "retrospective_test",
+      "case_sha256": "fc1ee26cb59a7c061c42a751bdfd20b914862adc0625371ef8b687b0a6905ef8",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "41835ef9-0128-4a46-9217-0230425bb258",
+      "partition": "validation",
+      "case_sha256": "c04829f2b44189f83f30f1e9bb0e70bc9586a850cd0e597e976c2fb601bbb97c",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a1a8ce0d-9ccb-4960-8506-f7d750c98e74",
+      "partition": "validation",
+      "case_sha256": "c14b2a80090200e682cc33d59c6be1e6167736156faea73c11b321c8bcdab4a6",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "36b11a8c-8a54-4c7d-8cc0-49d5f2d6b541",
+      "partition": "validation",
+      "case_sha256": "e49cf2522a22ae5ef174f7349f05001f83bd3d0de56d92011115b24a9247da51",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "588ceec1-c5ac-472d-a273-d65693d6d423",
+      "partition": "development",
+      "case_sha256": "d8681d03dfadf5d141516ad01af7f2e1087622b7a619fcf20c31bf3270005454",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9805a8c2-2b58-481b-b579-d6453917a3fa",
+      "partition": "development",
+      "case_sha256": "5a1bb6b90f14a41785791ec0530a741e34bf0fa2c7cf0f4a0af1d35b166994f8",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "8395ef67-8286-4385-9636-9d8e6cd33d5a",
+      "partition": "retrospective_test",
+      "case_sha256": "22e39d5f04d4cab8f1e016d3fb243c76c1527d0d20d8158cec2faed23234fdd5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "cd4b6877-1396-483f-b4e3-d00613f98bce",
+      "partition": "validation",
+      "case_sha256": "bfae8ab29ef89179322d812e7eda84043b767194c4e1e383e023f9daf78c7f29",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "7783e51b-0dcb-4534-ae82-d588499aae58",
+      "partition": "development",
+      "case_sha256": "b9c214ab5e150627a1781f838d7dbb253102d9b2badedd1bcebc196cc87c7124",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "937a284b-bac9-4426-a95a-423e84050936",
+      "partition": "development",
+      "case_sha256": "f0d34937f3641a2c6bfe80047facb03fd56132a0b332a9b101e23db391154f62",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "e469153c-c7e7-4321-87c4-10aebddf5200",
+      "partition": "development",
+      "case_sha256": "4fac0ed0293d7712fa26303f47842999c79f5e35b27be86b2bc61d6dae0f9571",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "bd7ff895-9349-426e-80da-6e36f61ba32e",
+      "partition": "validation",
+      "case_sha256": "6ea56b4b3cec5b39de46301449884568101d43d9e585854194b17250c2565ec2",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "416152aa-52be-48c9-b0f1-ed8bed278e97",
+      "partition": "validation",
+      "case_sha256": "21ff9a0fc1e208a06aa5930a3b0dc88577f853b728a0de9faf9875369898a869",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c622826f-80e7-4482-a414-f724514c60d2",
+      "partition": "development",
+      "case_sha256": "44f71651608269383a9315922d71979c5b2598ae9536cf54305c65d4080bfdc9",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "e2527e9d-d9eb-4dda-8f72-8a3c6ea44e45",
+      "partition": "validation",
+      "case_sha256": "2cb775c42a0424d2a54ca28629357b7090a74a6c8c92b1f001a2ff005f9af6bc",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "e510f5ce-d8d9-486c-a63f-4733a7271d7b",
+      "partition": "retrospective_test",
+      "case_sha256": "a1deecea6e9aaedf511700092fc98e1a6c09c1a783504395637ecfe8024b0204",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "90ed826c-2b75-4d26-858d-5942536fb53d",
+      "partition": "validation",
+      "case_sha256": "6a364120ded7f619f83da219f5417405c73a6483e3bf9df31f7e6140f9a4aa9c",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "e797308f-0d5d-4ab4-b5c9-86f39cc9b11e",
+      "partition": "development",
+      "case_sha256": "f4a1cc8430fda209f6ea0b440b96191747d0690db731a7603a28055c0508896f",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "ec3451cd-b2f1-424e-a26c-b32bc755a854",
+      "partition": "development",
+      "case_sha256": "4bb439902d43a75d328e7ecd7aaeec763f2e9bf0bbeb1bd12397018a40c1fddd",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c2ea9f75-343c-4c75-b200-f9305cc44dcf",
+      "partition": "development",
+      "case_sha256": "b19aa05b38c924575e2152cc0d2079e2443d9df5d0a835cd3a385596eb8757ee",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d96e89c3-dc03-4599-870b-e029d10f98bc",
+      "partition": "development",
+      "case_sha256": "96828a2d711b33dd0f4bb14adcab4f4066e1338a0640362242d3f001a5b1ec2a",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c2864471-b010-4538-8ed2-21ee9374f411",
+      "partition": "development",
+      "case_sha256": "d24d186ba4fadd57ed7ab09b29ef25eb2ea65ba8b6704f480b0d430c2ea997c3",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "1762b61c-c07d-4a71-9cdd-4073dad6e8e0",
+      "partition": "validation",
+      "case_sha256": "1cf965b9e51861404eaa443e838f9daae6f8cbd0734947edb1eb1d9f7476a304",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f9947862-6b78-49f0-806d-8dbe65f178fa",
+      "partition": "development",
+      "case_sha256": "f791f47861991ef826d2252314ecf1f9134e86d1c4e000e743644e2a5b71ef85",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "da0b608f-20f9-4120-8346-9aeb9673b4a5",
+      "partition": "development",
+      "case_sha256": "6e585d35edc9e0a0062447d66764c8ab71736b7e34f0dfce31ff87940627c3ae",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "0c6904b3-9cf3-4a20-ac40-f4b9335ba8c2",
+      "partition": "retrospective_test",
+      "case_sha256": "f66e01c1eb1e83ad749bfd3ffbac4c0d3d6d0ff87006fb6a581dfe729605c74c",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f4164d90-6838-450c-b4fb-378dbfc596e8",
+      "partition": "validation",
+      "case_sha256": "e869ec40022b651a47ac8fbec255e32036ba58abf82fe01888371848ad72f641",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "acff8e32-334f-4b12-b240-e30efd53c503",
+      "partition": "development",
+      "case_sha256": "1d8f956e1b5b98306bde3ca3cb56da1d7f2ee477c0ebabaf52b4fd68b6702904",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "1cb7de75-2281-41fa-8bb6-1f3447885433",
+      "partition": "validation",
+      "case_sha256": "799e8186f0afd83430bf7df0a1faf304c5e289d6154dca967c8572772e69c911",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d95f8947-a892-483a-b0a1-82a496c89dfd",
+      "partition": "development",
+      "case_sha256": "b11d10fae9aac420d9673a00273f80a51b3a6ba35ade6334c8a414ff6db8e29f",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5cc7dff6-ecd3-4cb1-aa95-ab4543499b1b",
+      "partition": "development",
+      "case_sha256": "5f3c2bccb1fb44edff086d1be8f73c4c9e1ad7511bdb0426e5ccd08a06520b95",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5299e07d-46b2-4f5b-8196-8799dfeaf5f3",
+      "partition": "development",
+      "case_sha256": "850374757a8004f8672640c0bbf4f68be8e780bce1bc583de333193cb19099ce",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4e65e168-533e-44a5-bad6-db0c5276f8c0",
+      "partition": "development",
+      "case_sha256": "8962446155992073e487dfd42bb040782d2654b0124b5281d5442346c75e4e1a",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "12a9a33a-47a2-446b-9689-7a49c5667d1b",
+      "partition": "development",
+      "case_sha256": "e900a2bc8d34628f6c2eb57be129dad4e2db82639f7f19ea9d9f93eba27bbdde",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2491687e-57d1-4e95-ac59-472d90cd8b2e",
+      "partition": "development",
+      "case_sha256": "3e0fa06dbf925bb8a34d14c5a9dad4e56b4f0a759bd296a7c9c879cd481a7646",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "587009b1-9755-40be-80b2-cc5e7e17b05a",
+      "partition": "development",
+      "case_sha256": "bbcdd59b5a5b50feada7b3af0cb6689f808a3ced3ccbcd109277d00bbc0869f5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d3581d75-8350-4081-8dd7-52923e5bb5f3",
+      "partition": "development",
+      "case_sha256": "6a200d8db003d8cdeee08d39689f7f35b3ac93b12975b67ad34d5198fb44af4b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a6e35220-900f-44b1-99ba-953f15a12e2f",
+      "partition": "validation",
+      "case_sha256": "6e77ea0d1acdac217be7cc3945a1586ece4edfe3ae27ced9406e8de7ddd5aade",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "8d971079-9879-42f7-9722-981a0384c1b6",
+      "partition": "development",
+      "case_sha256": "5ca000518aae827390c4c4da822665a5d0ea0cedbfd5f352d91c9a1853aa6376",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f0566609-0230-4abb-84af-6339938987f2",
+      "partition": "development",
+      "case_sha256": "d13a330e62f8a2c9771a0a8ce4dc02873635e6d17055ef3ad0001847a87aa0a6",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "14f56c33-9311-4785-8505-41d60b68a791",
+      "partition": "retrospective_test",
+      "case_sha256": "428f668c319c974fc90d700ae2c5798f5a9bcccffbca2dcd20cf24d40cd9a299",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c9f64157-a8a5-420c-a599-04fd7ea19550",
+      "partition": "development",
+      "case_sha256": "12b897ff056876c8a7ba68cd7bbcc5973d0e29b941f4ff5ef489331c163555d6",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9b2bbe53-27d1-4728-bfb5-82026e6d3e3a",
+      "partition": "validation",
+      "case_sha256": "4fe907dd45c7cbe1b1071ed885b6cffa0296bdc475e915bfa965db2af29d8542",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "3d842e5f-3647-4454-ac2c-c69039781e7f",
+      "partition": "retrospective_test",
+      "case_sha256": "20783e3fe5dd439116b68fa7f00e48a984b3b04288f58e21a3686dbf8969d6b5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "8433c101-4334-4538-b576-70a7b28cf5c8",
+      "partition": "validation",
+      "case_sha256": "f712547c25d352c298dba9d3b981d75c6e1a69d509f27fff6cc142f5ad4ed036",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "1cb87cee-d2e5-4dea-a9ee-b2c578e8874b",
+      "partition": "development",
+      "case_sha256": "87b8fe5d7e7240ae1512d3a9856d57a87b37a303ea2878bfbf5e65f9db78106b",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "e9ebd5b4-41a7-4003-96de-2a7704ff9f08",
+      "partition": "development",
+      "case_sha256": "ae8d7135623eb03d72afe0df5cf5d96db66d7e4b8933f570e9a7892694e99d4a",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "279a7c89-4db1-4970-891e-12db1b4d28ad",
+      "partition": "development",
+      "case_sha256": "875e845afd1ba2a55533096576251e153e63f11224344c66c17340accd2e68eb",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b3b3ca28-6571-4900-9dd3-b0055956e17f",
+      "partition": "retrospective_test",
+      "case_sha256": "681d4ef587633f5a2f5e818525c17f5093bc1120c08805ad965191ce8232bc0a",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "8ff101a6-e438-4166-bdac-be1d55d57c99",
+      "partition": "development",
+      "case_sha256": "d2fc6e17535e06823cca43abc466aba279a7b35cea0eaed6ce33e8f2300067d8",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "8300568f-b41e-4f77-a3fa-2ff59cffae72",
+      "partition": "development",
+      "case_sha256": "ec62cefe4a7223a87869e0fabfb224d74f68557cbd92b331e28127819ad4d33b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f1c136fd-b8a2-440d-8e1d-61bd802ed5d5",
+      "partition": "retrospective_test",
+      "case_sha256": "ebf068a28e246c6b7aecb4fcf643bb6036b964430e7ff9c8d5a6a44ae66e355e",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "8530010f-f8dd-4baf-9fba-5aacba64b98c",
+      "partition": "development",
+      "case_sha256": "1a295e1b176ec101c462dc063efa39faa79c4f7ee943df24b9569c1d40d044aa",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a8fb1f38-803a-46be-9f5c-32f66129f1f7",
+      "partition": "development",
+      "case_sha256": "b1c7fae6cb8e651addd8946ce31497120c5f2dd43d7c2d2fbd78f93f0dad2979",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f16dc04b-3cf2-43f0-8e65-412424611616",
+      "partition": "validation",
+      "case_sha256": "31daa1b7e73b9cc60a2a7a738c125cb63be075f41c5679ed007a47f62891c595",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "17293365-cade-4d58-a61b-805e50f1c59b",
+      "partition": "development",
+      "case_sha256": "a0649be6488b492ab2f734cbcef5b4260a3b2d93ee3a578da46121abe82a05eb",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "effcd658-6e73-4638-b0a6-766f26cc809b",
+      "partition": "development",
+      "case_sha256": "9c1684ad3e97e5f0ca5f146b9835fbbc856e20dde7f4b6a33650531347e82bff",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "e0ccb3c1-6bc8-487f-976b-e4b220f7577a",
+      "partition": "development",
+      "case_sha256": "02445c1be85106db22f6a4d7bb11c70f1741118fb5787d98fe01109c374c4f4b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "35f478b9-6d5b-40e7-acb0-7fa973fb5955",
+      "partition": "development",
+      "case_sha256": "3fb4a400e6400342964ae69a14e2eb611c0629c23800878819766dccedff4bf1",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "8f180002-8b25-4ebc-8b04-5a8b296c6fde",
+      "partition": "development",
+      "case_sha256": "a3f22b724749b54db8db6656525810617e06cfc9c1e6ffb9234dad972a075e3a",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f59b3fac-e4ed-4f4d-bbef-7e89900206d2",
+      "partition": "development",
+      "case_sha256": "19fad6c021432b0667e26645b0bb59ae0c48399b563366998a6254352e30d940",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "0eb6fd6d-eaaa-46db-ab16-02e610f238a9",
+      "partition": "development",
+      "case_sha256": "2d08a0a835788c0a2a4147e6e1bac3606f20c47054d706c976c9875e1eae78e7",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "483d0b58-a94d-49c4-8b6b-5eece2ab2ebe",
+      "partition": "validation",
+      "case_sha256": "c4919015de4f60780a5ec473ce1762e5fba85a24b8134beefbc1754095d3e740",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "7fca202e-06c3-49b6-be6e-a4e4c858acc5",
+      "partition": "validation",
+      "case_sha256": "e8692c5bb39c2a3a83af0ad6222606f75baa0f3143ab31c941879398fa7f7bef",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "587fabe0-5599-4f6b-8182-0ee41c6d9b7a",
+      "partition": "development",
+      "case_sha256": "4f7fa99195088505525704380ae2b0bbd332304a564ca30d6787283613184d09",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "de247adf-7938-4f7e-ba3b-a2bdf53432c0",
+      "partition": "development",
+      "case_sha256": "fb1d46405b09054720bfe3a878c228ecb72257458a8a928f0ec7f71519b077d1",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f52d81f3-1433-4fa4-9f2c-5579f5cdf907",
+      "partition": "validation",
+      "case_sha256": "8ea911c4c92b32a2210d4af70554b1daf4089da33f5c305ca2f3bfeef3640410",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "db0e9a38-659c-4fdb-a2a9-3519f417c85d",
+      "partition": "development",
+      "case_sha256": "b59e95d5d98e5210e843cb2839b14c13b2b7919ec3595416efd32467ff5ffdc2",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4cb4bcf7-7562-4ac2-ab37-330acd0abd7f",
+      "partition": "retrospective_test",
+      "case_sha256": "a412e46c1ee30c0c1ae1ae75472380c634c673eb5ab87de11bc76db3985f8002",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "101be583-4a4d-4b9f-b3c2-39df5bdf9cde",
+      "partition": "development",
+      "case_sha256": "2f21604ca8df98e819e4774d858807d8886edfd4d59681c8598a0536693dd9f2",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "fb22bafb-c154-40d8-9eee-5c5c8fa40bbd",
+      "partition": "validation",
+      "case_sha256": "4bf4807cb062af060ea5a8385f891e3b9ad8c6a26368589db755306a19a81ba4",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "99318b06-6059-42e8-b3ac-63e15b647b64",
+      "partition": "retrospective_test",
+      "case_sha256": "65b473a647d6da58fee4418a0c617cedf4d49bd1d8e85f92ad73566f09176900",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "ab7752d5-6c6a-4acb-aec0-f57b21bbf308",
+      "partition": "development",
+      "case_sha256": "329bf4fcbb38f2cecc1b5f70f74ed4ffa3389c82a80434968185be0f348dc9f5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "53726055-bbc8-4f45-a166-3a8f8e4394d6",
+      "partition": "retrospective_test",
+      "case_sha256": "54a599cf9cc32b014ff2b923e0a983b2783cdd562a077121b1fc489cdcdc6f9d",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "7fe4a5ac-b096-4371-b1c5-de1f81cc510f",
+      "partition": "development",
+      "case_sha256": "bfaefbf99067aa212cc2bac4ee51912881b7ba1d61320db182e7a378ffc0037d",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "27206bbc-e472-486b-bae6-640558951360",
+      "partition": "development",
+      "case_sha256": "556e985ed4512054539f8d568b3c085b814be75e25aa948448d0899817933be2",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "0f6f5556-e71d-4891-8303-a02fbaf51f8f",
+      "partition": "retrospective_test",
+      "case_sha256": "c9f625f949794ef8654b67223ba904639ad0e4f7d4dea503acbd080d7689506c",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b61cf147-9e7d-4812-bf83-5ee5ca18240a",
+      "partition": "development",
+      "case_sha256": "fe147c3e339416374d1e4e8ad02a6d5c0c618e24892ba073c6a28f73356ddbf3",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "6c1eaabb-908a-4414-8d73-597b5347e73b",
+      "partition": "development",
+      "case_sha256": "0c156440668eaf81e7a3b47fc7c969f512ef0c80350a3a4170acb93f524e0c6b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c14135dd-131d-4577-b11c-8191fe97d268",
+      "partition": "development",
+      "case_sha256": "de644721bb1eb28ab427baefe4d6e4765252bf37fbf5f6b55b242c4ef3a37320",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a192c163-380a-4335-9e3d-516b7a23475d",
+      "partition": "retrospective_test",
+      "case_sha256": "35418e790f653373cd34c90e2b231dc9261fad5bd79dc375397dc9371bab9d5b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "e2962a9d-9dd2-4018-aed5-33cb4be36cd9",
+      "partition": "development",
+      "case_sha256": "79e9434ef0a1183221b6f62be4c5db06ba465f884c14b30e5c6d3ce879fc5a82",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "1afa3222-42f2-411e-a3dd-b2b69d8a0599",
+      "partition": "validation",
+      "case_sha256": "8e2c2060d4b68afecdae0be0fab11d3a92c2bfe4b2660fe36320a01c0e236d43",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2dc87115-812d-4484-b89a-aecdfbe2d141",
+      "partition": "development",
+      "case_sha256": "8771b3e5e11f0a10aa088d4b6aeaf74688c93cb62830bc9396d507319152d56f",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f86a45cb-3c3f-492f-bdf8-81d84ca66d67",
+      "partition": "retrospective_test",
+      "case_sha256": "f3436b1ac95ec35de96b68ceaa1fe52c634ce391125ba73ebe1017f6523723f2",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "e2ab624a-a05d-4101-9c88-eceef7e43d97",
+      "partition": "validation",
+      "case_sha256": "7f4f778fff5a47aa1f7fc3c00fb31a2e1bf04d88804b3eedf2ed64ae28331000",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "587236d8-f631-4bb4-87ed-2b681105e073",
+      "partition": "validation",
+      "case_sha256": "ce81c1398fff8f391a0b4a0ddc1c479a05de58fdb5f4f86415061bc5b11889f2",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f8be2d21-9748-4b69-a270-eeda5f2d1c7c",
+      "partition": "validation",
+      "case_sha256": "6160f8da7ae6dc7487322049fb27960369bf55c3277c2896aa1618e80842d0ce",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "e00e7dda-52d2-4113-8876-6c6e1132e19b",
+      "partition": "development",
+      "case_sha256": "fb44e84c2364701ec93c51b5789123e34aaee654d1bcc948a232c09c5ecab7c0",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4eaee2b6-c260-4ca5-9491-425971ea778c",
+      "partition": "validation",
+      "case_sha256": "a6f0a27254386ffe77c302bd1514e4d2cbbd0e0607a3e3b874afbe2dfda6b8ea",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "afbbffcb-de35-494f-be28-7372e65a3328",
+      "partition": "validation",
+      "case_sha256": "c18b72ae2e61b43082526bc4796f17942faec7abff6368fb35b8f165a82ba41c",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "63507bb7-dc6a-4a69-8fc4-4b4c9c9c2901",
+      "partition": "validation",
+      "case_sha256": "51a19ba7939a523cdfc7e2fb1b7b437353fd0769bb61c62e66cddb19c5b819f4",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2113a155-13b1-4256-8126-35c0f46e5d56",
+      "partition": "validation",
+      "case_sha256": "8b7261e4165262489e0fe538bad7432b2a8e5e4bb5bdbd1c28a4eec8f00c97cb",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "e35290ce-739e-46bb-bb10-ade6a55a2d95",
+      "partition": "development",
+      "case_sha256": "aec1b597c9561b063267b44901050234983ad258d5e0d41f7fdb6d60346f6134",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c6459410-a733-40ec-9703-d96e64760857",
+      "partition": "development",
+      "case_sha256": "07771f87aa647c82e1d40a3c52f94da816bb7bac51276081faf6037df2af46ed",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "fb96c2ce-413c-4088-b766-b846c8b86a8e",
+      "partition": "development",
+      "case_sha256": "7634723fda1f64e34196b7c2792f1627ed43761eddcf617cc83a6dea6defcb34",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d9c3f78f-c3ef-4786-93ef-25f0bbac8840",
+      "partition": "retrospective_test",
+      "case_sha256": "24cbc3d1e0eec767bce410493093ed20483b6255996daf3744ecfd8bef7cd30d",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "005d27ea-2fbe-4872-a42f-6542a638864e",
+      "partition": "development",
+      "case_sha256": "99eb774b033493e717d66d06ade29b65a65898010f41f493d45faa360bd2f5dc",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5064a366-09a4-498d-90b0-eb23889aa793",
+      "partition": "development",
+      "case_sha256": "b66b097f717603b50ad1dda93e57044addd3d26d55841e393689611bfe58ce29",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "aab444b5-fa2e-4c45-b7c3-0706ae44cf16",
+      "partition": "development",
+      "case_sha256": "8742cc5f979d280b5cc5497bb60262ce22b5298b8884f744e7c3d3c85831d0b7",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "97cebb28-ce18-44b0-b4c6-93c1e70ad326",
+      "partition": "development",
+      "case_sha256": "387f945c0c19329c7ccf11b781623cf694db29fa0916908435d78aa16157f70e",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "0b839f4c-9393-493d-85b0-c4e6ed22dbf9",
+      "partition": "development",
+      "case_sha256": "fba90462b3235bac20694933b9c78e0b90b6ccaf350ae9a00d009eaaf1154b8e",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "714111fa-9fa9-4790-be05-2e3c80cb3060",
+      "partition": "retrospective_test",
+      "case_sha256": "cdc851a36d230690d2cc0be17fe6fa2154504f6eb13e222be7b00252fd81021b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c7fa385e-5a6b-4cae-8fbf-b9a470aa9172",
+      "partition": "validation",
+      "case_sha256": "622d4efccbc6adae4b63465f54347538672ad56d1232e1e8c23f240762f4f090",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5745497f-3764-4bea-8da4-3b727a7c7325",
+      "partition": "retrospective_test",
+      "case_sha256": "a85f12ff27f146197feceee24837ce1f279ed18202a59309f349f94de67c5c3f",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "0d664300-e974-4619-b45a-d47778f90ad6",
+      "partition": "development",
+      "case_sha256": "21f29d20f3d34bc7d5841a2fd2ee5ee7c8ad76bd224ff2a467da7338f9c9e986",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "dac91d0e-a459-4027-b07b-7f236f75a990",
+      "partition": "development",
+      "case_sha256": "66c11de6b8f3ab9e37f402c65eee74fb0cea281ec9fa7e5616ed69cd0e099a03",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b172768c-9963-4bc8-8f4c-fc0870742670",
+      "partition": "validation",
+      "case_sha256": "293919477dea4d21263b93c09a541d3f27eb31e8b7411dee5af8dabbbff4b133",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c76e68a9-66da-43c0-9ccd-b1a79dd9f840",
+      "partition": "retrospective_test",
+      "case_sha256": "3a58b93eff2b723f3b5d30d3dd6b485a88ef43fc6d4f5999d47e040a0ad86877",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4d5b8793-8743-4a16-bcd5-2ac500c026f5",
+      "partition": "validation",
+      "case_sha256": "14f2b3559b6ddf15f9413774e3003f1f81f564f3432f303800a1f4acaf2f0199",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "da3a93e3-b78b-4e0c-a74e-87dbddce6246",
+      "partition": "development",
+      "case_sha256": "c9f3dbe9a28df05c9650602d52c817a4dba02d6f0474063b8575468fb97eb077",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "703e30a3-adcc-4912-a4e1-7de9df90f83a",
+      "partition": "development",
+      "case_sha256": "c331fe51a1586198632190cd653c976a6cb7fa16fe860b5e39a4f6a406963009",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d821ad39-d737-4130-b7f1-382120bb6aad",
+      "partition": "validation",
+      "case_sha256": "e759cedfe32bcbebc11a3451badc18d7e160f312e916e73d6c8be70ff676f075",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "e4491a6d-44e1-4ffd-8f86-8e0c18437a82",
+      "partition": "development",
+      "case_sha256": "1e491cadba28fe0433f444f4ef86eba763fa818f264d996ebe6d433c7bf729e1",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f1fcc4a4-92c7-485c-af2a-6835cbfc218c",
+      "partition": "development",
+      "case_sha256": "ef2f110c4f17e4679b691cceb173ffc24e29fcb7e7199b02552188d5b1f37223",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "240d15bf-48f3-48c6-b7f3-edbe9ab0574b",
+      "partition": "retrospective_test",
+      "case_sha256": "b335df463ee92e7d8192be0df5468e812c0d02beb4d89f37da1a7aad3a9b60ff",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f9ad3cb9-7d19-4e56-bb66-07ce622182af",
+      "partition": "development",
+      "case_sha256": "6f3ec014c092b734e00e1e309ac3aa8b55986564834036aa732b2a8f69df1dba",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4fc7b71f-9591-4ae1-bfca-2929c7225182",
+      "partition": "development",
+      "case_sha256": "0b972d90a0abd47394e31eac059a067186a22d0847fefa0572edf35b5ac624c3",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "89c4385e-86fc-49e6-a3d2-caa13b232ed7",
+      "partition": "development",
+      "case_sha256": "ceb5e0af1dbb9d5aa6f0c2f2999ecd73ecfea90ec7005bc91dfd0f4e378233bc",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "8c05a4c4-ced0-4e60-bf45-5a5550974842",
+      "partition": "development",
+      "case_sha256": "8b98ce36c646fb2d665cb663c949361b31362b2b33cde37be20dd3eda338c6c5",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "5e972bec-6249-4852-912f-8c5ad6551a01",
+      "partition": "retrospective_test",
+      "case_sha256": "d990c4b9867275ecb4ed8f2b7b5188ce043d645db0452343038de376f234faee",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "70358479-29f2-47b6-9903-2194d0d9cfc6",
+      "partition": "validation",
+      "case_sha256": "95ab67ee50878c0dad8fdc778dca35ea793dde9348a1f080ebb79aebf4fa0f75",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "38452b54-4622-493d-bdfc-d0043d283636",
+      "partition": "development",
+      "case_sha256": "5ec0516ae81d93872e6a1f9c6ef8d350e36e9e2e929aca3a437103aef4525a5e",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "cfee533c-c16e-4c7d-8230-b5317afe0572",
+      "partition": "development",
+      "case_sha256": "9eb04dcf5326ef9063fe064a73b18839a7f2dbf647ee402ad428119b244daccc",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "15ef859d-aefb-49a9-98fa-1271fcbcf812",
+      "partition": "retrospective_test",
+      "case_sha256": "018ea839cce88ea16b9fbb299e42203c620d532cf091e9403769a90702334c7a",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d8cbf5b5-ae23-4a65-821f-a847a85f3c16",
+      "partition": "validation",
+      "case_sha256": "1c225f3d88f3c1fd5503349d5f6445c6059ddcdeb16fb06e8a66749bde7eb3c6",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c518a22d-8dfb-4bb7-a035-cadb53fd7e83",
+      "partition": "development",
+      "case_sha256": "3ec7c8a1eecf786c4188c08f5f6391a98a2459f9bbd49116f2d92e4d948bbdcf",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "982d9f10-482d-410b-95c6-3877c9823ddb",
+      "partition": "retrospective_test",
+      "case_sha256": "260aca0aaf0d99493dab2223db4c2a4aae9393727a1886b326582e49bb8fe7e6",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "128a7ad2-862e-419a-a593-45e70a73e6ad",
+      "partition": "validation",
+      "case_sha256": "4878f2f71b8276e478bf43e4f26e6c000f8503d7dcfd4846bf8ae3a65934b03c",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "7f28ba4d-1b42-41d8-a311-b086ce8c31d9",
+      "partition": "validation",
+      "case_sha256": "a45047bb56a29f1e2f28369ced5c78470b3ea05ea080bb3d9785132a35bba77f",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "ac3a99fc-7853-436e-8a1a-0045443c1b24",
+      "partition": "validation",
+      "case_sha256": "2da3aabc612fdcf434e9f3a16d03704f47ea5494d865b650ec3e44109f1dd51b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "bf107802-c038-4bc8-b8f2-f4dd09d38f6f",
+      "partition": "development",
+      "case_sha256": "8749088ea903927b3848473649b85e4e8d18b573b5a2685632bdabe4bdfab32f",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "c3c2f150-f951-4979-a55f-d8543e9a7304",
+      "partition": "development",
+      "case_sha256": "8b9e5fd210ca7c21c21b1b35002e6ec626e0e4fd5dad26080b4f52961bd188d6",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "49782db1-ba0e-4e58-85b1-cdc6df1a1a52",
+      "partition": "retrospective_test",
+      "case_sha256": "2e8e39686eaaf4baf44aecec46a121be59e65939d670babf311e7dbc9cd48023",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "25469a87-6551-4bef-a529-11bca3c87605",
+      "partition": "development",
+      "case_sha256": "3ea244a80bcd3e8dbee2b6f4039cae58a0f94f37180286983d3ce38a758176c7",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c524be50-6442-4743-97b1-25e3b65bd591",
+      "partition": "development",
+      "case_sha256": "c106a607fc4037bb47ca07a10c82accaab3765fbaa8e2110399b3d467bf98f58",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "d54033e7-5250-4c6d-98cd-4777465cb70d",
+      "partition": "development",
+      "case_sha256": "0776ee907e7f70015fa0232a97a2f9d74132bc4c90c443cd2e1b986533dfa2a7",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4a9322b2-72b8-47e9-85a0-e4b38355bf97",
+      "partition": "development",
+      "case_sha256": "419a64d217ee6cc6d7c604d568cd8098324c3d80d0a3d312a8ac9a4cd3377721",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c78d103f-3940-45fd-998e-ff12f045a2c5",
+      "partition": "retrospective_test",
+      "case_sha256": "2172571cc8b14d8fce16842f38c603259ef48b6b47484a17230d02720a620299",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "43d2d56b-463e-4278-8cb7-0dab8785f990",
+      "partition": "development",
+      "case_sha256": "f72c6cfca6778684f7f7cdbd2e8c060fc82562b49069ded19f6f51a98874e62c",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "01bbaafe-3afe-4b90-a35e-1481eab39afe",
+      "partition": "development",
+      "case_sha256": "0208acadccb3367a71f480b2325aca09739ed2fe4d9d4cf160aeab255cc89157",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2371d33f-6922-4fc9-891c-5f40e4d90fd0",
+      "partition": "development",
+      "case_sha256": "b0b0dbbf66ce99faaf75aa533cc26f64e5804727a1126fbc0685c954d57cd8c3",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "3cd0a75e-70ee-4aa3-9a95-1c3bebbe73bf",
+      "partition": "development",
+      "case_sha256": "fc9e379df4756dc813609f746c319994d34a85fe689310bdd059fd49c22b0270",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "80940bc8-8fdd-4735-924b-e302d41d7b0e",
+      "partition": "retrospective_test",
+      "case_sha256": "736e519bdb238674d5867d6ace946706f9310a8b279d2a31d6babf0d08007462",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "ff4fccf7-2e09-451f-9135-08afee5cad31",
+      "partition": "development",
+      "case_sha256": "ee3b9c389f4688aeda80cb8956558a4ed3f01035e3fe205983d9a3c635897204",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "c4b45aac-6126-4df0-ae88-5f84686197d3",
+      "partition": "development",
+      "case_sha256": "31815c9d1e9f2fb216375cd8c2c8d28b65e54f0b8106c1606b02519bfd646adb",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2128b71d-ea8c-4428-967e-ea6bde9565e3",
+      "partition": "development",
+      "case_sha256": "7e7c437fb6b40c9d33607fae5b4629a8828aae35313d87ba9a2434d107fd6882",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c409fa6e-7ca4-4738-b2d6-95f0f4db4561",
+      "partition": "development",
+      "case_sha256": "30764ccb07abdb0a8b60532128b132fc9a3f51998aefd0910f8896c5eea859ab",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "e97272b1-ab4e-45e8-9727-5aabe9ca8c26",
+      "partition": "validation",
+      "case_sha256": "b798eb7d01bbf663db400a63982ac3267433a5e055841574af2a8ada67b483e3",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "169bfb7c-4c19-457c-9723-9d6ca66a9aab",
+      "partition": "development",
+      "case_sha256": "4bd2a183b426f97f2dd1d79d8112d15966f3e86c1b7fb72f55412413ed407d5b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c61b073c-ba01-48ad-95c2-d8337d1c69d1",
+      "partition": "validation",
+      "case_sha256": "a5a103603d6295769b8c4b19468234327354530997f8652d7a10716e2b8d31c7",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "681cc590-e662-432a-aa0d-b0e8a1b7b3bc",
+      "partition": "development",
+      "case_sha256": "36b257edcc4ad97842a12088243ecd6d1c94a674b283ae370913629e8bcaef09",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "1eb9f8e6-70f8-4af1-945d-c31bccc571be",
+      "partition": "development",
+      "case_sha256": "f93766abc27bdfad01836ae201b47eafb944df72097bd0e815e9e45ce85a352f",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "24c9c43e-e917-441b-872c-8b31ea3aebdb",
+      "partition": "validation",
+      "case_sha256": "ac3e0283c473acd00d24ca38343258af91cb91f76672fc523ad6bc07d4d0ad1a",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "9f59e28b-17f0-43e4-b57c-f78ac4abae46",
+      "partition": "development",
+      "case_sha256": "bec4420ef24fd771b2e53b178d6e0f62658cffd9d46f0f677acdb209cb9bf12f",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "36c23108-953d-4e35-872d-b40f05dc7aa6",
+      "partition": "development",
+      "case_sha256": "9d0bbb9ce05a985af2ac76dfaf7e8204f404a17513ae1321770a28fcf660a613",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "cf8113fc-ac2f-4650-aa19-cef97a8436ee",
+      "partition": "development",
+      "case_sha256": "e9c421c33dbbaa5ce9eafa7c0c78e1f694399a6db05f4be97a577320a55f233a",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "34b4fed5-68ff-4f13-abee-460ea326bebc",
+      "partition": "retrospective_test",
+      "case_sha256": "21b44b20120213381aff033576b25d9bac2a4265498e741a25b08c45d383c4b2",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a532ef69-d471-4199-a6fd-0c0e10b18d2e",
+      "partition": "validation",
+      "case_sha256": "4036815553a8abf54a6791cd52fbcdcb637999ecd9c2d75746930de647cd81a6",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "09df25a6-e1f4-40e3-8c9c-433129ac6a2a",
+      "partition": "development",
+      "case_sha256": "ab1f09ee405e13fc2b65833e0d764aecd40bc883e2422b5a30aa4a77297ccf3e",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9d8abc91-bc73-4092-aafa-8e891097d3f5",
+      "partition": "development",
+      "case_sha256": "ec170f3c55c1059d94106eb3a23b40ff357a25c150bd3253fc4be40e42499449",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9f6b74c8-1cf7-4680-91f0-2bd2ba628ced",
+      "partition": "development",
+      "case_sha256": "a7043c31cee99e182de71f0cab2befed7bfe91dc44ec8c9c8d79a8e2a7ff0fe2",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5186f3e3-6230-45ab-8d54-bcb0d4c9cc30",
+      "partition": "development",
+      "case_sha256": "c93dd2613313f7f7a054c7c546aa3e6f947810cd4c5d0bf4c8c993586d285ec3",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "0e27a2eb-667e-407b-9d3a-303c2be2ac1a",
+      "partition": "development",
+      "case_sha256": "bf731931f08e7b369d218b7c5fdea8a5e2d9fd59aaa4c13b7fb8011ab1c4b9b0",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b6815df4-1153-4b98-aef9-13a2620430e3",
+      "partition": "development",
+      "case_sha256": "2b76807c64b78ab4e41cd7490e554a96a00ac5052490dbbf0ec7a27897595f35",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a0ea6d26-adfd-459c-a54e-abfb90a32920",
+      "partition": "retrospective_test",
+      "case_sha256": "422139989ae127566fcafcf051c81d60ed927ac92771485afe45f25ab478927e",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "7156195e-fe04-4eab-ba46-b19ac53e44a9",
+      "partition": "development",
+      "case_sha256": "e3170c6d433e4bfe4f4612c718129a2fcbb2af4d03a61890b16e2ba64a7ed7d3",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "4a008b03-8477-4dbf-918f-57a8aafc75c4",
+      "partition": "development",
+      "case_sha256": "c64627f43a2e4ed58dae5062ed83429b276d82d23fa3c74def87de50f3917e58",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b3432b9e-540d-45ff-bd80-5d647bbf21ee",
+      "partition": "development",
+      "case_sha256": "210c747700c357b83393f64731e311c3c5c7cb05bb9249cc7102c6800abe1958",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "49c8c1c7-1ce4-49cb-98be-140844f242cd",
+      "partition": "validation",
+      "case_sha256": "0f9b9f68a728e359f36bcf503c5afdb326685c1e9f2573291543a548b90c4bff",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "3b5c8e38-0581-42a8-a08a-4d3926211ec6",
+      "partition": "validation",
+      "case_sha256": "a57956557d5c67c58714c30adbefcf77d577374e95caa48712dcdc29b6b9a921",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "56f9c939-7870-4aa1-bbc6-a2728b7ac874",
+      "partition": "development",
+      "case_sha256": "a291cde62ca2e10e2b46218a186fd508d632426a9b604eeceb747bfef0675e4c",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "436fe4f1-1fa0-4269-bfe4-0832eec1c913",
+      "partition": "retrospective_test",
+      "case_sha256": "1ad8b574691df68f58abbd7a0eedcc63caa9e40cc33c7ea4612c16d3e6e14704",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "28817132-4450-4394-8975-edd8f049316c",
+      "partition": "retrospective_test",
+      "case_sha256": "369bf1e3b5e3d86742373d316d8179d28dd3f3a33dfa6c47c615453a67b53bfc",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d90a1683-33e2-4c4b-b4a0-39d9bb335fee",
+      "partition": "development",
+      "case_sha256": "3719904034ce09d89cede0bb5e6cfc29ee66f23d6286ba0c6ff29da2a16e668e",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "7fe93667-6432-450b-a45d-677bc3250e51",
+      "partition": "validation",
+      "case_sha256": "65e204ebd45deac46a360b91415e881f5f7c23e03210ff9011a330dbcab88f01",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "0b747a97-13b4-4554-85f9-b508f6142ec3",
+      "partition": "development",
+      "case_sha256": "5906f343fb781caa005a2659515a4e958bdf3ffd8cffd7e5f3a0c477ad093964",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "e5c02375-bbe8-4e2f-b1c8-0c0e2ee35914",
+      "partition": "development",
+      "case_sha256": "86869f6ceb07f0d74d8429cef9569d8373e01d6ab3edfee85a8e2873a92032b1",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "30ab3b99-a7b7-48d5-9a96-0c59b18f50e0",
+      "partition": "development",
+      "case_sha256": "734a44ddb47367b84c30dddb2d9d0149d249e7fab1b44ab78551b81be947ed8d",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "84b4a8c9-c47c-4684-adbe-149c811cbab8",
+      "partition": "validation",
+      "case_sha256": "8ef36dceb3820fa4c81f6bc5afb064fb17fec3bf07b6abf64fee9e42c73ca44c",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "78b73864-82df-4051-b680-556eed801a5f",
+      "partition": "development",
+      "case_sha256": "57e962c0b7c6f2116b4ad351bf0f3f0c16af0b2dc62001b4afbc453a6d8718cf",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b72bafef-df3c-4eff-a646-092c0df64ddb",
+      "partition": "retrospective_test",
+      "case_sha256": "8a9d8104753644dc19e9e0cbe55d39caa1224fbccdc9a3d1896d927e9e5e36fd",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "0c3db4a5-abf1-4c3e-a481-50c7ff74fbeb",
+      "partition": "validation",
+      "case_sha256": "57a7b0fed3796131e47f8aa6e84ef7065901fe5714b08a94eac102683cf763b3",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "98733b75-9a49-45b4-b38d-c42b650188d0",
+      "partition": "validation",
+      "case_sha256": "4122e7084bf28c7047f06b20ecf7a8c722bbbfade4bcd74d31832ba1681fb167",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d206acc1-4505-4198-9a8a-22e3d4d44acd",
+      "partition": "retrospective_test",
+      "case_sha256": "66692e6381ce74217f87708e636d0b24fbb8c80d2d1a5e0dacee0f68c3676513",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5f115330-b0d3-4966-9328-8dea65a9ff24",
+      "partition": "development",
+      "case_sha256": "ac72b9e1b95e00b78c7eaf8d7ba7001432740e57662a3fbb60ef8b7437af28ed",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "767f1620-f1da-4bc2-b03c-9f4531aa1cd4",
+      "partition": "validation",
+      "case_sha256": "465a80b0c129359805644c57810a7fd2786d0766ce2b4397fd8460e2c28f39d3",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "085a9e8a-856e-4044-95c9-0e5a8bdcd16e",
+      "partition": "development",
+      "case_sha256": "b528c381a12bf1347a56d94cb5800e6c893c911b297c3881c9f7fd8114a5fb03",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4676ce19-e3ff-423a-a30b-c1699b53988d",
+      "partition": "development",
+      "case_sha256": "5e0fdcf958759c6dd016d1957a56a3d27468c3652e73a781f8df2bab523c2c42",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d1ada4b8-be4c-42a2-a33a-e0793106a483",
+      "partition": "validation",
+      "case_sha256": "858384e6fca8f93b5c3220f4022c9e1703e844b5550c3ef04eb8d960289c92d2",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "18cdc57b-d52e-406b-a16c-6e2f5538d08b",
+      "partition": "development",
+      "case_sha256": "21c78415d3979a19b24a8cc6bb1d87c33748426e18f95fc828e968e5a9b33ee7",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "63fcd19d-dc39-4210-b25e-db1d94c4394d",
+      "partition": "development",
+      "case_sha256": "cb58204ef0f822e76816424b6dcbb9a1cd3ac1bded62b511f95dde3dee90289a",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "24b889da-84e0-4058-af8b-3fa3d5a1a24a",
+      "partition": "development",
+      "case_sha256": "a287e318ef1b2d6c42a4ade9321df93ce163055457d9ca8c034390c4e27bfc6b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4b9972ce-2571-4bea-b305-6a24e55863be",
+      "partition": "development",
+      "case_sha256": "51ffa0d6a0d2d6f9254f4d6cc050e8c25e694a6120b7c048751bbe0137bca3f2",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b5d9300b-a859-41d4-b4a2-467e50436d1a",
+      "partition": "development",
+      "case_sha256": "471a91492f31a38aa8084ea008962c850ae7f925cd40efe737f70a161399145a",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "516f4257-0d7f-4222-a203-4901ab884611",
+      "partition": "development",
+      "case_sha256": "e9e7d18f607cf93c687a78d982aaf6e1b1acdec755b3b67bb0ce630c2b49a895",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "56f946ec-8077-4a93-bb73-92da5cbc253e",
+      "partition": "development",
+      "case_sha256": "95004d6048ffb01aef74fd8c2ebef79ad604c6621c491b914e54fccef1768f19",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "24873375-7d53-4caf-8483-88a5f041e600",
+      "partition": "development",
+      "case_sha256": "35a942eff30e08c8c603ef3778f5888a431cf0e1722377b205a65cdfb4dcd94f",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "413c0ac7-c365-4bce-99e1-a25ab4a9706e",
+      "partition": "retrospective_test",
+      "case_sha256": "b4a449a3eaa5553989f0b4fd3f467c6bfa76d78bd3812b7d6cc332bf07ddbf9c",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2086e517-9028-4324-883e-fd5c88b432f1",
+      "partition": "development",
+      "case_sha256": "3ebe49b079c75715e802a46dc8338474950f9f485bcbcbf64766c3f14217e650",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4d774411-bf94-4dcf-b383-ef0c74e094a2",
+      "partition": "development",
+      "case_sha256": "1922d613cc5073122426379bb8e7d46131799862f67a49433e6082c3db15003b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9114a635-aae2-464a-bf3f-6d628cf2b98f",
+      "partition": "retrospective_test",
+      "case_sha256": "b98ca560a1f513e31f7e4e74137af8fa0d964112cc2d798638404b7703117009",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d0dc05ea-aa90-44dc-bdf6-5221e956dfcf",
+      "partition": "development",
+      "case_sha256": "36005f8a47b2fc730572bd9125cefc6cf77bfd72f86b9a8c3fb47ffa1d28e5ae",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "94e85e5d-d0af-4df2-b39e-1593c914f16d",
+      "partition": "development",
+      "case_sha256": "c941295d3856fbc63015ff87c9515570d7fb5ad4f14130a01919866db54d8dc4",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4535fec0-e1f1-44b0-b5be-fec24ad73cd3",
+      "partition": "validation",
+      "case_sha256": "c71ccceec3be682022441bfb627ff170c95b7aa960169fbeea126400bfdf93f1",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "656de9e7-2ba7-4fef-a866-671c3b1e1f70",
+      "partition": "development",
+      "case_sha256": "551418b0941d72813b887f02fec0683cf2ec6804fe7cef8880d71aeed630edee",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d0a80524-71c4-4d07-ae46-9b10f2529ef0",
+      "partition": "development",
+      "case_sha256": "17dc90f952eefc2a0ff6545b206a3fb1d15de0b23601700b6c02cda59b687254",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "dfbedd00-c678-48fd-bb86-c789ed84c055",
+      "partition": "development",
+      "case_sha256": "fd8becbfa5a34652b3d16f3d54c1c4aa951b59351a3c67bdd502bb754afab365",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "650af51a-4ca5-431e-8917-46b793838a03",
+      "partition": "development",
+      "case_sha256": "caa7e780e0b8273e80e8e09d625204b4c538b9013ded4f09d91d8490e09b7c43",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "56bea7cd-3722-4f91-9e70-703afca61d52",
+      "partition": "development",
+      "case_sha256": "4e7eca9a3f907965f27837f6a4c8ae4c1017c975da89292bafa176ce2b554c63",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c885a941-7b2a-4137-a8f3-63d5499d43eb",
+      "partition": "development",
+      "case_sha256": "f8210e41d3385db2cf6c9739cfde223605377cd9abab3e785004b5512fea35e6",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4499bf2b-4519-4d43-9fff-1f47210f7eca",
+      "partition": "validation",
+      "case_sha256": "73865eacbf84808c4237fdf3c688b4a0b625fea7265f8bdd955f8a5f74eb0607",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "779b5d14-1a6f-4d0a-8763-e0a25961a811",
+      "partition": "development",
+      "case_sha256": "7a7ff091261f868f479d7d8ca7e182630038259356661098a516ef8f0f0abc2b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "1ca15e09-0f46-4067-86b2-1d0d852e5d2b",
+      "partition": "validation",
+      "case_sha256": "41aee32dc92f47a00b8bcb92ffa0df5bd99d3528593c358635ee1ff8b69f0495",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b7463adc-9f85-4106-986a-a47af7af0a8b",
+      "partition": "validation",
+      "case_sha256": "6ced8cc0bea96a7d161f3d0e7ccc7dacee0a23113b6bc039b788e358c6c0ce4d",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "ff59b593-24e6-4c72-8270-495fd488c116",
+      "partition": "retrospective_test",
+      "case_sha256": "93b7fd17e2aa84ba69fab6c6737577080b27d3808b67b6f89e9b33d704e48a25",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "19b0a886-d716-4977-a313-254b4d12fa6e",
+      "partition": "retrospective_test",
+      "case_sha256": "4802cac76894aeece30a9ad38582a9afed670ed4897d8a536f2d28182b3013ae",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "43d8ffa8-7e48-4687-b333-8f899ba1bf91",
+      "partition": "development",
+      "case_sha256": "99d93b64380b744e80028fdf3085963f46b699ab8e8ced0024e09154c23f1078",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "ec0dd947-489c-4b16-b9ed-a1c43d710049",
+      "partition": "development",
+      "case_sha256": "1afbedeca244b663dc5f728453fef8df8749a5a877a1ecd8482ec3dc24f48f37",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b5f5f1c5-5623-4c0f-85c8-03cf1e643bf6",
+      "partition": "development",
+      "case_sha256": "3afe1512a9dd6382a255fc7c85d89285c4999883fc936f9965289b8ee498c4b0",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4a7e803b-e5ce-42d6-a1ce-100ed9686854",
+      "partition": "validation",
+      "case_sha256": "19d0ff32a08afc302a397921d5c62205d4608d88c87fe45604efae45f696204d",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "749d00b2-80a2-417f-b7cf-426b8e1048a4",
+      "partition": "development",
+      "case_sha256": "aff0c073a8aac1dd427c4b1b8c3939edf3479a1938a262457c81434595a7c867",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "fccb74b0-ef67-4104-be5a-df1228ffb908",
+      "partition": "development",
+      "case_sha256": "25d67579d6926901ea0d7f75424bff9b9cfdfc45adf85d0d887aaeaf54d04882",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "50b62a7a-4aa4-4c92-9f99-890c6b57ad65",
+      "partition": "validation",
+      "case_sha256": "6532fde72b6d407b6d4d637d54e78f6ef2a40fbb1ddc0db24b3d3d8acca19a37",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b7b61195-8990-4afc-81f3-645c4de6357a",
+      "partition": "retrospective_test",
+      "case_sha256": "253fc7f8a318b3882882beecd55c7f42ceeef6ace842edc7e526083f014ae258",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "bf595366-6cfe-4928-86c3-519fec957889",
+      "partition": "retrospective_test",
+      "case_sha256": "a083d87c449fe85a059006a551fb88438987608f713f4ef02e7acb970a93ebbc",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f84789b4-ff31-4902-9145-185c7985412e",
+      "partition": "development",
+      "case_sha256": "153891135f761acffc35d656a3c51324d2364c11a7b287b351b18d3eb182b190",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9b98fb94-8a98-4c31-8bba-db9385a6b8a0",
+      "partition": "development",
+      "case_sha256": "013ef78e3b5b1d784913ecf8c6498a5ccc5c0d3dc7c5c6ffdb653a423dc40248",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d0d3426f-8b7a-4501-adb4-86d8fa9099c8",
+      "partition": "validation",
+      "case_sha256": "da11c46e76f5f425f8c264afb6169c610ac4e58d3b941be9716298c7a657d74a",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "dca8cea8-e569-4baa-87ad-cc950754990e",
+      "partition": "development",
+      "case_sha256": "494fce8eea5fe425b4cc4a017935ea4dd405a7e462c05c6d38f8e05776bb9c86",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5b3bfe52-5f67-4504-b7ac-a5f98d63ff09",
+      "partition": "development",
+      "case_sha256": "3dacf53a33bda387551cb51be38b514ad6a36c2cc4ef87a9fc2be2ff6a98e326",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "7d035864-a798-4789-9f2e-5ad441ead8b5",
+      "partition": "development",
+      "case_sha256": "378d8cb97f56ab0b560ed5a48c0b4e6526bdb5612cb6b4f5d5b3137b7036d040",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "131d4b33-caad-4b22-a104-2b49391e4406",
+      "partition": "validation",
+      "case_sha256": "1cc62fcb73bd66e59dd82a0b007aaed1573ab65f043e070bc3b9f5e27ab80996",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2cc010aa-9834-4fc8-af96-41ed196cbfc6",
+      "partition": "development",
+      "case_sha256": "fc80d1f8cf16e3529d9740abb4d80cb7227e931e865fc7230a3812b3e0f7da5a",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "cef62b7c-af1b-4efb-ad00-46b23ebc2ae2",
+      "partition": "development",
+      "case_sha256": "7763e96f52a6e542dd746999f84464c7911660a0266a0025978eac481f525a46",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9202d7e5-d578-499b-b566-633627c2a37a",
+      "partition": "development",
+      "case_sha256": "14e6583ee9b1d3cdfb0ea81f52db0fd34c828e8da7dd9ee1b04f470501c9b866",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "ae030d4d-4523-4ea1-abbe-9f17716ed470",
+      "partition": "development",
+      "case_sha256": "3c09228d97141568abc0124c7af261faabf67b14098f18b59d467efa818a9c8b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "41ae1b3e-2c3d-46b5-9299-a28a0bec7cbe",
+      "partition": "development",
+      "case_sha256": "bb037080fe7785afc471b0c14825eb0d073afadcf3429373c7b73052ab8c8912",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5e0a84d7-b972-484c-a649-469b15f0a90f",
+      "partition": "validation",
+      "case_sha256": "3b4a6af54b4ed82b2027c513605414bc75104fc74430ba55724032f42cd7aaab",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "647aa9f1-a549-47bb-8a4a-30c400f29f72",
+      "partition": "development",
+      "case_sha256": "5366c2c7fa0b1dae337982a40700ed250658af1b885da8203cd38d586202b663",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "ea9008bb-444b-454d-a907-0ecc0212ffd5",
+      "partition": "retrospective_test",
+      "case_sha256": "46e461b748a49c4ebdf1ddc70164c2449a9bde8ccca7cf12b6653307229e4c22",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "02a60789-fdea-4306-8f3c-a39453e12a0e",
+      "partition": "development",
+      "case_sha256": "225f1de41d472d80241f0382ed46e0adb4b67f0601d8efc60b3635a00b467079",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "360b0474-e0b9-4b78-bea9-da2fe6a10ce2",
+      "partition": "development",
+      "case_sha256": "278f8707786767f850eef805d2c86547f918383365bbc7565b3853a57905bfca",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "3e9faad4-5316-4971-b537-fde75ebd85cd",
+      "partition": "development",
+      "case_sha256": "fc957557f4fe2464663453261059a7fdf80a9008ec01c2708617cb2e2dc5e744",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c9024880-46e9-49e0-b59e-aa083604c69c",
+      "partition": "development",
+      "case_sha256": "259b6d21b388a6cfc9d2d97470f5a5cd274ccb1b6294701c77638343c4f44a1f",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "6fcd48f4-2e8a-4079-9403-1c182cd5036c",
+      "partition": "validation",
+      "case_sha256": "b008921b5d8da24a78e9ac363db7f5d4bced409832cc5d4a60e04ce740c54523",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b436a19a-32dc-45df-bc9c-2a9dd17e722b",
+      "partition": "development",
+      "case_sha256": "2d2990fe90dc96eaadc3b4d8c0f0e521a3aebe1138e1c93b59a2a63594f9fc62",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "6aa32c27-5661-494e-808c-6c59cefdcf82",
+      "partition": "development",
+      "case_sha256": "2fc25e541a8c88feb6c81bcc8eb38c597748a8e38b5761a598fd79a10c6dbb6f",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "e4ef779c-1a4c-48ec-bea6-c3e2d8a8a3af",
+      "partition": "development",
+      "case_sha256": "7b5e877a01de30c31a3595b900d28d102d25d108f83c4e7ec6b082b2214141a5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "287d7b73-d8d5-4727-a094-fd7d778fc019",
+      "partition": "development",
+      "case_sha256": "a7e3ff4d953684662c52123ac350c18f5101a5f16e6676982db72d9f92a05ca1",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "118ddcf8-c6d0-4931-b03c-0f70b9154764",
+      "partition": "retrospective_test",
+      "case_sha256": "68501b721cec43e7fc4a4fa0a49327e67b773d7290910b94211383589de27f6d",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c74007b6-b234-427e-a7e0-30b4050f2f1b",
+      "partition": "development",
+      "case_sha256": "dd9b1ade49595ae059bdcbc8e6a0ef3e53aa04a08c2edd27c3f212d56c65bf04",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b7d0c469-88ab-432c-8d6e-c03e7547b7f0",
+      "partition": "development",
+      "case_sha256": "1b839566fb169ad3a6be97d3e02442107f243d368eeca327b780ef055de24569",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "7a16c778-e7fa-4f34-ab5c-5d7ab3bc45f8",
+      "partition": "development",
+      "case_sha256": "2cb707eace79c012d92e303ced0a22a486e06323a2f82e8fc5e6081896c037a5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "7bd44846-7348-4684-a863-2703b2f19740",
+      "partition": "validation",
+      "case_sha256": "b401dcf88a2ce1f3709bd599cc6322f1da014fd1383097edce141e318f9a0dbf",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5aa19d23-dfff-418a-a875-c7b736602965",
+      "partition": "retrospective_test",
+      "case_sha256": "4c52e8808d1e91f02d963f2e333f077692d7f85c2598947df9b7ad103c800ee7",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "00a7b27e-4e99-435c-91da-e4f2a1b2baea",
+      "partition": "development",
+      "case_sha256": "a8bb9969e3fc2dfec1769385628ff77b7fa2c42b74845180808c5f84a99b14ff",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "8ba2b627-ce87-4345-8cca-e5e108282854",
+      "partition": "development",
+      "case_sha256": "c1a88d11bc04ceada505e78a7f1904f070b3e923d71b7b9f63099bb3bc9ddbf0",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "7856c3c2-a439-4670-9da9-b473ad853e1d",
+      "partition": "validation",
+      "case_sha256": "6390fea6907fd47bb8b4cafcef9c35744914cd4ab540a20c394e6a2bf70344d2",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "dbfed639-9c3a-403e-973f-41c60f03f6e5",
+      "partition": "development",
+      "case_sha256": "1ff49bcb6163257076e1ff46688f6d131d398aa2111103969639276c734c1b05",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "80d7fdba-12b0-4f8f-b6ad-54db5a2ea0af",
+      "partition": "development",
+      "case_sha256": "b239806ea372f38c035638582b2f635e3e5a68e23d4ca0a1f1cb19942e0c3903",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "8e95c23f-75e1-4521-bd59-5a1e18bcd31a",
+      "partition": "validation",
+      "case_sha256": "04094536f32fc3d1c0b95f5c371b151732bbd88df3cc7688072fbdda4155498a",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "be0d37c3-0107-4beb-ad31-ba2bea8c2099",
+      "partition": "development",
+      "case_sha256": "1e4ae6cee0fc64513a6696dace37e5d9ed2960523205712394af6281aab3acd5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "60405a2b-75fd-4f02-b123-53ab8181a990",
+      "partition": "retrospective_test",
+      "case_sha256": "9a37d247b3caa8f0a781a9746ede0dd700a0c8a6783b683ae17eaad5d8214aed",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "da370727-3f0c-4737-a788-82c76b376e89",
+      "partition": "development",
+      "case_sha256": "8ad49807277c856bc8ae41ae6280e43df045793c7e34f98e07ece64fbe14325c",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "65c3a0dd-2ce8-4606-b02b-d64115af2ae6",
+      "partition": "development",
+      "case_sha256": "0773a49dd989e1c7e04201eac9df8e7404b4a82a137d07a21a8eeaddfcb52c60",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d92d2e50-5f51-45af-a4fb-c6884b9e7fb1",
+      "partition": "retrospective_test",
+      "case_sha256": "2cda822d767e67cc13383a0b2aa9552753406adac835767e2bdc63e1d8b3e9a7",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4f1b1972-766a-43c2-8f09-5ee24ef1d963",
+      "partition": "development",
+      "case_sha256": "fed8b081694c0d86b0a582fbba2da8b60f5ee47ad586e060e1818fb7a9aad450",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a9c6de02-881b-4c2b-91e7-1a37433c2636",
+      "partition": "development",
+      "case_sha256": "31e608779b5fb49c24cc3702f2b703d0aa187c7880436c08eb3fdf142162ac87",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "8866a625-cad0-455e-91c7-6caee22e514b",
+      "partition": "retrospective_test",
+      "case_sha256": "5072e6fbe9520ca4a75e440ce9613527489040276485030361840b475252992b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "8640997e-7700-428d-b8b5-444a6903408a",
+      "partition": "development",
+      "case_sha256": "c624b389de5d0ccca0428368d262c59b30e6993b7264a9405a974588f65c1329",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "521b164b-af09-4ef5-b8f2-0ed4dd4bd156",
+      "partition": "development",
+      "case_sha256": "e67905ec1c00c73a36b55dc8fbb46f1955a9842cf8dd52aae6b99440c482f837",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b9a80a1c-d616-49da-8701-0ef589482af4",
+      "partition": "development",
+      "case_sha256": "f63eaf554c4ab6bdf1dbd23fe714b79b11cde789da9763f2ec53ebd20325e556",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4e5113ac-3688-456a-8943-48a6198ba0e7",
+      "partition": "retrospective_test",
+      "case_sha256": "3700087e17f8d4605be0c8eec8bf69877d99c95123f07e32ee40b21d1ef68570",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "34498d0b-b2d7-4c4a-ba28-9ec6fbd1fcc8",
+      "partition": "development",
+      "case_sha256": "56f2b83d97d51bb2ee253bfb5c502beff9e06101b486b23e8c6791477ca69f91",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "887998c7-c62b-4ffe-ba4a-0d11d590e80f",
+      "partition": "development",
+      "case_sha256": "7f8b5dd082e784f70e27e26875a6cf76f572bd1481618e47a54ec6de5ba6cd67",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9ebe029f-0c3f-4c92-86f5-e43d65daabb8",
+      "partition": "validation",
+      "case_sha256": "6390a604b0bec4131accab42a8288813cd86b08557d5ffe01529af6db659f887",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9cac36fc-b940-45e7-966a-2a67dce4daae",
+      "partition": "validation",
+      "case_sha256": "b423784b079836ba51e05c5017e6b2143312f1a3afa81680e6325f7a3e3fe67b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "3454d4a7-d1ac-489e-8202-2d1c0d31434f",
+      "partition": "retrospective_test",
+      "case_sha256": "ab499db72a335664886029715c2ad1609d52cc2babf77e25acdfaf2760c084b5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "deaeb88c-8cd6-4268-ba05-fe62ac689ed9",
+      "partition": "validation",
+      "case_sha256": "67efa53ee507a26639ff5c5a0d3434d921f9e7049e5ab3998d4621af693a9646",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "643a0802-66ee-4f00-a40e-be3418e67c03",
+      "partition": "development",
+      "case_sha256": "abf82ee7dbf51e37a4118fbf15ffea62cf0ba82e3c36abd75c7ffb077c90e155",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b9c19abd-625a-46fe-9985-3155ed6756cf",
+      "partition": "validation",
+      "case_sha256": "1488d0d0fe744617c58a11f562dfdea9942971aac5579d4abbfe89879c0e0dc2",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b65596f9-fc35-4be0-a380-ca6c8a158a85",
+      "partition": "development",
+      "case_sha256": "88c16a9435f443c6b50002f0f85c9069149c708d97b564edef42c618f5b1c209",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b864d002-d711-48ca-a0eb-d901bfa46327",
+      "partition": "development",
+      "case_sha256": "9a3677d4bab9ffa6144c1e4ae98739db6d9ce8b5e451e9322ffa111faca9ce87",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4dadc43a-23db-4508-8dbe-c98b03b5f969",
+      "partition": "development",
+      "case_sha256": "c4b6a38f98dd5933cf6a07bdfe9fd764cc30e16b4b6f21a854d7dcb023b4c93a",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "8b185227-1429-47df-920c-dfb67f78f5e9",
+      "partition": "development",
+      "case_sha256": "c89a73f2e49e8182fc70476dceff9aa15630ee102c072d2769be1f90029e7938",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "87964a7c-839b-4c0c-b2c9-8d053f19dbc1",
+      "partition": "development",
+      "case_sha256": "8396e833873279bcafa68721efa456d64531cef005b894205c041385df463e2f",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d0a83d56-8787-4239-a92e-4c4af4b198ab",
+      "partition": "development",
+      "case_sha256": "2fc22708f36fbb8c25c9fdbf3a5d5bc6d026efa7736ee642b78afd124c6f137e",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "e4cdd7d6-cb4b-4a96-a82b-a9f83403d027",
+      "partition": "validation",
+      "case_sha256": "97bc3397b2c29c73edf17eeb5d14c2e981e7f1c34efb83a424e2db002c2588df",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "716ccf9c-e96e-4078-be49-fa208e113983",
+      "partition": "development",
+      "case_sha256": "0d8655488080b8b10d2f27dd8107af1f02da5dda37390898797bc8936ceb00cf",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "22b362d5-4c1b-45c7-a579-6e14ff32ce41",
+      "partition": "validation",
+      "case_sha256": "7195f51675ebdb41d1f3328e2af692c188fc833ea63efae231380934f4444774",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "88e30adc-0ce9-48a8-8482-0f018818c581",
+      "partition": "development",
+      "case_sha256": "7abe371c7de881274af2d1c212a27946bd0f4fe363359f9f465a731bec6fcf85",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c6e35217-7e6e-4b70-aacd-74a485dbff9f",
+      "partition": "retrospective_test",
+      "case_sha256": "394100e914772b2896bba040bb4f2d1e075a91b4eb9d78859bf52396e0b5427f",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "ec8d4f76-ce9f-458e-8aa7-4e01ed9a1915",
+      "partition": "retrospective_test",
+      "case_sha256": "578dcaa05d48f9c19c727e3cd261ac3a29b4eb1781543c316ca84f5d37238ce8",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c3115c69-cc42-44f5-a7e3-704cd0e94e3e",
+      "partition": "development",
+      "case_sha256": "f8adcf9636e90c3acfc2f4715447410074c617603feda5e3d15c75943a25f127",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2b9df31f-5fe6-4b94-b557-c7b76105f427",
+      "partition": "retrospective_test",
+      "case_sha256": "aa48bc896fee4111569c863403a18e4153b4f16a3771edcaddca84db2a73a597",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "0d2931ab-bd6b-4152-9f69-393021528f48",
+      "partition": "validation",
+      "case_sha256": "1062dc7d13d41ec86e21f3713309983046e34d4c64a763a19323307a8ee378f3",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "62641282-f0bd-4d8f-84a5-d82e1c83be95",
+      "partition": "development",
+      "case_sha256": "194ad714da42f66bbbce65cf2a662841a018176db42825fcf5e5aeb2cbea4912",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f1ab677c-9deb-4965-8f71-e3713b1df026",
+      "partition": "validation",
+      "case_sha256": "e652cbd1b33256a8c671faefa1be49d9ade67e280c7e3174ac89d320f3cd4f41",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "76092487-d17f-4bfd-825f-3333622fd697",
+      "partition": "development",
+      "case_sha256": "892d255161739b534dee309213836befdae9ded1e75d4fa3159c25a86c50243d",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "e9b1a3f9-9d78-4fb7-a6a8-e2eb0d43d224",
+      "partition": "development",
+      "case_sha256": "9466503953c65c0dcf40ba684b6b6a4b76f38b147249af86a97421685ac338e5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4b90ec20-eee9-4d41-afb4-5ebfacab4311",
+      "partition": "development",
+      "case_sha256": "76937b46b7c3f9c6b966e40edef65cffc4eb027c80521ee313c56300601e6ceb",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "1ea37d15-f8de-4b11-87fa-f422cb5684da",
+      "partition": "validation",
+      "case_sha256": "a96de5109e519862742ff5580830454229fab29856a52588a96a35bf029ebed7",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "347568c2-8660-4a86-b0a2-a9393039a413",
+      "partition": "development",
+      "case_sha256": "c42675a904a17ca0bcdeb8ce5264fbfd5b02ef3fda17b2ac826bc71fc1174bfb",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d246b08c-91cc-494b-9348-b43f49bbb50f",
+      "partition": "development",
+      "case_sha256": "ff6a33209c665668e1ec78c2385a0be28ab4e82e84eaf03a0ed3ca1cf1460007",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "ff1e5dd0-33a2-419e-b31c-4e9cd286c9f2",
+      "partition": "development",
+      "case_sha256": "62dc317d289cc27607b1457d616db6f7254e50ee04313a48de979df715be6525",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "6c3c1095-a69b-44d3-a40a-ff6871577245",
+      "partition": "development",
+      "case_sha256": "95834e9e94222570e147d584ee8766e694a3424a156e4c4bd4ee1cba6faac7d2",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "352832df-973e-4468-956b-13f2df962bb6",
+      "partition": "development",
+      "case_sha256": "99fc1b46c384af16ebda90835aa495ae1d3ea58f0d2cbba3a40c5511d593b47d",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "451473ed-7a8f-47ac-886c-e1fdd1fc4d7e",
+      "partition": "development",
+      "case_sha256": "83003c1dc29c3f398432710914d7e2428c4b0f97cc294e92064fb4e47c30e99d",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5c1ce5bb-7295-4088-bd9d-3cd90f716ae2",
+      "partition": "validation",
+      "case_sha256": "8d880fdd86f9012eac325c38b2345e516ff100babd313abe8629e2fc97a6ed99",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "ae0ae9a3-b3dd-4d41-8997-5c2205a7e978",
+      "partition": "validation",
+      "case_sha256": "a7e431dad50517f3a50dd958673e25f6618bd021529754e51f851a202ae11dae",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "cd2644f4-5203-4395-8cd6-d993bb486de2",
+      "partition": "development",
+      "case_sha256": "f05fb57a302c1f03eb078e5001eba1222780af0e990ab4753d7728021a2e7993",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "93f55f97-cc98-4148-8ff6-75962f0685a3",
+      "partition": "retrospective_test",
+      "case_sha256": "1360438b34aa72375d2a90575d5b22012e70285ac585a1b54c9e510553aef5c2",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9ada42f8-e939-4584-88a5-75d9035f7f49",
+      "partition": "retrospective_test",
+      "case_sha256": "f38b61da4ce3b5c24be61a18441e17fa174264702b8b5790dfb08997b85f1a71",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2993d025-8daa-405d-a739-00a40a12ec24",
+      "partition": "development",
+      "case_sha256": "fb693932a63357c9a2c47a4a4aed02df248b58e5e41b9b249a1888bcef8e3bb9",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "005c136b-a914-400e-81a2-24c419634ebd",
+      "partition": "validation",
+      "case_sha256": "d13a636c6dc632da881f0650128cfc934b3aff9943f6d2c6161e1e546bad7a8d",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9fab0a4c-2dfd-48a9-8d05-e3c01ffbf4f7",
+      "partition": "validation",
+      "case_sha256": "bbf07f1163a19a051bd1fe32ee36cd0278baf377723d6166f684e7bff8cc287a",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "992f7855-c83e-4f73-90c2-4ddf579e570b",
+      "partition": "retrospective_test",
+      "case_sha256": "489a6c890be72fb5363424fbf2370b2dabbaba3f1200372d750ba859301d9031",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "666de4b3-74ea-4e45-b171-730d9855389d",
+      "partition": "development",
+      "case_sha256": "2a36654526c00e179bbae98e911e5f547e2880aada5ff821dd1487bd510e444c",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "83ab85be-aea2-4e69-b93d-9be6fea02dee",
+      "partition": "validation",
+      "case_sha256": "b6d3873751d1719eee52da5a3ccdd1b8c64a6c3c5ae1806299db451b055f1cbe",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9f216351-df50-4a38-aafc-ed1527ad2792",
+      "partition": "development",
+      "case_sha256": "f10d4af84a6ddae862a2d6466dc02731e15847f11b45a8e5f1b02ea0f68ffa05",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d709fc98-781a-48b2-bb11-1fec9f75292e",
+      "partition": "retrospective_test",
+      "case_sha256": "fdb31d3de545e974e6c151724cfcdd4f096e1717be003e67cbce085125c9765b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2fdacb6c-519b-44d8-80c3-137f25d092f8",
+      "partition": "retrospective_test",
+      "case_sha256": "a7acc7f0f119c54797e3bd4a4d187a4b419ef2c8cdb79555a79455b521d7d0c9",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "1c2cd39b-4545-49c1-b623-843cdd27e5d4",
+      "partition": "retrospective_test",
+      "case_sha256": "1d03929a62314d4c5527869d3c85eda3e4114ab68ed3940ae7d4209e0f1e222e",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "34036add-8346-454b-a43b-a8a24b42d4ed",
+      "partition": "development",
+      "case_sha256": "4a8fb5b23139f0dfff5eed230a3f4f12552843bf52899248a4c6d2eece089939",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "3d422da0-016b-4ce5-a744-320f12094382",
+      "partition": "retrospective_test",
+      "case_sha256": "1b719c95b713521c0fbeaf7c34a9747e2a3b7c755eb29161c953ec3223a20d65",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f255a53a-cb83-48fa-a869-ce3165c1bdcb",
+      "partition": "development",
+      "case_sha256": "e9373701006573afe5acac2b1f9c45bd1f3d1ffb9220273fc6a88f55751ff248",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "aa146f7d-f4b0-4a40-a663-685b5d2b3826",
+      "partition": "development",
+      "case_sha256": "2364e1df0e324c7f19fae3e559b1ce7e95135c8c6098df7197f9f3fdca2d22cd",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "0c128afb-be6e-4ea8-b9c2-07cd97e3d8d3",
+      "partition": "development",
+      "case_sha256": "a615aec68c4e86097d0cc9228e7fc5e42f662c3e61cec84e81e74c6fd366f718",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "247995c1-b5b9-4d1e-accf-b2fef35bfcba",
+      "partition": "validation",
+      "case_sha256": "93e823d01d18396c56f27831570f7a297ffb1555760481b9de48241b2dfe0dab",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "def562dc-a3d4-4bbb-aaa7-7e6f2420ba00",
+      "partition": "development",
+      "case_sha256": "35c32b99b546eafa3f8f673c86ec4e92b34a0ee6433d9f1b17f946e74ff0b6eb",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "cfeef1f6-03b3-4e41-b662-7ea728b427b8",
+      "partition": "development",
+      "case_sha256": "72b346b02e1a221c5c33e45b6b9d1c536d5da442e39b09c3ed141ec6da1780c1",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "e61b6ce3-5581-4745-b727-ffaa17c765e1",
+      "partition": "development",
+      "case_sha256": "4cb62cc15be2e1237c97e51d5bdc330a5ee34312f3f3092ed66f79fb7b44e308",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "3c46670b-fd85-43b1-8ce2-68b4e6c1a7ce",
+      "partition": "development",
+      "case_sha256": "4ae79421434fc768d10cf854255b559d41c4a0af16467fe5b8429bbfccb00768",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "7b7c000c-15a1-47ac-8914-fc78ad22bc43",
+      "partition": "development",
+      "case_sha256": "25dd082a2d4bf818a775fd7677cce2baf9b653deb7c17d965594fd1b0cac93c4",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a68cd296-c48a-44e8-98c2-d6fdfc947364",
+      "partition": "development",
+      "case_sha256": "92556dea1bce51f0ca7823108f16ad0406e2d3ef96ab8933ba27672632bdc816",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "641f9917-d57f-49a2-a6a1-6336c159f434",
+      "partition": "retrospective_test",
+      "case_sha256": "b9b661e4c0865b233a2a0d0575b99abb8b057435e48bb29921fc0d50d9c3b864",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "c3eeecfc-de96-480f-929d-ac4a5e5a541c",
+      "partition": "retrospective_test",
+      "case_sha256": "13c07d7d17e259f0287d1f06b3f336da4df7eca2b2483ef76095eb9637e70cc8",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "913877e4-cb48-4cd7-a976-3b494e756bb5",
+      "partition": "development",
+      "case_sha256": "3f23a88393bfa00ed59ad18d10d77da75d64ad9624eea90af1bfb11afa794667",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "bf17fd36-f486-4de6-84af-75195d7c1ce9",
+      "partition": "development",
+      "case_sha256": "288e099abf3cd77350c6401184752c1fe704c476a012dc5869e03d8ba2c0b6d6",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b6769df8-2ee5-4ea9-a09d-79c707f90c49",
+      "partition": "development",
+      "case_sha256": "49c5f613c9d2243c684ca3a0993c6254ede86f7ca38bf6ccb45a5203226da271",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "aa46771d-e704-4e08-80ee-1da3539c7dcb",
+      "partition": "retrospective_test",
+      "case_sha256": "bce2339d9e8644cbbd205000df1cfaedcea16d2e0cd6996e308f1baef95887bd",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "b27d86e7-78e8-44c0-957d-59e493274a4a",
+      "partition": "development",
+      "case_sha256": "0dab79b1f13822d8ebc21b5edba252a81c3433012d7b40793523837ed9129b88",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5afaed8e-78c9-4b79-ba27-d8574a1b40d6",
+      "partition": "retrospective_test",
+      "case_sha256": "c0daa9a8cd061e942e76790b1765c3abaf64affa04cf85a107a2332606de5b21",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5c867ca8-62ae-482e-bb4a-b3368c668c10",
+      "partition": "development",
+      "case_sha256": "cda7e4727f722590269030f949bcb83c5e94cb1051daa5937c12b9b8d477ed6b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "80221498-d4c3-4b83-9868-eab1230eb40d",
+      "partition": "retrospective_test",
+      "case_sha256": "02dce13728df720e2c6c2bfc4bbe0db50a32b37bd3039ad4bbcfb80d067a2ad5",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "e4502c0a-59f0-455d-90d2-5660166c45c1",
+      "partition": "development",
+      "case_sha256": "92e87f678d1783a716721a3490215f239102cdae15f546d930db347c2bc5747c",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "61c51077-efb8-4f8f-8188-7b3784db613f",
+      "partition": "validation",
+      "case_sha256": "2f88c3a87a3fae90590800f122ab3c83681e46ba36fd338fc1c102051027150b",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a876b525-527d-40d4-b062-bf06a4a2bcf6",
+      "partition": "validation",
+      "case_sha256": "695ba1f2f2b48e2c99374483abc79ccde9d035cc3da631fe46d67f14f1f6cc9d",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "8db4b5e4-1c1e-43eb-a522-cb84cc52e5b5",
+      "partition": "development",
+      "case_sha256": "85d1a99c3e0666bed79949625c7809c885e0f2429cda47febabb0a24c78c4b96",
+      "physician_emergency_category": "conditionally-emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "f23146aa-186c-418d-ab23-efb68bccdccf",
+      "partition": "development",
+      "case_sha256": "7caea63d032fbc5fe738dd99e2af3f667f6b51458e3c063308f24fe6cb748ac3",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "05a72fcc-7481-476d-b942-5f3298dfd737",
+      "partition": "development",
+      "case_sha256": "c0f0862a3b94b832c44cb16e681b08b83081b6fe7f4322a1be9819f7de6ea9ae",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "e92dd9ef-063b-4a55-8c93-ab0882d2e16e",
+      "partition": "development",
+      "case_sha256": "4f204cdb3dcac7475f833c1905ea3f37f574210a732b93f23da636ec9e2fe0fc",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "0cdb219d-8899-4260-a211-9fe0963f3a2d",
+      "partition": "retrospective_test",
+      "case_sha256": "2e79f8b4e0cdc951de3f2c2fdbfc7d755d29aa596b8319b92af101ce28dc0bc0",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9e559142-a503-4a7c-bb40-afb142334b2e",
+      "partition": "development",
+      "case_sha256": "bf9b4c7a83dfddfa2069981a59b853e6607c3ca20c9b7b4458435170505e0c95",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "a6cc18c2-2853-43b1-89f0-58941ef0f79e",
+      "partition": "validation",
+      "case_sha256": "27d8b2d8996fc407580077406fcc05023d478a1886b46b62b6b2e03b77a37357",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "827b7db0-0bac-4bfa-a230-65da9c400b75",
+      "partition": "validation",
+      "case_sha256": "5e6324df4cc25aa0b9bb7cf808adb895c1a1492a2f46ff4b14988d6c22b06b63",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "6ca7cd94-404d-4aef-8921-eb80331ea56c",
+      "partition": "retrospective_test",
+      "case_sha256": "e9de15721b74570129dec97219c4cd256d9538ccf3f0ca2f261c23f5807aca5a",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "806e2346-b935-42c9-b320-0272bdddbcc1",
+      "partition": "development",
+      "case_sha256": "d8792b3fe91d6f7dd1dd3f4f434c142cfd14ef270ec1e4274f9ded147269be56",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "1a928791-b7ec-4ef6-b65d-ce1959992ca7",
+      "partition": "retrospective_test",
+      "case_sha256": "e49ddec1110348b53950a18936ce6198eacdbdb8b3ac5ba775fbc526e79e0c28",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "28a81e8d-1830-49fe-9bc0-d867f72e4a18",
+      "partition": "development",
+      "case_sha256": "78c2b1f2d66466497e3671e68c531a9632fdb73bd1017d4dbad5c989846cb472",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "bfdbbe72-9041-4e40-8c4b-52366eed132c",
+      "partition": "development",
+      "case_sha256": "51094b9454f7e3fdd5343dc4c35367349527fc62838bfd41f086f2a02ad4f664",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2bccdca1-49bf-41cf-9caf-1df39fe8b0a4",
+      "partition": "development",
+      "case_sha256": "f62a3e04b748225f16a13d8bf2c1d567621203fdbc425e12a6cd5c0aae914d13",
+      "physician_emergency_category": "non-emergent",
+      "safety_overlay": false
+    },
+    {
+      "case_id": "a7014ba7-dff8-41f8-9f51-8c39be0cdfd4",
+      "partition": "development",
+      "case_sha256": "7416c1af798951b381e8c8b4e660db8e5c54fe87522030ed46e9ae93ca20e920",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "09c2faf6-a0be-41a7-a491-0e687a3c328c",
+      "partition": "retrospective_test",
+      "case_sha256": "567f3287a7415a651fad83af9ca6fea6e4ec4ce727b81d827c22c17c42414ffb",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d1ec94d3-6e13-4e26-81e4-69ab26cea99b",
+      "partition": "validation",
+      "case_sha256": "8a81348af1935f93a5d6edd112ce7bc82fdf58c7137c17a94e523abdbabca705",
+      "physician_emergency_category": "emergent",
+      "safety_overlay": true
+    },
+    {
+      "case_id": "ec8495c0-f25b-43bd-a520-4c96e716b274",
+      "partition": "development",
+      "case_sha256": "82ac3398112fd85e8f7adfb9b3a3a299fb6f5549bd8e7abbe992987e280f3642",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2fb20bcf-b0b0-4b17-895d-0f1c1d55d1bf",
+      "partition": "development",
+      "case_sha256": "3600f558d08d47c392a2bba9c581baf41698f2a9f67ec0896f3bba609f13a536",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "49a1033b-6e13-4c8e-93f4-ad542c4a111d",
+      "partition": "development",
+      "case_sha256": "52f2886fc500d144422c0370fa7bb9b723ffcb673931d2caf49049e90514b138",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "6f95df1b-0eca-4d88-a56a-bc0c1ab9096c",
+      "partition": "development",
+      "case_sha256": "fa7ad3642c3484f20daab16677845dd2a0d3a642824f3922ef2e3c63b42df187",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "36bfbf75-ffcb-41cd-be15-39ac7a4a7edf",
+      "partition": "development",
+      "case_sha256": "000cd413a333847b15adfd20b53fece0cec52b1c41f838d70fd282a43c09025e",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "d2c55bfd-049d-4d76-a243-47d6002fb054",
+      "partition": "development",
+      "case_sha256": "8786402385e0e4878e8f87ecc85244a8c4ea2a4dea24c85d3ffb8fee9d2d105e",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "652a831d-7086-4607-bacb-7bb0f9e9df41",
+      "partition": "development",
+      "case_sha256": "5e9bf16ed06b21b4a91e788dbb945c7a4f39c6d62a7a27e4ebd44b73265aa3b2",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "33be2908-5b4f-4a5a-91d8-5b91cf8bad62",
+      "partition": "validation",
+      "case_sha256": "6609b2112d6f666a355ee70028e3d4e42b14fd1e737b63d62e77c4ae53f46c44",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "93f54838-ec39-40f2-9ea5-b9ab75a28d09",
+      "partition": "retrospective_test",
+      "case_sha256": "5442faabfde35b1b88c64188443f467881282e6fa0c7580c11b449fb65679d39",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "7042e365-ed45-4020-942e-d243cc9674c2",
+      "partition": "retrospective_test",
+      "case_sha256": "c0a5ea3ccd2e2bac852fa4cb1d1f32c6f98292dff39c8be9ce9ec6b6b4cb81dc",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "f72e1535-7ad4-4e73-b0c6-781b2c8b45a3",
+      "partition": "development",
+      "case_sha256": "cd3540018fd37c4f4c408253242887a1e24e978b9b96cfc1ef2e77bb7aa6dc18",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "5764c1a5-7d96-4980-ad81-3f59e1343dd9",
+      "partition": "development",
+      "case_sha256": "82512748f3abf8b757f2247c49165a0e761c1bcf89baadc2f217d3ceda2158a4",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "2638b3a5-dec5-4017-8191-1936987bf360",
+      "partition": "development",
+      "case_sha256": "ea6fefdfa1ea3e5da11332a204d7d44c8b8f901601fba35484dd1e70116ce184",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "9994198e-8d08-4c6c-9b4b-64236d713bf9",
+      "partition": "development",
+      "case_sha256": "717ae1d8cb5e700e4a77d06354b5938410ef17a76d087d01c77247304cfc0c6f",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "e94f86f7-72db-4787-8086-170cec21c93a",
+      "partition": "development",
+      "case_sha256": "dfa1765a8032d3424b2ee27947bd65b855958ff2954174434351deb6f67d31fb",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    },
+    {
+      "case_id": "4c5225e6-5217-47d1-b7f0-9a15d4f4317f",
+      "partition": "development",
+      "case_sha256": "a6e8ce198f13887a53596c2588948edec76743cb6f65272b40627f9aaf38e0b9",
+      "physician_emergency_category": null,
+      "safety_overlay": false
+    }
+  ]
+}

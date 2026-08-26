@@ -259,6 +259,30 @@ def test_case_manifest_reproduces_prior_report_order(tmp_path):
     assert [case.case_id for case in selected] == ["case-2", "case-1"]
 
 
+def test_case_manifest_can_select_only_locked_partition(tmp_path):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {"case_id": "case-1", "partition": "development"},
+                    {"case_id": "case-2", "partition": "locked_test"},
+                    {"case_id": "case-3", "partition": "locked_test"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    selected = runner._select_manifest_cases(
+        [_valid_case("case-1"), _valid_case("case-2"), _valid_case("case-3")],
+        manifest,
+        partition="locked_test",
+    )
+
+    assert [case.case_id for case in selected] == ["case-2", "case-3"]
+
+
 def test_case_manifest_rejects_missing_case(tmp_path):
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps(["case-404"]), encoding="utf-8")

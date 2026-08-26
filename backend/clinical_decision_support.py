@@ -1,9 +1,8 @@
-"""Clinical decision support: maps LLM-detected presentation hints to structured
-ClinicalDecision objects containing evidence-based triage guidance.
+"""Clinical decision support for structured, auditable triage pathways.
 
-Presentation detection is handled entirely by the LLM intent classifier, which
-populates IntentClassification.presentation_hint using natural-language understanding.
-No keyword lists, regex, or hardcoded symptom terms are used here.
+The intent classifier normally selects the presentation. A deliberately narrow,
+deterministic backstop can only escalate when the user text contains a complete
+high-risk presentation; it never lowers acuity or infers missing findings.
 """
 from __future__ import annotations
 
@@ -50,6 +49,26 @@ _FINDING_NEGATION_PATTERN = re.compile(
     r"wasn['\u2019]?t|hasn['\u2019]?t|haven['\u2019]?t)\b(?:\W+\w+){0,3}\W*$",
     re.IGNORECASE,
 )
+_THUNDERCLAP_SEVERE_PATTERN = re.compile(
+    r"\b(severe|worst|excruciating)\b.{0,32}\bheadache\b|"
+    r"\bheadache\b.{0,32}\b(severe|worst|excruciating)\b",
+    re.IGNORECASE,
+)
+_THUNDERCLAP_ONSET_PATTERN = re.compile(
+    r"\b(sudden(?:ly)?|instant(?:ly)?|out\s+of\s+nowhere|within\s+(?:a\s+)?minute|"
+    r"worst\s+headache\s+(?:of|i['’]?ve)\s+(?:my\s+life|ever))\b",
+    re.IGNORECASE,
+)
+_BLACKOUT_PATTERN = re.compile(
+    r"\b(black(?:ed|ing)?\s*out|blackout|lost\s+consciousness|faint(?:ed|ing)?|"
+    r"near[-\s]?syncope|nearly\s+(?:fell|collapsed))\b",
+    re.IGNORECASE,
+)
+_RECURRENCE_PATTERN = re.compile(
+    r"\b(recurrent|repeated|multiple|twice|three\s+times|"
+    r"[2-9]\s+times|again|episodes)\b",
+    re.IGNORECASE,
+)
 
 
 def _has_non_negated_finding(text: str, pattern: re.Pattern) -> bool:
@@ -71,6 +90,26 @@ def _possible_sepsis_is_grounded(case_text: str) -> bool:
             _SEPSIS_URINE_PATTERN,
         )
     )
+
+
+def _deterministic_presentation(case_text: str) -> str:
+    """Return a narrow escalation-only presentation match.
+
+    Requiring conjunctions makes this a high-precision safety net, not a general
+    symptom classifier. The LLM path remains responsible for broader language.
+    """
+    text = case_text or ""
+    if _has_non_negated_finding(text, _THUNDERCLAP_SEVERE_PATTERN) and (
+        _has_non_negated_finding(text, _THUNDERCLAP_ONSET_PATTERN)
+    ):
+        return "thunderclap_headache"
+    if _possible_sepsis_is_grounded(text):
+        return "possible_sepsis"
+    if _has_non_negated_finding(text, _BLACKOUT_PATTERN) and (
+        _has_non_negated_finding(text, _RECURRENCE_PATTERN)
+    ):
+        return "recurrent_blackout"
+    return "none"
 
 
 @dataclass
@@ -311,12 +350,9 @@ class ClinicalDecision:
 
 class ClinicalDecisionSupportEngine:
     """
-    Maps the LLM-detected presentation_hint from IntentClassification to a
-    structured ClinicalDecision with evidence-based triage guidance.
-
-    No text parsing, no regex, no keyword lists. The LLM intent classifier
-    identifies the clinical presentation pattern using natural-language
-    understanding; this engine provides the corresponding clinical response.
+    Maps a presentation hint to a structured ClinicalDecision. Complete,
+    high-risk patterns in the user's own text can override a missed classifier
+    hint through the deterministic escalation-only backstop above.
     """
 
     def assess(
@@ -326,9 +362,15 @@ class ClinicalDecisionSupportEngine:
         role_config: "RoleConfig",
         case_text: Optional[str] = None,
     ) -> ClinicalDecision:
+        evidence_text = case_text or question
         presentation = getattr(intent, "presentation_hint", "none") or "none"
+        backstop = _deterministic_presentation(evidence_text)
+        if backstop != "none" and presentation != backstop:
+            presentation = backstop
+            intent.presentation_hint = backstop
+            intent.presentation_source = "deterministic_backstop"
         if presentation == "possible_sepsis" and not _possible_sepsis_is_grounded(
-            case_text or question
+            evidence_text
         ):
             # A presentation hint is only a routing suggestion. Never let it
             # manufacture the findings quoted by a deterministic response.

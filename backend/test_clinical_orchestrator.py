@@ -659,6 +659,46 @@ def test_underspecified_prescription_asks_patient_aware_questions_before_retriev
     assert "working impression" not in answer.lower()
 
 
+def test_routine_symptom_clarification_includes_a_safety_net_not_just_questions(
+    monkeypatch,
+):
+    """A routine symptom clarification gate must give the worried patient a
+    concrete threshold for acting sooner, not just a pure question gate with
+    no actionable content while they wait to reply."""
+    orchestrator = _build_orchestrator(monkeypatch)
+    orchestrator.intent_classifier.classify = lambda *a, **kw: IntentClassification(
+        intent_category="symptom_triage",
+        risk_level="routine",
+        pathway_hint="general_triage",
+        clarification_required=True,
+        clarification_reason="duration and other symptoms are unknown",
+        clarifying_questions=[
+            "How long have you noticed this?",
+            "Have you had any other new symptoms?",
+        ],
+    )
+
+    def fail_if_retrieval_starts(self, *args, **kwargs):
+        raise AssertionError("retrieval must wait for the patient's answers")
+
+    monkeypatch.setattr(AgenticRetrievalLoop, "run", fail_if_retrieval_starts)
+
+    bundle = orchestrator.prepare_bundle(
+        question="I keep forgetting small things and it's driving me crazy.",
+        user="patient1",
+        user_profile={},
+        longitudinal_memory_summary="",
+    )
+
+    answer = bundle["payload"]["answer_markdown"]
+    assert bundle["payload"]["trace"]["retrieval_mode"] == (
+        "information_clarification_requested"
+    )
+    assert "1. How long have you noticed" in answer
+    assert "do not need to wait" in answer.lower()
+    assert "seek care now" in answer.lower()
+
+
 def test_elevated_breathing_concern_does_not_short_circuit_to_questions_only(
     monkeypatch,
 ):
@@ -837,10 +877,41 @@ def test_named_guideline_authority_must_be_present_in_retrieved_sources():
 
 def test_common_words_do_not_trigger_guideline_authority_checks():
     requested = ClinicalOrchestrator._requested_guideline_authorities(
-        "Who can explain this in a nice, simple way?"
+        "Who can explain this in a nice, simple way? What are the warning signs?"
     )
 
     assert requested == []
+
+
+def test_ilca_and_aace_are_recognised_guideline_authorities():
+    """Reproduces two eval-reported misses: a postpartum clinic asking to
+    adopt ACOG and ILCA lactation guidance, and a crash-course request
+    naming AACE alongside WHO -- both bodies must be detected and, if not
+    actually present in retrieved sources, flagged rather than silently
+    substituted with unrelated content."""
+    lactation_requested = ClinicalOrchestrator._requested_guideline_authorities(
+        "In my postpartum clinic we want to adopt official guidelines from "
+        "ACOG and ILCA for lactation support"
+    )
+    assert set(lactation_requested) == {"ACOG", "ILCA"}
+
+    lactation_missing = ClinicalOrchestrator._missing_requested_guideline_authorities(
+        lactation_requested,
+        [
+            {
+                "title": "A review discussing breastfeeding support strategies",
+                "provider": "Europe PMC",
+                "source_type": "pubmed_literature",
+            }
+        ],
+    )
+    assert set(lactation_missing) == {"ACOG", "ILCA"}
+
+    endocrine_requested = ClinicalOrchestrator._requested_guideline_authorities(
+        "Focus on a stepwise approach referencing guidelines from AACE or WHO "
+        "for my crash course."
+    )
+    assert set(endocrine_requested) == {"AACE", "WHO"}
 
 
 def test_medication_lifestyle_follow_up_resolves_prior_user_medicine_without_assistant_diagnosis(

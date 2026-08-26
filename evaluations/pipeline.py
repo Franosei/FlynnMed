@@ -82,7 +82,13 @@ def build_rag_engine(config: EvalConfig):
     LLMHelper.ANSWER_MODEL = config.generator_model
     LLMHelper.REQUEST_TIMEOUT_SECONDS = config.request_timeout_seconds
 
-    return RAGEngine()
+    engine = RAGEngine()
+    if not config.query_expansion_enabled:
+        # Evaluation-only intervention: hold the rest of the production
+        # pipeline constant while removing query expansion/HyDE.
+        engine.query_expander = None
+        engine._orchestrator.query_expander = None
+    return engine
 
 
 def run_case(

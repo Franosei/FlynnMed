@@ -103,7 +103,23 @@ _GUIDELINE_AUTHORITY_ALIASES: Dict[str, Tuple[str, ...]] = {
     "ESC": ("esc", "european society of cardiology"),
     "IDSA": ("idsa", "infectious diseases society of america"),
     "AAP": ("aap", "american academy of pediatrics"),
+    "ILCA": ("ilca", "international lactation consultant association"),
+    "AACE": (
+        "aace",
+        "american association of clinical endocrinologists",
+        "american association of clinical endocrinology",
+    ),
+    "SHEA": ("shea", "society for healthcare epidemiology of america"),
+    "AAO": ("aao", "american academy of ophthalmology"),
+    "ASA": ("asa", "american society of anesthesiologists"),
+    "SIGN": ("sign", "scottish intercollegiate guidelines network"),
+    "MHRA": ("mhra", "medicines and healthcare products regulatory agency"),
+    "BNF": ("bnf", "british national formulary"),
 }
+# Alias tokens that collide with ordinary English words -- matched case-
+# sensitively against the authority's own uppercase key so "a nice, simple
+# way" or "warning signs" don't falsely register as a guideline request.
+_CASE_SENSITIVE_AUTHORITY_ALIASES = {"who", "nice", "sign"}
 
 
 # ---------------------------------------------------------------------------
@@ -2424,8 +2440,9 @@ class ClinicalOrchestrator:
         requested: List[str] = []
         for authority, aliases in _GUIDELINE_AUTHORITY_ALIASES.items():
             for alias in aliases:
-                flags = 0 if alias in {"who", "nice"} else re.IGNORECASE
-                search_term = authority if alias in {"who", "nice"} else alias
+                is_case_sensitive = alias in _CASE_SENSITIVE_AUTHORITY_ALIASES
+                flags = 0 if is_case_sensitive else re.IGNORECASE
+                search_term = authority if is_case_sensitive else alias
                 if re.search(rf"\b{re.escape(search_term)}\b", text, flags):
                     requested.append(authority)
                     break
@@ -2559,6 +2576,26 @@ class ClinicalOrchestrator:
                 "what applies. Avoid relying on one interpretation until it is confirmed."
             )
 
+        # A pure question gate with no safety-net leaves a genuinely worried
+        # patient with nothing to act on while they gather the answers. For
+        # symptom-adjacent routine categories, always give a concrete
+        # threshold for acting sooner instead of waiting for the reply.
+        safety_net_line = ""
+        if intent.intent_category in {
+            "symptom_triage", "chronic_condition", "maternity", "msk"
+        }:
+            if is_clinical:
+                safety_net_line = (
+                    "If a red flag emerges or the presentation changes while waiting for "
+                    "this detail, escalate through the local pathway now rather than waiting "
+                    "for a reply."
+                )
+            else:
+                safety_net_line = (
+                    "You do not need to wait for these answers if things get worse, feel "
+                    "wrong, or you're worried -- seek care now instead."
+                )
+
         parts = [item for item in (safety_line, substantive_line, opening) if item]
         if known_facts:
             parts.append(" ".join(known_facts))
@@ -2568,6 +2605,8 @@ class ClinicalOrchestrator:
                 for index, item in enumerate(intent.clarifying_questions[:3], start=1)
             )
         )
+        if safety_net_line:
+            parts.append(safety_net_line)
         parts.append("Reply with the numbered answers, and I'll give you a direct answer.")
         answer = "\n\n".join(parts)
 

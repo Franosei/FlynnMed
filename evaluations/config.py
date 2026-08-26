@@ -55,6 +55,13 @@ def _env_int(name: str) -> Optional[int]:
         return None
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
 @dataclass
 class EvalConfig:
     # Response-generation model FlynnMed's own pipeline will use for this run.
@@ -114,7 +121,10 @@ class EvalConfig:
         default_factory=lambda: _env_int("EVAL_CONSISTENCY_REPEATS") or 0
     )
     regrade_workers: int = field(
-        default_factory=lambda: max(1, _env_int("EVAL_REGRADE_WORKERS") or 4)
+        default_factory=lambda: max(1, _env_int("EVAL_REGRADE_WORKERS") or 8)
+    )
+    rag_regrade_workers: int = field(
+        default_factory=lambda: max(1, _env_int("EVAL_RAG_REGRADE_WORKERS") or 12)
     )
     gold_answers_path: Optional[Path] = field(
         default_factory=lambda: (
@@ -122,6 +132,10 @@ class EvalConfig:
             if (raw := os.getenv("EVAL_GOLD_ANSWERS_PATH", "").strip())
             else None
         )
+    )
+    # Evaluation-only ablation. The production default remains enabled.
+    query_expansion_enabled: bool = field(
+        default_factory=lambda: _env_bool("EVAL_QUERY_EXPANSION_ENABLED", True)
     )
 
     def api_key(self) -> str:

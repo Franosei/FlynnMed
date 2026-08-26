@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Dict, Generator, List, Optional, Tuple
 from uuid import uuid4
 import re
+from time import perf_counter
 
 import numpy as np
 
@@ -886,6 +887,7 @@ class RAGEngine:
         clickable sources, personal context traceability, and audit metadata.
         """
         del stream
+        request_started = perf_counter()
         bundle = self._prepare_answer_bundle(
             question=question, user=user, chat_history=chat_history
         )
@@ -894,9 +896,14 @@ class RAGEngine:
                 question=question, payload=bundle["payload"], user=user
             )
 
+        bundle.setdefault("_stage_timings_ms", {})["prepare_bundle"] = round(
+            (perf_counter() - request_started) * 1000, 3
+        )
+        generation_started = perf_counter()
         _pd = bundle.get("policy_decision")
         clinical_decision = bundle.get("clinical_decision")
         if clinical_decision and clinical_decision.deterministic_response:
+            bundle["_generation_mode"] = "deterministic_pathway"
             role_key = (
                 bundle.get("role_config").role_key
                 if bundle.get("role_config")
@@ -906,6 +913,7 @@ class RAGEngine:
                 role_key, bundle["combined_sources"]
             )
         else:
+            bundle["_generation_mode"] = "answer_model"
             raw_answer = self.llm.answer_question(
                 question=question,
                 context=bundle["full_context"],
@@ -934,6 +942,9 @@ class RAGEngine:
                 ),
                 is_patient_scoped=bundle.get("target_patient_data_provided", False),
             )
+        bundle["_stage_timings_ms"]["generation"] = round(
+            (perf_counter() - generation_started) * 1000, 3
+        )
         return self._finalize_answer_payload(
             question=question, raw_answer=raw_answer, bundle=bundle
         )
@@ -989,6 +1000,7 @@ class RAGEngine:
             if extra_trace_metadata and "document_analysis" in extra_trace_metadata
             else "structured_patient_record"
         )
+        request_started = perf_counter()
         bundle = self._prepare_answer_bundle(
             question=question,
             user=user,
@@ -1008,6 +1020,9 @@ class RAGEngine:
                 "payload": payload,
             }
             return
+        bundle.setdefault("_stage_timings_ms", {})["prepare_bundle"] = round(
+            (perf_counter() - request_started) * 1000, 3
+        )
         if extra_trace_metadata:
             bundle["extra_trace_metadata"] = dict(extra_trace_metadata)
         if require_live_evidence and not bundle.get("combined_sources"):
@@ -1033,10 +1048,12 @@ class RAGEngine:
             "type": "status",
             "message": "Composing the answer from the retrieved evidence...",
         }
+        generation_started = perf_counter()
         streamed_chunks: List[str] = []
         policy_decision = bundle.get("policy_decision")
         clinical_decision = bundle.get("clinical_decision")
         if clinical_decision and clinical_decision.deterministic_response:
+            bundle["_generation_mode"] = "deterministic_pathway"
             role_key = (
                 bundle.get("role_config").role_key
                 if bundle.get("role_config")
@@ -1047,6 +1064,7 @@ class RAGEngine:
             )
             streamed_chunks.append(deterministic_answer)
         else:
+            bundle["_generation_mode"] = "answer_model"
             for chunk in self.llm.answer_question(
                 question=question,
                 context=bundle["full_context"],
@@ -1082,6 +1100,9 @@ class RAGEngine:
                 streamed_chunks.append(chunk)
 
         raw_answer = "".join(streamed_chunks).strip()
+        bundle["_stage_timings_ms"]["generation"] = round(
+            (perf_counter() - generation_started) * 1000, 3
+        )
 
         # Generate illustration or video after streaming (non-blocking for tokens)
         illustration = None
@@ -1788,7 +1809,8 @@ class RAGEngine:
             "personal_context": personal_context,
             "retrieval_mode": retrieval_mode,
             "expanded_queries": expanded_queries,
-            "model": self.llm.model,
+            "model": None,
+            "generation_mode": "fixed_insufficient_evidence_response",
         }
         if normalized_user:
             UserStore.save_interaction_trace(normalized_user, trace)
@@ -1806,6 +1828,7 @@ class RAGEngine:
         raw_answer: str,
         bundle: Dict,
     ) -> Dict:
+        finalization_started = perf_counter()
         clinical_context: Optional[ClinicalContextDecision] = bundle.get(
             "clinical_context"
         )
@@ -2043,7 +2066,22 @@ class RAGEngine:
             "retrieval_mode": bundle["retrieval_mode"],
             "expanded_queries": bundle["expanded_queries"],
             "memory_match_count": len(bundle["matches"]),
-            "model": self.llm.model,
+            # `self.llm.model` is the auxiliary-model constructor default. The
+            # answer path explicitly uses ANSWER_MODEL, which evaluation runs
+            # override. A deterministic pathway has no generator model.
+            "model": (
+                self.llm.ANSWER_MODEL
+                if bundle.get("_generation_mode", "answer_model") == "answer_model"
+                else None
+            ),
+            "generation_mode": bundle.get("_generation_mode", "answer_model"),
+            "stage_timings_ms": {
+                **bundle.get("_stage_timings_ms", {}),
+                "verification_and_formatting": round(
+                    (perf_counter() - finalization_started) * 1000, 3
+                ),
+            },
+            "agentic_tool_calls": bundle.get("agentic_tool_calls", []),
             # Clinical governance fields
             "role_key": role_config.role_key if role_config else "patient",
             "intent_category": intent.intent_category if intent else "",
@@ -2054,6 +2092,12 @@ class RAGEngine:
             "crisis_detected": intent.crisis_detected if intent else False,
             "evidence_tiers_present": tiers_present,
             "pathway_used": intent.pathway_hint if intent else "",
+            "presentation_hint": intent.presentation_hint if intent else "none",
+            "presentation_source": (
+                getattr(intent, "presentation_source", "classifier")
+                if intent
+                else "classifier"
+            ),
             "vulnerable_flags": intent.vulnerable_flags if intent else [],
             "policy_gates_applied": policy_decision.gates_as_dicts()
             if policy_decision
@@ -2093,6 +2137,14 @@ class RAGEngine:
         extra_trace_metadata = bundle.get("extra_trace_metadata")
         if isinstance(extra_trace_metadata, dict):
             trace.update(extra_trace_metadata)
+        try:
+            from backend.shadow_monitor import emit_shadow_event
+
+            emit_shadow_event(trace)
+        except Exception as exc:
+            # Monitoring must never prevent a clinical response. Deployment
+            # alerting should still surface this structured logging failure.
+            print(f"[ShadowMonitor] emit failed: {exc}")
         if bundle["normalized_user"]:
             UserStore.save_interaction_trace(bundle["normalized_user"], trace)
             UserStore.save_triage_summary(

@@ -90,6 +90,9 @@ EVAL_SAMPLE_LIMIT=
 EVAL_OUTPUT_PATH=evaluations/results
 EVAL_MAX_RETRIES=5
 EVAL_REQUEST_TIMEOUT_SECONDS=120
+EVAL_QUERY_EXPANSION_ENABLED=true
+EVAL_REGRADE_WORKERS=8
+EVAL_RAG_REGRADE_WORKERS=12
 ```
 
 If `EVAL_API_KEY` is unset, evaluators use `OPENAI_API_KEY`. Before any case
@@ -183,6 +186,89 @@ The report separates three different concepts:
 - Full raw results: `evaluations/results/raw/<run_id>/cases.jsonl`
 - Sanitised JSON report: `evaluations/results/reports/<run_id>_summary.json`
 - Sanitised Markdown report: `evaluations/results/reports/<run_id>_summary.md`
+
+## Pilot release workflow
+
+`release_cli` turns raw runs into a production-aligned, stage-by-stage failure
+dataset. It is offline: it does not call a model and it never upgrades an
+automated benchmark into a clinical-validation claim.
+
+```powershell
+# Seal a run that has already been viewed or used for development. Its final
+# partition is explicitly retrospective, never "untouched".
+py -m evaluations.release_cli manifest `
+  --input evaluations/results/raw/RUN_ID/cases.jsonl `
+  --output evaluations/manifests/RUN_ID.v1.json `
+  --exposure previously_evaluated `
+  --generator-model gpt-5.4-mini
+
+# Verify that no case or ordering changed.
+py -m evaluations.release_cli verify-manifest `
+  --input evaluations/results/raw/RUN_ID/cases.jsonl `
+  --manifest evaluations/manifests/RUN_ID.v1.json
+
+# Generate stage failures, priority triage review, manual relevance/entailment
+# queues, subgroup metrics, scorecard, source snapshot and model card.
+py -m evaluations.release_cli audit `
+  --input evaluations/results/raw/RUN_ID/cases.jsonl `
+  --manifest evaluations/manifests/RUN_ID.v1.json `
+  --output-dir evaluations/results/release/RUN_ID
+
+# HealthBench and RAG re-grades checkpoint independently. Merge only after
+# both reach the full generation case count; the default fails on partial data.
+py -m evaluations.release_cli merge-checkpoints `
+  --generation evaluations/results/raw/RUN_ID/cases.jsonl `
+  --healthbench evaluations/results/raw/RUN_ID/HEALTHBENCH_CHECKPOINT.jsonl `
+  --rag evaluations/results/raw/RUN_ID/rag_regrade_rag-claim-audit-v4.jsonl `
+  --output evaluations/results/release/RUN_ID/merged_graded_cases.jsonl `
+  --status-output evaluations/results/release/RUN_ID/merge_status.json
+
+# Compare an ablation or generator candidate only on identical case IDs.
+py -m evaluations.release_cli compare `
+  --run baseline=evaluations/results/raw/BASELINE/cases.jsonl `
+  --run candidate=evaluations/results/raw/CANDIDATE/cases.jsonl `
+  --output evaluations/results/release/comparison.json
+
+# Create a blinded A/B clinician package. Keep the mapping file away from reviewers.
+py -m evaluations.release_cli blind-review `
+  --run-a evaluations/results/raw/BASELINE/cases.jsonl `
+  --run-b evaluations/results/raw/CANDIDATE/cases.jsonl `
+  --output evaluations/results/release/blinded_review.jsonl `
+  --mapping-output evaluations/datasets/private/blinded_mapping.json
+
+# Aggregate de-identified shadow events exported from platform logs.
+py -m evaluations.release_cli shadow-summary `
+  --input PATH_TO_SHADOW_EVENTS.jsonl `
+  --output evaluations/results/release/shadow_summary.json
+```
+
+The current 500-case generate-only artifact is marked `previously_evaluated`.
+It is suitable for failure analysis, prompt/retrieval development and validation,
+but not the final untouched release claim. A new unseen dataset must be sealed
+with `--exposure unseen` before anyone examines its answers; only its
+`locked_test` partition can satisfy the release gate.
+
+After development and validation are frozen, run only the sealed HealthBench
+Hard locked partition with:
+
+```powershell
+py -m evaluations.runner --dataset healthbench_hard `
+  --case-manifest evaluations/manifests/healthbench_hard_unseen.v1.json `
+  --case-partition locked_test `
+  --run-id pilot_locked_test_v1
+```
+
+Do not run this command during prompt, retrieval, threshold or model tuning.
+
+The query-expansion ablation is real and evaluation-only: set
+`EVAL_QUERY_EXPANSION_ENABLED=false`. The experiment matrix in
+`evaluations/release/experiment_matrix.v1.json` requires identical cases,
+constant graders and one intervention at a time.
+
+For shadow mode, set `SHADOW_MODE_ENABLED=true` and a unique
+`FLYNNMED_RELEASE_ID`. Structured events deliberately exclude question text,
+answer text, usernames, MRNs and patient context. Enabling logging does not make
+the candidate releasable; the scorecard and clinical-governance gates still apply.
 
 Reports include HealthBench weighted score, pass and triage signals,
 primary/secondary adjudication statistics, Tier 1-3 aggregates, assessed-item

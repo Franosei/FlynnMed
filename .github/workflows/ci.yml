@@ -54,20 +54,14 @@ jobs:
         # unit tests -- they need a real OPENAI_API_KEY and network access, so
         # they're excluded from CI. Run them manually when needed.
         #
-        # The four --deselect entries are a known, deliberately-deferred
-        # clinical-decision-support classification issue (presentation
-        # detection currently depends entirely on one LLM call with no
-        # deterministic backstop) -- left as-is per product decision, tracked
-        # separately rather than hidden by editing the test file.
         run: |
           pytest backend/ -v \
             --ignore=backend/test_pubmed_search.py \
             --ignore=backend/test_rag_engine.py \
-            --ignore=backend/test_summarizer.py \
-            --deselect backend/test_clinical_decision_support.py::test_thunderclap_headache_pathway_is_immediate_review \
-            --deselect backend/test_clinical_decision_support.py::test_possible_sepsis_pathway_adds_elderly_flag_and_news2_action \
-            --deselect backend/test_clinical_decision_support.py::test_recurrent_blackout_pathway_is_same_day_review \
-            --deselect backend/test_clinical_decision_support.py::test_chronic_cough_pathway_remains_prompt_without_red_flags
+            --ignore=backend/test_summarizer.py
+
+      - name: Test evaluation and release gates
+        run: pytest evaluations/tests/ -q
 
   frontend:
     name: Frontend (React/TypeScript)

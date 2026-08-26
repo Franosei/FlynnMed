@@ -1,0 +1,35 @@
+{
+  "schema_version": "flynnmed-experiment-matrix-v1",
+  "rules": {
+    "identical_case_manifest_required": true,
+    "one_variable_changed_per_ablation": true,
+    "prompt_policy_fingerprint_must_differ_for_prompt_ablation": true,
+    "grader_models_must_be_held_constant": true,
+    "locked_test_must_not_be_used": true
+  },
+  "variants": [
+    {
+      "name": "baseline",
+      "purpose": "Frozen production-aligned baseline",
+      "environment": {"EVAL_GENERATOR_MODEL": "gpt-5.4-mini"}
+    },
+    {
+      "name": "generator_candidate",
+      "purpose": "Compare a generator candidate on identical cases",
+      "environment": {"EVAL_GENERATOR_MODEL": "REPLACE_WITH_CANDIDATE"}
+    },
+    {
+      "name": "query_expansion_off",
+      "purpose": "Measure the marginal effect of query expansion",
+      "environment": {"EVAL_QUERY_EXPANSION_ENABLED": "false"},
+      "implementation_status": "ready"
+    },
+    {
+      "name": "prompt_candidate",
+      "purpose": "Compare a committed prompt/policy candidate",
+      "environment": {"EVAL_PROMPT_VARIANT": "candidate"},
+      "implementation_status": "requires_distinct_prompt_policy_fingerprint"
+    }
+  ],
+  "comparison_command": "py -m evaluations.release_cli compare --run baseline=PATH --run candidate=PATH --output evaluations/results/release/comparison.json"
+}

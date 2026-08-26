@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flynnmed.local/schemas/shadow-event-v1.json",
+  "title": "FlynnMed de-identified shadow event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "occurred_at", "release_id", "risk_level", "duration_seconds", "clinician_outcome", "safety_event"],
+  "properties": {
+    "event_id": {"type": "string", "minLength": 12, "description": "Random or one-way-hashed identifier; never a patient identifier."},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "release_id": {"type": "string", "minLength": 1},
+    "role": {"type": "string", "enum": ["patient", "doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional", "unknown"]},
+    "intent_category": {"type": "string"},
+    "risk_level": {"type": "string", "enum": ["routine", "elevated", "urgent", "crisis", "unknown"]},
+    "retrieval_mode": {"type": "string"},
+    "displayed_source_count": {"type": "integer", "minimum": 0},
+    "citation_resolution_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "duration_seconds": {"type": "number", "minimum": 0},
+    "clinician_outcome": {"type": "string", "enum": ["accepted", "edited", "rejected", "not_reviewed"]},
+    "safety_event": {"type": "boolean"}
+  }
+}

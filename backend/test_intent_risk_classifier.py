@@ -218,6 +218,64 @@ def test_active_clinician_emergency_still_triggers_crisis_prescreen():
     assert classifier._crisis_prescreen(question, role_key="doctor") is True
 
 
+def test_postpartum_convulsions_trigger_crisis_prescreen():
+    classifier = object.__new__(IntentRiskClassifier)
+
+    result = classifier.classify(
+        "My postpartum patient is having repeated convulsions after delivery.",
+        role_key="doctor",
+    )
+
+    assert result.risk_level == "crisis"
+    assert result.crisis_detected is True
+
+
+def test_skin_and_breathing_allergy_features_trigger_crisis_prescreen():
+    classifier = object.__new__(IntentRiskClassifier)
+
+    result = classifier.classify(
+        "One hour after eating squid I have itching and heaviness in my breath.",
+        role_key="patient",
+    )
+
+    assert result.risk_level == "crisis"
+    assert result.crisis_detected is True
+
+
+def test_active_clinician_chest_pain_case_is_at_least_urgent():
+    classifier = object.__new__(IntentRiskClassifier)
+
+    result = classifier.classify(
+        "Need an ESI note for a 56-year-old patient presenting with chest pain, HR 110.",
+        role_key="doctor",
+    )
+
+    assert result.risk_level == "urgent"
+    assert result.escalation_required is True
+
+
+def test_painful_dental_swelling_is_at_least_urgent():
+    classifier = object.__new__(IntentRiskClassifier)
+
+    result = classifier.classify(
+        "I have painful swelling in my jaw by a decayed tooth and it is throbbing.",
+        role_key="patient",
+    )
+
+    assert result.risk_level == "urgent"
+
+
+def test_active_cholera_outbreak_without_clean_water_is_urgent():
+    classifier = object.__new__(IntentRiskClassifier)
+
+    result = classifier.classify(
+        "How do we stop cholera in my village when we have no clean water?",
+        role_key="patient",
+    )
+
+    assert result.risk_level == "urgent"
+
+
 def test_explicitly_stable_clinical_note_cannot_become_unqualified_crisis(monkeypatch):
     payload = {
         **_AMBIGUOUS_PEAK_FLOW_PAYLOAD,

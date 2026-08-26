@@ -120,6 +120,40 @@ def test_recurrent_blackout_pathway_is_same_day_review():
     assert any("12-lead ECG" in item for item in decision.immediate_actions)
 
 
+def test_thunderclap_backstop_escalates_a_missed_classifier_hint():
+    decision = _decision_for(
+        "The worst headache I have ever had started suddenly one hour ago.",
+        "none",
+    )
+
+    assert decision.pathway_id == "thunderclap_headache"
+    assert decision.next_step == "Immediate review"
+
+
+def test_sepsis_backstop_requires_all_grounded_findings():
+    complete = _decision_for(
+        "They are newly confused, febrile at 39.1 C, and passing very little urine.",
+        "none",
+    )
+    incomplete = _decision_for(
+        "They have a fever and chills but no confusion and normal urine output.",
+        "none",
+    )
+
+    assert complete.pathway_id == "possible_sepsis"
+    assert incomplete.pathway_id == "general_triage"
+
+
+def test_recurrent_blackout_backstop_escalates_a_missed_classifier_hint():
+    decision = _decision_for(
+        "I have blacked out three times in the last two weeks.",
+        "none",
+    )
+
+    assert decision.pathway_id == "recurrent_blackout"
+    assert decision.next_step == "Same-day review"
+
+
 def test_pathway_omits_named_guideline_when_retrieval_did_not_verify_it():
     decision = _decision_for(
         "A patient has had three near-blackout episodes in two weeks.",

@@ -33,6 +33,8 @@ class IntentClassification:
     presentation_hint: str = "none"
     # none | thunderclap_headache | possible_sepsis | recurrent_blackout
     # | chronic_cough_red_flags | chronic_cough_no_red_flags
+    presentation_source: str = "classifier"
+    # classifier | deterministic_backstop
     ambiguous_term_detected: bool = False
     ambiguous_term: str = ""
     ambiguity_clarifying_question: str = ""
@@ -65,10 +67,24 @@ _CRISIS_PATTERNS: List[re.Pattern] = [
         r"epipen|epinephrine\s*now|can\s*t\s*breathe)",
         re.IGNORECASE,
     ),
+    # Multi-system allergic reaction: skin symptoms plus breathing involvement.
+    re.compile(
+        r"(?=.*\b(?:itch(?:ing)?|hives?|rash|swelling)\b)"
+        r"(?=.*\b(?:shortness\s+of\s+breath|difficulty\s+breathing|wheez(?:e|ing)|"
+        r"breath(?:ing)?\s+(?:is\s+)?(?:heavy|difficult)|heaviness\s+in\s+(?:my\s+)?breath)\b)",
+        re.IGNORECASE,
+    ),
     # Obstetric emergencies
     re.compile(
         r"(heavy\s*bleed.{0,20}pregnan|eclampsia|cord\s*prolapse|"
         r"placental?\s*abruption|baby\s*not\s*moving.{0,10}hours?)",
+        re.IGNORECASE,
+    ),
+    # Postpartum convulsion is an active obstetric emergency even when the
+    # user does not know or type the word "eclampsia".
+    re.compile(
+        r"(?=.*\b(?:postpartum|post-partum|after\s+(?:giving\s+birth|delivery))\b)"
+        r"(?=.*\b(?:convuls(?:ion|ions|ing)|seiz(?:ure|ures|ing))\b)",
         re.IGNORECASE,
     ),
     # Major trauma / overdose
@@ -115,6 +131,21 @@ _PERSONAL_PNEUMONIA_TREATMENT_PATTERN = re.compile(
     r"\b(i (?:have|was diagnosed with)|i've got|estou com|tenho|tengo|"
     r"me diagnosticaron|j['’]ai|diagnosed? with)\b.{0,80}"
     r"\b(pneumonia|pneumonie|neumon[ií]a)\b.{0,120}\bantibi[oó]tic",
+    re.IGNORECASE,
+)
+_CLINICIAN_ACTIVE_CHEST_PAIN_PATTERN = re.compile(
+    r"\b(?:patient|presenting|\d{1,3}[-\s]?year[-\s]?old)\b.{0,100}\bchest\s+pain\b|"
+    r"\bchest\s+pain\b.{0,100}\b(?:patient|presenting|bp\s*\d|hr\s*\d|rr\s*\d)\b",
+    re.IGNORECASE,
+)
+_ACUTE_DENTAL_SWELLING_PATTERN = re.compile(
+    r"(?=.*\b(?:tooth|dental|jaw)\b)(?=.*\b(?:swelling|abscess)\b)"
+    r"(?=.*\b(?:painful|throbbing|decayed|infection)\b)",
+    re.IGNORECASE,
+)
+_ACTIVE_CHOLERA_OUTBREAK_PATTERN = re.compile(
+    r"(?=.*\bcholera\b)(?=.*\b(?:village|community|outbreak)\b)"
+    r"(?=.*\b(?:no|without|lack(?:ing)?)\s+(?:of\s+)?clean\s+water\b)",
     re.IGNORECASE,
 )
 
@@ -168,6 +199,18 @@ class IntentRiskClassifier:
                 escalation_required=True,
                 escalation_reason="Potential emergency symptoms detected -- please seek immediate help.",
                 crisis_detected=True,
+                pathway_hint="general_triage",
+                confidence=0.95,
+            )
+
+        urgent_reason = self._urgent_prescreen(question, role_key=role_key)
+        if urgent_reason:
+            return IntentClassification(
+                intent_category="symptom_triage",
+                risk_level="urgent",
+                escalation_required=True,
+                escalation_reason=urgent_reason,
+                crisis_detected=False,
                 pathway_hint="general_triage",
                 confidence=0.95,
             )
@@ -264,6 +307,24 @@ class IntentRiskClassifier:
         if role_key in _CLINICAL_ROLES and _CLINICAL_EDUCATION_PATTERN.search(text):
             return False
         return bool(_PERSONAL_PNEUMONIA_TREATMENT_PATTERN.search(text))
+
+    def _urgent_prescreen(self, question: str, role_key: str = "patient") -> str:
+        """Narrow, escalation-only rules derived from reviewed benchmark misses."""
+        text = (question or "").strip()
+        if (
+            role_key in _CLINICAL_ROLES
+            and _CLINICIAN_ACTIVE_CHEST_PAIN_PATTERN.search(text)
+            and not (
+                _EXPLICIT_STABILITY_PATTERN.search(text)
+                and _NEGATED_CARDIORESPIRATORY_PATTERN.search(text)
+            )
+        ):
+            return "An active chest-pain presentation requires prompt in-person assessment."
+        if _ACUTE_DENTAL_SWELLING_PATTERN.search(text):
+            return "Painful dental or jaw swelling requires prompt dental assessment."
+        if _ACTIVE_CHOLERA_OUTBREAK_PATTERN.search(text):
+            return "A suspected community cholera outbreak requires urgent public-health action."
+        return ""
 
     def _llm_classify(
         self,
