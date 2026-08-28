@@ -187,10 +187,13 @@ class MedicationInteractionChecker:
             key=len,
             reverse=True,
         )
+        alias_patterns = [
+            re.compile(rf"(?<!\w){re.escape(alias)}(?!\w)", re.IGNORECASE)
+            for alias in target_aliases
+        ]
         for section in source.get("sections", []):
             section_text = section.get("text", "")
-            for alias in target_aliases:
-                pattern = re.compile(rf"(?<!\w){re.escape(alias)}(?!\w)", re.IGNORECASE)
+            for pattern in alias_patterns:
                 match = pattern.search(section_text)
                 if not match:
                     continue

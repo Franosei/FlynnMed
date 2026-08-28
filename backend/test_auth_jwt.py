@@ -33,7 +33,7 @@ def test_garbage_token_raises_token_error():
 def test_wrong_signature_is_rejected():
     token = pyjwt.encode(
         {"sub": "acct-1", "kind": "patient", "iat": int(time.time()), "exp": int(time.time()) + 3600},
-        "a-different-secret",
+        "a-different-test-secret-with-32-bytes+",
         algorithm="HS256",
     )
     with pytest.raises(TokenError):

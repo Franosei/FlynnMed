@@ -2,9 +2,12 @@
 .github
 .agents
 .codex
+.claude
 .local_backup
 .pytest_cache
 .pytest_tmp
+.pytest-*
+.test-*
 .pytest-tmp-*
 .ruff_cache
 **/__pycache__

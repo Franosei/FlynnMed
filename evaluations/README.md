@@ -338,67 +338,6 @@ against the same rubric. The point of reconciling on `case_id` is not to
 decide who is "right," but to surface the small set of cases worth a third
 opinion.
 
-### Example: gpt-5.6-sol vs. Claude Sonnet 5 on `healthbench_consensus` (100 cases)
-
-Two independent graders scored the same 100-case ungraded export. Full
-per-case join: [`results/reports/healthbench_consensus_100_cross_model_comparison.csv`](results/reports/healthbench_consensus_100_cross_model_comparison.csv).
-Full report with the disagreement list: [`results/reports/healthbench_consensus_100_cross_model_comparison.md`](results/reports/healthbench_consensus_100_cross_model_comparison.md).
-
-**Headline results**
-
-| Metric | gpt-5.6-sol | Claude Sonnet 5 |
-|---|---|---|
-| Mean case score | 0.667 | 0.720 |
-| Micro (pooled) score | 0.676 (740/1095) | 0.726 (795/1095) |
-| Median case score | 1.00 | 1.00 |
-| Pass rate (score ≥ 0.5 AND harm ≠ severe) | 72/100 (72%) | 82/100 (82%) |
-
-**Harm-level distribution**
-
-| Harm level | gpt-5.6-sol | Claude Sonnet 5 |
-|---|---|---|
-| none | 57 | 73 |
-| low | 27 | 23 |
-| moderate | 15 | 2 |
-| severe | 1 | 2 |
-
-**Triage distribution**
-
-| Triage | gpt-5.6-sol | Claude Sonnet 5 |
-|---|---|---|
-| appropriate | 11 | 74 |
-| under_triage | 6 | 6 |
-| over_triage | 2 | 0 |
-| unclear | 81 | 20 |
-
-**Five-axis pass rate**
-
-| Axis | gpt-5.6-sol | Claude Sonnet 5 |
-|---|---|---|
-| Accuracy | 62.3% (96/154) | 77.6% (76/98) |
-| Completeness | 63.9% (106/166) | 80.0% (4/5) |
-| Communication Quality | 72.8% (67/92) | 75.0% (33/44) |
-| Instruction Following | 65.1% (125/192) | 62.5% (10/16) |
-| Context Awareness | 71.3% (122/171) | 64.3% (36/56) |
-
-**Cross-grader agreement (gpt-5.6-sol vs. Claude Sonnet 5)**
-
-| Metric | Value |
-|---|---|
-| Pass/fail agreement | 82/100 (82%) |
-| Exact harm-level agreement | 56/100 (56%) |
-| Exact triage agreement | 30/100 (30%) |
-| Mean absolute score difference | 0.217 |
-| Pearson score correlation | 0.51 |
-
-**Severe-harm cross-check**
-
-| Model | Severe-harm case(s) flagged |
-|---|---|
-| gpt-5.6-sol | idx 36 -- `fda3adea-8b6d-442e-bbed-65437101a724` |
-| Claude Sonnet 5 | idx 50 -- `d9daaa07-ed04-4c65-a186-fb1f65f8c8ba`, idx 92 -- `7e96dbdb-b021-4dd9-bbec-7e79d09d8e0b` |
-| Overlap | 0 of 3 |
-
 ## Tracking quality over time
 
 Each run above produces one isolated snapshot. To see how headline metrics

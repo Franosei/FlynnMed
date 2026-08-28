@@ -11,6 +11,8 @@ FlynnMed is a clinical safety, evidence review and continuity workspace for pati
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-0f1f3d.svg)](https://www.python.org/)
 [![React 18](https://img.shields.io/badge/React-18-0f1f3d.svg)](https://react.dev/)
 
+**Project documents:** [Evaluation solution](EVALUATION.md) · [Evaluation harness](evaluations/README.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+
 > [!IMPORTANT]
 > FlynnMed provides health education and clinical decision support. It does not diagnose, prescribe, replace professional judgement or provide emergency care. If someone may be seriously unwell, use the appropriate urgent care route. In the UK, call NHS 111 for urgent advice or 999 for an emergency.
 
@@ -316,17 +318,7 @@ This verifies MedlinePlus, CDC, MyHealthfinder, VA/DoD, openFDA, the permissivel
 
 The GitHub Actions workflow contains the exact CI command and excludes manual live-API smoke scripts that require network access and a real API key.
 
-The evaluation harness exercises the production RAG pipeline against HealthBench datasets and computes grounding, relevance, citation, calibration and safety metrics. It is an automated benchmark, not clinical validation. See [`evaluations/README.md`](evaluations/README.md) for configuration, datasets and reporting commands.
-
-**Cross-model result** (`healthbench_consensus`, 100 cases, two independent graders):
-
-| Metric | gpt-5.6-sol | Claude Sonnet 5 |
-|---|---|---|
-| Mean case score | 0.667 | 0.720 |
-| Pass rate (score ≥ 0.5 AND harm ≠ severe) | 72% | 82% |
-| Severe-harm cases flagged | 1 | 2 (0 overlap with gpt-5.6-sol's) |
-
-Full comparison, per-axis breakdown, and the case-by-case disagreement list: [`evaluations/README.md`](evaluations/README.md#cross-model-grading-comparison) and [`evaluations/results/reports/healthbench_consensus_100_cross_model_comparison.md`](evaluations/results/reports/healthbench_consensus_100_cross_model_comparison.md).
+The evaluation harness exercises the production RAG pipeline against HealthBench datasets and computes grounding, relevance, citation, calibration and safety metrics. It is an automated benchmark, not clinical validation. See [`evaluations/README.md`](evaluations/README.md) for configuration, datasets and reporting commands. Generated reports stay local under `evaluations/results/`.
 
 ## Docker and deployment
 

@@ -10,6 +10,7 @@ import re
 import sys
 import time
 import uuid
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Generator, List, Optional
@@ -112,8 +113,24 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 logger = logging.getLogger(__name__)
+_mcp_lifespan_server = None
 
-app = FastAPI(title=f"{PRODUCT_NAME} API")
+
+@asynccontextmanager
+async def _app_lifespan(_: FastAPI):
+    """Start and stop optional application-wide services."""
+    mcp_server = _mcp_lifespan_server
+    if mcp_server is None:
+        yield
+        return
+
+    async with AsyncExitStack() as exit_stack:
+        await exit_stack.enter_async_context(mcp_server.session_manager.run())
+        print("[API] MCP session manager started")
+        yield
+
+
+app = FastAPI(title=f"{PRODUCT_NAME} API", lifespan=_app_lifespan)
 
 
 @app.exception_handler(DatabaseConfigurationError)
@@ -2695,8 +2712,6 @@ def send_urgent_alert(
 _MCP_KEY = os.getenv("MCP_API_KEY", "")
 
 try:
-    from contextlib import AsyncExitStack  # noqa: E402
-
     from backend.mcp_server import mcp as _mcp_server  # noqa: E402
 
     _mcp_server.settings.streamable_http_path = "/"
@@ -2725,20 +2740,7 @@ try:
         return Response(status_code=307, headers={"Location": "/mcp/"})
 
     app.mount("/mcp", _mcp_asgi)
-
-    _mcp_exit_stack: AsyncExitStack | None = None
-
-    @app.on_event("startup")
-    async def _start_mcp_session_manager() -> None:
-        global _mcp_exit_stack
-        _mcp_exit_stack = AsyncExitStack()
-        await _mcp_exit_stack.enter_async_context(_mcp_server.session_manager.run())
-        print("[API] MCP session manager started")
-
-    @app.on_event("shutdown")
-    async def _stop_mcp_session_manager() -> None:
-        if _mcp_exit_stack is not None:
-            await _mcp_exit_stack.aclose()
+    _mcp_lifespan_server = _mcp_server
 
     print("[API] MCP server mounted at /mcp")
 except Exception as _mcp_err:
