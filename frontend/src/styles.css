@@ -659,6 +659,11 @@ label {
   color: var(--ink);
 }
 
+.icon-button.active {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
 .sidebar {
   display: none;
 }
@@ -833,6 +838,75 @@ label {
 .safety-count.emergency {
   border-left-color: var(--danger);
   color: var(--danger);
+}
+
+.nav-section-label {
+  display: block;
+  margin: 0.6rem 0 0.15rem;
+  padding: 0 0.65rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dashboard-widgets {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.dashboard-widget.widget-alert {
+  border-color: #efaaa1;
+  border-left: 4px solid var(--danger);
+}
+
+.widget-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.7rem;
+}
+
+.widget-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  font-size: 1rem;
+}
+
+.widget-count-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.widget-trial-list {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.widget-trial-list li {
+  display: grid;
+  gap: 0.15rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.6rem;
+}
+
+.widget-trial-list li:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.widget-trial-list span {
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .emergency-banner,
@@ -3725,6 +3799,11 @@ label {
   .sidebar-collapse-btn:hover {
     background: var(--surface-2);
     color: var(--ink);
+  }
+
+  .sidebar-collapse-btn.active {
+    background: var(--primary-soft);
+    color: var(--primary);
   }
 
   .sidebar-signout {

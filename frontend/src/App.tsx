@@ -625,20 +625,19 @@ function Shell({
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const role = snapshot.profile.clinical_role || snapshot.profile.role;
   const clinician = isClinicianRole(role);
-  const nav: Array<{ id: View; label: string; short: string; icon: LucideIcon }> = clinician
+  const nav: Array<{ id: View; label: string; short: string; icon: LucideIcon; section?: string }> = clinician
     ? [
         { id: "workspace", label: "Clinical Home", short: "Home", icon: Home },
         { id: "patients", label: "My Patients", short: "Patients", icon: Users },
         { id: "chat", label: "Evidence Review", short: "Evidence", icon: MessageSquare }
       ]
     : [
-        { id: "workspace", label: "Home", short: "Home", icon: Home },
-        { id: "safety", label: "Safety Review", short: "Safety", icon: ShieldCheck },
-        { id: "chat", label: "Health Chat", short: "Chat", icon: MessageSquare },
-        { id: "care-plans", label: "My Care Plans", short: "Plans", icon: ListChecks },
-        { id: "timeline", label: "My Timeline", short: "Timeline", icon: CalendarClock },
-        { id: "trials", label: "Find Clinical Trials", short: "Trials", icon: FlaskConical },
-        { id: "access", label: "Clinician Access", short: "Access", icon: UserCheck }
+        { id: "workspace", label: "Home", short: "Home", icon: Home, section: "Today" },
+        { id: "safety", label: "Safety Review", short: "Safety", icon: ShieldCheck, section: "Today" },
+        { id: "chat", label: "Health Chat", short: "Chat", icon: MessageSquare, section: "Today" },
+        { id: "care-plans", label: "My Care Plans", short: "Plans", icon: ListChecks, section: "My Health" },
+        { id: "timeline", label: "My Timeline", short: "Timeline", icon: CalendarClock, section: "My Health" },
+        { id: "trials", label: "Find Clinical Trials", short: "Trials", icon: FlaskConical, section: "My Health" }
       ];
   const name = clean(snapshot.profile.display_name, snapshot.user);
 
@@ -653,17 +652,27 @@ function Shell({
           </div>
         </div>
         <nav>
-          {nav.map((item) => {
+          {nav.map((item, index) => {
             const Icon = item.icon;
+            const showSectionLabel = item.section && item.section !== nav[index - 1]?.section;
             return (
-              <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}>
-                <Icon size={19} />
-                {item.label}
-              </button>
+              <div key={item.id}>
+                {showSectionLabel && <span className="nav-section-label">{item.section}</span>}
+                <button className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}>
+                  <Icon size={19} />
+                  {item.label}
+                </button>
+              </div>
             );
           })}
         </nav>
         <div className="sidebar-footer">
+          {!clinician && (
+            <button className={`ghost sidebar-collapse-btn${view === "access" ? " active" : ""}`} onClick={() => setView("access")}>
+              <UserCheck size={18} />
+              Clinician access
+            </button>
+          )}
           <button className="ghost sidebar-collapse-btn" onClick={() => setSidebarOpen(false)} title="Collapse sidebar">
             <PanelLeft size={18} />
             Collapse
@@ -690,6 +699,11 @@ function Shell({
           </div>
           <div className="topbar-actions">
             <ThemeControl value={themePreference} onChange={setThemePreference} />
+            {!clinician && (
+              <button className={`icon-button${view === "access" ? " active" : ""}`} onClick={() => setView("access")} title="Clinician access" aria-label="Clinician access">
+                <UserCheck size={20} />
+              </button>
+            )}
             <button className="icon-button" onClick={signOut} title="Sign out" aria-label="Sign out">
               <LogOut size={20} />
             </button>
@@ -730,14 +744,15 @@ function WorkspaceView({
     ["Medications", snapshot.metrics.medications, Pill],
     ["Vitals/labs", snapshot.metrics.vitals, HeartPulse]
   ];
+  const firstName = clean(snapshot.profile.display_name, "").split(" ")[0];
 
   return (
     <div className="view-stack">
       <section className="workspace-band">
         <div>
-          <span className="eyebrow">Workspace</span>
-          <h2>Choose where to work today.</h2>
-          <p>Chat, review the longitudinal record, or search recruiting studies with saved account context.</p>
+          <span className="eyebrow">Your health, at a glance</span>
+          <h2>{firstName ? `Welcome back, ${firstName}.` : "Welcome back."}</h2>
+          <p>Your safety status, care plan progress and trial matches, all in one place.</p>
         </div>
         {snapshot.latest_triage?.next_step && (
           <div className="triage-strip">
@@ -757,29 +772,129 @@ function WorkspaceView({
         ))}
       </section>
 
-      <section className="action-grid">
-        <ActionButton
-          icon={<ShieldCheck size={21} />}
-          title="Safety review"
-          body="Review important changes in results, symptoms and medicines, with the facts and guidance behind each proposed next step."
-          onClick={() => setView("safety")}
-        />
-        <ActionButton
-          icon={<MessageSquare size={21} />}
-          title="Chat"
-          body="Ask a health question, clarify missing information, or add a new record."
-          onClick={() => setView("chat")}
-        />
-        <ActionButton
-          icon={<CalendarClock size={21} />}
-          title="Health Timeline"
-          body="Review conditions, medications, allergies, readings, uploaded records, and trend cards."
-          onClick={() => setView("timeline")}
-        />
+      <section className="dashboard-widgets">
+        <SafetyStatusWidget snapshot={snapshot} setView={setView} />
+        <CarePlanProgressWidget setView={setView} />
+        <TrialMatchesWidget snapshot={snapshot} setView={setView} />
       </section>
 
       <RecordPanel snapshot={snapshot} setSnapshot={setSnapshot} compact />
     </div>
+  );
+}
+
+function SafetyStatusWidget({ snapshot, setView }: { snapshot: Snapshot; setView: (view: View) => void }) {
+  const reviews = snapshot.safety_reviews ?? [];
+  const emergency = reviews.filter((item) => item.priority === "emergency").length;
+  const urgent = reviews.filter((item) => item.priority === "urgent").length;
+  const review = reviews.filter((item) => item.priority === "review").length;
+
+  return (
+    <article className={`surface-card dashboard-widget${emergency ? " widget-alert" : ""}`}>
+      <div className="widget-head">
+        <h3><ShieldCheck size={18} /> Safety status</h3>
+        <button className="ghost" onClick={() => setView("safety")}>Review</button>
+      </div>
+      {reviews.length === 0 ? (
+        <p className="muted">No active safety findings. FlynnMed will flag important changes here.</p>
+      ) : (
+        <div className="widget-count-row">
+          {emergency > 0 && (
+            <div className="safety-count emergency">
+              <strong>{emergency}</strong>
+              <span>Emergency</span>
+            </div>
+          )}
+          {urgent > 0 && (
+            <div className="safety-count">
+              <strong>{urgent}</strong>
+              <span>Urgent</span>
+            </div>
+          )}
+          {review > 0 && (
+            <div className="safety-count">
+              <strong>{review}</strong>
+              <span>To review</span>
+            </div>
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function CarePlanProgressWidget({ setView }: { setView: (view: View) => void }) {
+  const [plans, setPlans] = useState<CarePlan[] | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    listCarePlans()
+      .then((data) => { if (mounted) setPlans(data); })
+      .catch(() => { if (mounted) setPlans([]); });
+    return () => { mounted = false; };
+  }, []);
+
+  const active = (plans ?? []).filter((plan) => plan.status === "active");
+  const dailyTasks = active.flatMap((plan) => plan.daily_tasks ?? []);
+  const today = new Date().toISOString().slice(0, 10);
+  const doneToday = dailyTasks.filter((task) => (task.completed_dates ?? []).includes(today)).length;
+  const overdue = active.reduce((sum, plan) => sum + (plan.missed_care_checklist ?? []).filter((item) => item.overdue).length, 0);
+
+  return (
+    <article className="surface-card dashboard-widget">
+      <div className="widget-head">
+        <h3><ListChecks size={18} /> Care plan progress</h3>
+        <button className="ghost" onClick={() => setView("care-plans")}>{active.length ? "Open" : "Start"}</button>
+      </div>
+      {plans === null ? (
+        <p className="muted">Loading care plan status...</p>
+      ) : active.length === 0 ? (
+        <p className="muted">No active care plan yet. Build one from your conditions and goals.</p>
+      ) : (
+        <div className="widget-count-row">
+          <div className="safety-count">
+            <strong>{active.length}</strong>
+            <span>{active.length === 1 ? "Active plan" : "Active plans"}</span>
+          </div>
+          <div className="safety-count">
+            <strong>{doneToday}/{dailyTasks.length}</strong>
+            <span>Today's tasks</span>
+          </div>
+          {overdue > 0 && (
+            <div className="safety-count emergency">
+              <strong>{overdue}</strong>
+              <span>{overdue === 1 ? "Overdue item" : "Overdue items"}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function TrialMatchesWidget({ snapshot, setView }: { snapshot: Snapshot; setView: (view: View) => void }) {
+  const result = snapshot.trial_search_result;
+  const topTrials = (result?.trials ?? []).slice(0, 2);
+
+  return (
+    <article className="surface-card dashboard-widget">
+      <div className="widget-head">
+        <h3><FlaskConical size={18} /> Clinical trial matches</h3>
+        <button className="ghost" onClick={() => setView("trials")}>{result ? "See all" : "Search"}</button>
+      </div>
+      {topTrials.length === 0 ? (
+        <p className="muted">{result ? "No recruiting trials matched your last search." : "Search recruiting studies that match your health record."}</p>
+      ) : (
+        <ul className="widget-trial-list">
+          {topTrials.map((trial, index) => (
+            <li key={clean(trial.nct_id, String(index))}>
+              <strong>{clean(trial.title, "Untitled trial")}</strong>
+              <span>{clean(trial.status, "Recruiting")} · {Array.isArray(trial.conditions) ? trial.conditions.slice(0, 2).join(", ") : "Condition not listed"}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </article>
   );
 }
 
