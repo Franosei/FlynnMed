@@ -6,7 +6,7 @@ current FlynnMed conversation and the patient's stored health record.
 ## What it does
 1. Reads the last 4 messages from the active chat conversation
 2. Fetches the patient's profile, conditions, medications, vitals, allergies, and latest triage
-3. Calls gpt-4o-mini to produce a structured SOAP note in standard UK GP/hospital format
+3. Calls the configured `gpt-5.4-mini` model to produce a structured SOAP note in standard UK GP/hospital format
 4. Saves the note to the patient's account (visible in the Notes panel in chat)
 5. Returns the note with a note_id that can be used to send it by email
 

@@ -24,6 +24,8 @@ from typing import Dict, List
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from backend.model_config import configured_openai_model
+
 load_dotenv()
 
 _IMAGE_EXTRACT_INSTRUCTIONS = """\
@@ -273,7 +275,7 @@ def extract_health_data_from_document(text: str, filename: str = "") -> Dict[str
     for index, chunk in enumerate(chunks, start=1):
         try:
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=configured_openai_model(),
                 messages=[
                     {
                         "role": "user",
@@ -325,7 +327,7 @@ def extract_health_data_from_images(images: List[bytes], filename: str = "") -> 
         empty["extraction_errors"] = ["No pages were available to render for vision extraction."]
         return empty
 
-    model = os.getenv("OPENAI_VISION_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
+    model = os.getenv("OPENAI_VISION_MODEL", "").strip() or configured_openai_model()
     client = OpenAI(api_key=api_key)
     payloads = []
     errors = []

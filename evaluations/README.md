@@ -19,7 +19,7 @@ grade that rewrites, reorders, adds, or drops rubric criteria. The weighted
 score is calculated locally from the dataset points.
 
 The default response generator is `gpt-5.4-mini`, the default primary evaluator
-is `gpt-5.6-luna`, and the default independent adjudicator is `gpt-4o-mini`.
+is `gpt-5.6-luna`, and the default independent adjudicator is `gpt-5.4-mini`.
 Graded runs reject configurations where the primary and adjudicator are the
 same model. Cases labelled moderate or severe harm must receive that independent
 second opinion; if it fails, the case cannot pass and is routed for review.
@@ -78,7 +78,7 @@ EVAL_API_KEY=sk-...
 EVAL_GENERATOR_MODEL=gpt-5.4-mini
 EVAL_PRIMARY_GRADER_MODEL=gpt-5.6-luna
 # Must differ from EVAL_PRIMARY_GRADER_MODEL.
-EVAL_ADJUDICATOR_MODEL=gpt-4o-mini
+EVAL_ADJUDICATOR_MODEL=gpt-5.4-mini
 EVAL_RAG_METRICS_MODEL=gpt-5.6-luna
 EVAL_FALLBACK_MODEL=gpt-5.6-luna
 EVAL_ADJUDICATION_THRESHOLD=0.7

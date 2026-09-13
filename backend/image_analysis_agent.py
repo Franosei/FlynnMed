@@ -6,6 +6,7 @@ import os
 from typing import Dict, List, Optional
 
 from backend.user_store import compute_current_age
+from backend.model_config import configured_openai_model
 
 
 SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -55,9 +56,10 @@ class ImageAnalysisAgent:
 
     def __init__(self, llm) -> None:
         self.llm = llm
-        self.model = os.getenv(
-            "OPENAI_VISION_MODEL",
-            os.getenv("OPENAI_MODEL", getattr(llm, "ANSWER_MODEL", "gpt-4o-mini")),
+        self.model = os.getenv("OPENAI_VISION_MODEL", "").strip() or getattr(
+            llm,
+            "ANSWER_MODEL",
+            configured_openai_model(),
         )
 
     def inspect(

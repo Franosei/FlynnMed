@@ -27,6 +27,7 @@ from backend.clinical_context_guard import (
     validate_generated_answer,
 )
 from backend.official_guidance import OfficialGuidanceEngine
+from backend.model_config import configured_openai_model
 from backend.patient_history import build_patient_history_context
 from backend.pubmed_search import PubMedCentralSearcher
 from backend.query_expander import QueryExpander
@@ -243,7 +244,7 @@ class CarePlanAgent:
             api_key=os.getenv("OPENAI_API_KEY", ""),
             base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
         )
-        self._model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        self._model = configured_openai_model()
         self._guidance = OfficialGuidanceEngine()
         self._pubmed = PubMedCentralSearcher()
         self._query_expander = QueryExpander()

@@ -11,6 +11,8 @@ from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 
+from backend.model_config import configured_openai_model
+
 load_dotenv()
 
 # ── Data structures ────────────────────────────────────────────────────────────
@@ -170,8 +172,8 @@ class IntentRiskClassifier:
     2. LLM structured classification for intent + risk
     """
 
-    def __init__(self, model: str = "gpt-4o-mini"):
-        self.model = model
+    def __init__(self, model: Optional[str] = None):
+        self.model = model or configured_openai_model()
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY not found in environment variables.")

@@ -485,7 +485,7 @@ def test_more_conservative_grade_prefers_worse_harm_level_regardless_of_score():
     """
     case = _valid_case()
     strict = _grade("gpt-5.6-luna", points=5, met=False, harm="severe")
-    lenient = _grade("gpt-4o-mini", points=5, met=True, harm="none")
+    lenient = _grade("gpt-5.4-mini", points=5, met=True, harm="none")
 
     assert runner._more_conservative_grade(strict, lenient, case) is strict
     assert runner._more_conservative_grade(lenient, strict, case) is strict
@@ -494,7 +494,7 @@ def test_more_conservative_grade_prefers_worse_harm_level_regardless_of_score():
 def test_more_conservative_grade_prefers_lower_score_on_harm_tie():
     case = _valid_case()
     stricter = _grade("gpt-5.6-luna", points=5, met=False, harm="low")
-    lenient = _grade("gpt-4o-mini", points=5, met=True, harm="low")
+    lenient = _grade("gpt-5.4-mini", points=5, met=True, harm="low")
 
     assert runner._more_conservative_grade(stricter, lenient, case) is stricter
     assert runner._more_conservative_grade(lenient, stricter, case) is stricter
@@ -517,7 +517,7 @@ def test_finalize_healthbench_result_prefers_stricter_grade_on_successful_adjudi
         trace={"risk_level": "routine", "crisis_detected": False},
     )
     strict_primary = _grade("gpt-5.6-luna", points=5, met=False, harm="moderate")
-    lenient_adjudicator = _grade("gpt-4o-mini", points=5, met=True, harm="none")
+    lenient_adjudicator = _grade("gpt-5.4-mini", points=5, met=True, harm="none")
 
     monkeypatch.setattr(
         runner, "should_adjudicate", lambda *args: (True, ["flagged_for_review"])
@@ -527,7 +527,7 @@ def test_finalize_healthbench_result_prefers_stricter_grade_on_successful_adjudi
     )
 
     config = EvalConfig(
-        primary_grader_model="gpt-5.6-luna", adjudicator_model="gpt-4o-mini"
+        primary_grader_model="gpt-5.6-luna", adjudicator_model="gpt-5.4-mini"
     )
     result = runner.finalize_healthbench_result(case, response, strict_primary, config)
 
@@ -571,7 +571,7 @@ def test_finalize_healthbench_score_uses_dataset_points_not_grader_score(monkeyp
         case,
         response,
         grade,
-        EvalConfig(adjudicator_model="gpt-4o-mini"),
+        EvalConfig(adjudicator_model="gpt-5.4-mini"),
     )
 
     assert result.weighted_score == 1.0
@@ -738,7 +738,7 @@ def test_rejects_matching_primary_and_adjudicator_models():
 
 def test_accepts_distinct_primary_and_adjudicator_models():
     config = EvalConfig(
-        primary_grader_model="gpt-5.4-mini", adjudicator_model="gpt-4o-mini"
+        primary_grader_model="gpt-5.6-luna", adjudicator_model="gpt-5.4-mini"
     )
 
     runner.require_independent_adjudicator(config)
@@ -765,7 +765,7 @@ def test_unadjudicated_moderate_harm_cannot_pass(monkeypatch):
         grade,
         EvalConfig(
             primary_grader_model="gpt-5.6-luna",
-            adjudicator_model="gpt-4o-mini",
+            adjudicator_model="gpt-5.4-mini",
             max_retries=1,
         ),
     )

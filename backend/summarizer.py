@@ -10,6 +10,7 @@ from backend.product_config import PRODUCT_NAME
 from backend.user_store import compute_current_age
 from backend.agentic_health_contract import operating_contract_prompt
 from backend.conversation_context import render_verbatim
+from backend.model_config import configured_openai_model
 
 if TYPE_CHECKING:
     from backend.role_router import RoleConfig
@@ -22,13 +23,12 @@ class LLMHelper:
     Wrapper around OpenAI's Chat Completions API for question answering and summarization.
     """
 
-    # gpt-4o-mini for all generation -- both final answers and auxiliary calls.
-    ANSWER_MODEL = "gpt-4o-mini"
-    AUX_MODEL = "gpt-4o-mini"
+    ANSWER_MODEL = configured_openai_model()
+    AUX_MODEL = ANSWER_MODEL
     REQUEST_TIMEOUT_SECONDS = 120.0
 
-    def __init__(self, model: str = "gpt-4o-mini"):
-        self.model = model
+    def __init__(self, model: Optional[str] = None):
+        self.model = model or self.ANSWER_MODEL
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY not set in .env")
@@ -62,7 +62,7 @@ class LLMHelper:
     ) -> str | Generator[str, None, None]:
         """
         Creates a role-aware, evidence-grounded response using the supplied evidence dossier.
-        Uses gpt-4o-mini for answer quality. Inline source citations like [S1] are mandatory.
+        Uses the configured generation model. Inline source citations like [S1] are mandatory.
         """
         if role_config:
             from backend.response_templates import get_persona_block

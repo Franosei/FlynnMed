@@ -5,6 +5,7 @@ import os
 from typing import Dict, List, Optional
 
 from backend.user_store import compute_current_age
+from backend.model_config import DEFAULT_OPENAI_MODEL
 
 
 SUPPORTED_DOCUMENT_MIME_TYPES = {"application/pdf"}
@@ -55,7 +56,7 @@ class DocumentAnalysisAgent:
 
     def __init__(self, llm) -> None:
         self.llm = llm
-        self.model = getattr(llm, "AUX_MODEL", getattr(llm, "ANSWER_MODEL", "gpt-4o-mini"))
+        self.model = getattr(llm, "AUX_MODEL", getattr(llm, "ANSWER_MODEL", DEFAULT_OPENAI_MODEL))
 
     def inspect(
         self,

@@ -9,10 +9,6 @@
   "untouched_test_valid": false,
   "expected_generator_model": "gpt-5.4-mini",
   "generation_status": "completed",
-  "observed_trace_models": {
-    "gpt-4o-mini": 443,
-    "not_applicable": 57
-  },
   "case_count": 500,
   "partition_counts": {
     "development": 296,

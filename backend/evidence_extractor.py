@@ -1,7 +1,7 @@
 """
 Evidence extractor: structured extraction layer between retrieved sources and the LLM.
 
-For each ranked source, uses gpt-4o-mini to extract patient-specific facts
+For each ranked source, uses the configured generation model to extract patient-specific facts
 into an ArticleEvidence JSON object. Only these objects are forwarded to the
 answer model -- never raw unprocessed chunks.
 
@@ -103,7 +103,7 @@ def _extract_one_article(
     conditions: List[str],
 ) -> ArticleEvidence:
     """
-    Call gpt-4o-mini to fill ArticleEvidence for one source.
+    Call the configured generation model to fill ArticleEvidence for one source.
     Falls back to a minimal structural extraction if the LLM call fails.
     """
     from backend.summarizer import LLMHelper

@@ -5,6 +5,8 @@ from typing import Dict, List
 import openai
 from dotenv import load_dotenv
 
+from backend.model_config import configured_openai_model
+
 
 @dataclass
 class HydeExpansion:
@@ -21,13 +23,13 @@ class QueryExpander:
     causal and dependency relationships between known conditions and the current question.
     """
 
-    def __init__(self, model: str = "gpt-4o-mini"):
+    def __init__(self, model: str | None = None):
         load_dotenv()
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY not found in environment variables.")
         self.client = openai.OpenAI(api_key=api_key)
-        self.model = model
+        self.model = model or configured_openai_model()
         self.cache: dict[str, List[str]] = {}
         self.hyde_cache: Dict[str, HydeExpansion] = {}
 

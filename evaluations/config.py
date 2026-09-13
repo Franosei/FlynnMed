@@ -76,7 +76,7 @@ class EvalConfig:
         default_factory=lambda: os.getenv("EVAL_PRIMARY_GRADER_MODEL", "gpt-5.6-luna")
     )
     adjudicator_model: str = field(
-        default_factory=lambda: os.getenv("EVAL_ADJUDICATOR_MODEL", "gpt-4o-mini")
+        default_factory=lambda: os.getenv("EVAL_ADJUDICATOR_MODEL", "gpt-5.4-mini")
     )
     rag_metrics_model: str = field(
         default_factory=lambda: os.getenv("EVAL_RAG_METRICS_MODEL", "gpt-5.6-luna")

@@ -58,15 +58,11 @@ schemas and critical-presentation cases remain in the repository.
 
 ## Current evaluation decision
 
-The current recorded decision is **NOT_READY**. The existing 500-case run is a
-retrospective engineering baseline, not an untouched release test. It exposed
-emergency-recognition gaps, evidence failures, incomplete external grading and
-latency above the candidate threshold. FlynnMed must complete independent
-grading and clinician adjudication, then pass a new locked unseen test and
-shadow-mode gates before the candidate can be considered ready.
-
-See the [500-case baseline analysis](evaluations/release/BASELINE_ANALYSIS.md)
-for the evidence, limitations, implemented controls and outstanding gates.
+The application and evaluation response generator both default to
+`gpt-5.4-mini`. The candidate remains **NOT_READY** until every automated gate,
+independent adjudication requirement, clinician-review requirement, locked-test
+threshold and shadow-mode requirement in the versioned release policy passes.
+No historical run is presented as proof of clinical safety.
 
 ## Run the evaluation
 
@@ -93,7 +89,6 @@ usage. The harness performs evaluator access checks before generation begins.
 |---|---|
 | [Harness guide](evaluations/README.md) | Configuration, metrics, commands, outputs and limitations |
 | [Judge contract](evaluations/JUDGE_PROMPT.md) | Grading constraints and output requirements |
-| [Baseline analysis](evaluations/release/BASELINE_ANALYSIS.md) | Current findings and release decision |
 | [`evaluations/manifests/`](evaluations/manifests/) | Reproducible case selection and data fingerprints |
 | [`evaluations/release/`](evaluations/release/) | Release thresholds, schemas and locked critical cases |
 | [`evaluations/tests/`](evaluations/tests/) | Deterministic regression coverage for the evaluation system |

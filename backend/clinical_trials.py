@@ -39,6 +39,8 @@ import requests
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from backend.model_config import configured_openai_model
+
 if TYPE_CHECKING:
     from backend.query_expander import QueryExpander
 
@@ -237,7 +239,7 @@ def _llm_extract_search_terms(raw_context: str) -> Dict[str, List[str]]:
             f"Patient data:\n{raw_context[:3000]}"
         )
         resp = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=configured_openai_model(),
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             temperature=0, max_completion_tokens=250,
@@ -483,7 +485,7 @@ def _llm_batch_condition_match(
     try:
         client = OpenAI(api_key=api_key)
         resp = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=configured_openai_model(),
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             temperature=0, max_completion_tokens=800,

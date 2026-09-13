@@ -365,7 +365,7 @@ def test_agentic_retrieval_loop_prompt_instructs_using_confirmed_meaning():
         client=SimpleNamespace(
             chat=SimpleNamespace(completions=_FakeAgentCompletions())
         ),
-        AUX_MODEL="gpt-4o-mini",
+        AUX_MODEL="gpt-5.4-mini",
     )
     loop = AgenticRetrievalLoop(
         llm=fake_llm,

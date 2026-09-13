@@ -243,7 +243,7 @@ The main environment variables are listed below. Evaluation-specific variables a
 | --- | --- |
 | `OPENAI_API_KEY` | Required by the clinical pipeline and other AI-assisted features |
 | `OPENAI_BASE_URL` | OpenAI-compatible API base URL, defaulting to `https://api.openai.com/v1` |
-| `OPENAI_MODEL` | Main chat model, defaulting to `gpt-4o-mini` |
+| `OPENAI_MODEL` | Main chat model, defaulting to `gpt-5.4-mini` |
 | `OPENAI_VISION_MODEL` | Optional model override for document and image analysis |
 | `OPENAI_EMBEDDING_MODEL` | Embedding model, defaulting to `text-embedding-3-small` |
 | `DATABASE_URL` | PostgreSQL connection string for relational accounts, patient records, consent and audit workflows |
