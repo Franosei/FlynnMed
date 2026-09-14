@@ -183,7 +183,8 @@ class IntentRiskClassifier:
         if not api_key:
             raise ValueError("OPENAI_API_KEY not found in environment variables.")
         import openai
-        self.client = openai.OpenAI(api_key=api_key)
+        from backend.clinical_llm_gateway import guard_clinical_client
+        self.client = guard_clinical_client(openai.OpenAI(api_key=api_key), purpose="intent-risk-classification")
 
     def classify(
         self,

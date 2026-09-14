@@ -1,10 +1,4 @@
-"""Fail-fast environment/config checks for the SQL + JWT backend (PR4+).
-
-Deliberately not used by the legacy JSON-store/HMAC-token path (backend/
-user_store.py, backend/api.py's `_token_secret`) -- those keep their own
-dev-friendly fallbacks until the AUTH_BACKEND/DATA_BACKEND flags (PR4/PR5)
-flip and this module becomes the only path.
-"""
+"""Fail-fast environment/config checks for security-sensitive services."""
 
 from __future__ import annotations
 
@@ -22,6 +16,47 @@ def environment() -> str:
 
 def is_production() -> bool:
     return environment() == "production"
+
+
+def _boolean_setting(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be true or false, not {raw!r}.")
+
+
+def mcp_enabled() -> bool:
+    """MCP is an explicitly enabled privileged surface, never an implicit one."""
+    return _boolean_setting("MCP_ENABLED", default=False)
+
+
+def rate_limiting_enabled() -> bool:
+    """Distributed request limits are mandatory by default in production."""
+    configured = _boolean_setting("RATE_LIMITING_ENABLED", default=is_production())
+    if is_production() and not configured:
+        raise RuntimeError("RATE_LIMITING_ENABLED cannot be disabled in production.")
+    return configured
+
+
+def mcp_auth_mode() -> str:
+    """Return the only currently supported MCP authentication mode.
+
+    MCP reuses FlynnMed account JWTs so the tool layer can recover the real
+    patient/clinician actor and apply the same consent boundary as the HTTP API.
+    A shared API key cannot provide that identity and is intentionally rejected.
+    """
+    mode = os.getenv("MCP_AUTH_MODE", "jwt").strip().lower()
+    if mode != "jwt":
+        raise RuntimeError(
+            "MCP_AUTH_MODE must be 'jwt'. Shared MCP API keys are not a safe "
+            "authorization boundary for patient records."
+        )
+    return mode
 
 
 def database_url() -> str:

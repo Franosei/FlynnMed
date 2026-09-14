@@ -101,6 +101,12 @@ _WITH_ALLERGY_FLAG = {
     "unresolved_medications": [],
     "checked_at": "now",
 }
+_WITH_MONITOR_FLAG = {
+    "allergy_flags": [],
+    "interaction_flags": [{"pair": "medicine-a + medicine-b", "severity": "monitor"}],
+    "unresolved_medications": [],
+    "checked_at": "now",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -223,7 +229,7 @@ def test_release_without_override_reason_fails_when_flags_present(db_session):
                 username=clinician.username,
                 db=db_session,
             )
-    assert "override reason" in str(exc_info.value).lower()
+    assert "release is blocked" in str(exc_info.value).lower()
 
     rows = db_session.execute(
         select(ProposedMedication).where(ProposedMedication.patient_id == patient.id)
@@ -258,13 +264,13 @@ def test_release_without_override_reason_succeeds_when_no_flags(db_session):
     assert result["released_at"]
 
 
-def test_release_with_override_reason_persists_it_when_flags_present(db_session):
+def test_release_with_confirmed_override_persists_monitor_level_reason(db_session):
     clinician = _account(db_session, AccountKind.clinician, "doctor")
     patient_account = _account(db_session, AccountKind.patient, "patient")
     patient = _patient(db_session, patient_account)
     _grant_active_access(db_session, clinician, patient)
 
-    with patch.object(api, "recheck_candidate_safety", return_value=_WITH_ALLERGY_FLAG):
+    with patch.object(api, "recheck_candidate_safety", return_value=_WITH_MONITOR_FLAG):
         result = api.release_medication_proposal(
             patient.patient_id,
             _FakeReleasePayload(
@@ -274,6 +280,7 @@ def test_release_with_override_reason_persists_it_when_flags_present(db_session)
                 rationale_text="Rationale.",
                 citations=[],
                 override_reason="Patient has tolerated this class before; clinical judgment applied.",
+                confirm_patient_specific_review=True,
             ),
             username=clinician.username,
             db=db_session,
@@ -281,7 +288,7 @@ def test_release_with_override_reason_persists_it_when_flags_present(db_session)
 
     assert result["status"] == "released"
     assert "clinical judgment" in result["override_reason"]
-    assert result["safety_check"]["allergy_flags"]
+    assert result["safety_check"]["release_tier"] == "elevated_override"
 
 
 def test_edit_reruns_safety_check_against_new_candidate_not_stale_one(db_session):

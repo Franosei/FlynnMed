@@ -8,6 +8,7 @@ python-multipart
 
 # Document ingestion
 PyMuPDF
+Pillow>=11
 
 # Retrieval and semantic search
 numpy

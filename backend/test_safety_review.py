@@ -41,6 +41,36 @@ def test_moderate_potassium_is_urgent_and_labels_confirmation_uncertainty():
     assert "falsely high" in review["uncertainty"]
 
 
+def test_missing_potassium_unit_requires_verification_without_severity_claim():
+    review = _build(vitals=[
+        {"vitals_id": "k1", "type": "potassium", "value": "6.8", "unit": "", "recorded_on": "2026-08-04"}
+    ])[0]
+
+    assert review["rule_id"] == "potassium-unit-unverified"
+    assert review["priority"] == "review"
+    assert "cannot safely label" in review["why_it_matters"]
+    assert "no numeric severity threshold" in review["uncertainty"]
+
+
+def test_incompatible_potassium_unit_is_not_compared_with_mmol_threshold():
+    review = _build(vitals=[
+        {"vitals_id": "k1", "type": "potassium", "value": "6.8", "unit": "mg/dL", "recorded_on": "2026-08-04"}
+    ])[0]
+
+    assert review["rule_id"] == "potassium-unit-unverified"
+    assert "mg/dL" in review["what_changed"]
+    assert "emergency treatment" not in review["why_it_matters"].lower()
+
+
+def test_meq_per_litre_is_a_supported_potassium_unit():
+    review = _build(vitals=[
+        {"vitals_id": "k1", "type": "potassium", "value": "6.6", "unit": "mEq/L", "recorded_on": "2026-08-04"}
+    ])[0]
+
+    assert review["rule_id"] == "potassium-severe"
+    assert review["priority"] == "emergency"
+
+
 def test_unknown_result_is_suppressed_instead_of_inventing_a_range():
     reviews = _build(vitals=[
         {"vitals_id": "x", "type": "unfamiliar assay", "value": "999", "unit": "widgets", "recorded_on": "2026-08-04"}

@@ -77,6 +77,7 @@ def _make_account(db_session, kind: AccountKind, username: str, is_active: bool 
         password_hash="x",
         password_algo="argon2id",
         account_kind=kind,
+        email_verified=True,
         is_active=is_active,
     )
     db_session.add(account)
@@ -135,8 +136,8 @@ def test_current_username_rejects_disabled_account(db_session):
     from backend.auth.dependencies import current_account
 
     username = _unique_username("cu-disabled")
-    account = _make_account(db_session, AccountKind.patient, username, is_active=False)
-    token = create_access_token(str(account.id), account.account_kind.value)
+    _make_account(db_session, AccountKind.patient, username, is_active=False)
+    token = _mint_token_for(db_session, username)
 
     with pytest.raises(HTTPException) as exc:
         current_account(authorization=f"Bearer {token}", db=db_session)
@@ -160,7 +161,11 @@ def test_expired_jwt_is_rejected(db_session):
 
     username = _unique_username("expired")
     account = _make_account(db_session, AccountKind.patient, username)
-    expired_token = create_access_token(str(account.id), account.account_kind.value, ttl_seconds=-10)
+    from backend.auth.sessions import issue_session
+    session = issue_session(db_session, account)
+    expired_token = create_access_token(
+        str(account.id), account.account_kind.value, session_id=str(session.session_id), ttl_seconds=-10
+    )
 
     with pytest.raises(HTTPException) as exc:
         current_account(authorization=f"Bearer {expired_token}", db=db_session)

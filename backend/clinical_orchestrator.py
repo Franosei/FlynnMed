@@ -32,6 +32,7 @@ Agentic retrieval layer (LLM drives this):
 from __future__ import annotations
 
 import json
+import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
@@ -60,6 +61,8 @@ from backend.agentic_health_contract import (
 from backend.role_router import RoleConfig, RoleRouter
 from backend.task_mode import TaskModeDecision, decide_task_mode
 from backend.utils import build_excerpt
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from backend.context_graph import ContextGraph
@@ -429,13 +432,18 @@ class AgenticRetrievalLoop:
                 try:
                     result = future.result()
                 except Exception as exc:
-                    print(f"[AgenticLoop] mandatory {tool_name} failed: {exc}")
+                    logger.warning(
+                        "Mandatory retrieval failed tool=%s error_type=%s",
+                        tool_name,
+                        type(exc).__name__,
+                    )
                     continue
 
                 sources = result.get("sources") or []
-                print(
-                    f"[AgenticLoop] mandatory {tool_name}({evidence_search_question!r}) "
-                    f"-> {len(sources)} source(s)"
+                logger.info(
+                    "Mandatory retrieval completed tool=%s source_count=%d",
+                    tool_name,
+                    len(sources),
                 )
                 collected_sources.extend(sources)
                 tool_calls_made.append(
@@ -459,7 +467,7 @@ class AgenticRetrievalLoop:
             try:
                 hyde_result = expansion_future.result()
             except Exception as exc:
-                print(f"[AgenticLoop] query expansion failed: {exc}")
+                logger.warning("Query expansion failed error_type=%s", type(exc).__name__)
 
         # Exact medicine pages are more reliable than asking a general search
         # endpoint to interpret a full chat sentence. This remains additive:
@@ -471,9 +479,9 @@ class AgenticRetrievalLoop:
                         medicine_name, limit=4
                     )
                 except Exception as exc:
-                    print(
-                        f"[AgenticLoop] exact medicine lookup failed for "
-                        f"{medicine_name!r}: {exc}"
+                    logger.warning(
+                        "Exact medicine lookup failed error_type=%s",
+                        type(exc).__name__,
                     )
                     medicine_sources = []
                 collected_sources.extend(medicine_sources)
@@ -506,13 +514,18 @@ class AgenticRetrievalLoop:
                         try:
                             result = future.result()
                         except Exception as exc:
-                            print(f"[AgenticLoop] variant {tool_name} failed: {exc}")
+                            logger.warning(
+                                "Variant retrieval failed tool=%s error_type=%s",
+                                tool_name,
+                                type(exc).__name__,
+                            )
                             continue
 
                         sources = result.get("sources") or []
-                        print(
-                            f"[AgenticLoop] variant {tool_name}({best_variant!r}) "
-                            f"-> {len(sources)} source(s)"
+                        logger.info(
+                            "Variant retrieval completed tool=%s source_count=%d",
+                            tool_name,
+                            len(sources),
                         )
                         collected_sources.extend(sources)
                         tool_calls_made.append(
@@ -550,7 +563,11 @@ class AgenticRetrievalLoop:
                     max_completion_tokens=400,
                 )
             except Exception as exc:
-                print(f"[AgenticLoop] LLM call failed on iteration {iteration}: {exc}")
+                logger.warning(
+                    "Agentic retrieval model call failed iteration=%d error_type=%s",
+                    iteration,
+                    type(exc).__name__,
+                )
                 break
 
             msg = response.choices[0].message
@@ -591,7 +608,11 @@ class AgenticRetrievalLoop:
                         "iteration": iteration,
                     }
                 )
-                print(f"[AgenticLoop] {fn_name}({args})")
+                logger.info(
+                    "Agentic tool call tool=%s iteration=%d",
+                    fn_name,
+                    iteration,
+                )
 
                 result = self._execute_tool(fn_name, args)
 
@@ -638,8 +659,12 @@ class AgenticRetrievalLoop:
                 )
             return {"summary": f"Unknown tool: {name}"}
         except Exception as exc:
-            print(f"[AgenticLoop] Tool {name} raised: {exc}")
-            return {"summary": f"{name} error: {exc}", "sources": []}
+            logger.warning(
+                "Agentic tool failed tool=%s error_type=%s",
+                name,
+                type(exc).__name__,
+            )
+            return {"summary": f"{name} is temporarily unavailable.", "sources": []}
 
     def _search_nhs(self, query: str) -> Dict:
         if not query:
@@ -772,7 +797,7 @@ class AgenticRetrievalLoop:
             try:
                 self.memory.add_entries(memory_entries)
             except Exception as exc:
-                print(f"[AgenticLoop] Memory add failed: {exc}")
+                logger.warning("Evidence memory write failed error_type=%s", type(exc).__name__)
 
         return {
             "sources": sources,
@@ -1060,7 +1085,7 @@ class ClinicalOrchestrator:
                 conversation_summary,
             )
         except Exception as exc:
-            print(f"[Orchestrator] Intent classification failed: {exc}")
+            logger.warning("Intent classification failed error_type=%s", type(exc).__name__)
             # Reuse the classifier's own conservative fallback (marks
             # classification_failed=True) rather than bare IntentClassification()
             # defaults, which look like a confident routine/non-urgent result.
@@ -1112,7 +1137,10 @@ class ClinicalOrchestrator:
                     medication_extraction_text
                 )
             except Exception as exc:
-                print(f"[Orchestrator] Medication-name extraction failed: {exc}")
+                logger.warning(
+                    "Medication-name extraction failed error_type=%s",
+                    type(exc).__name__,
+                )
             question_medications = list(
                 dict.fromkeys(
                     str(name).strip()
@@ -1334,7 +1362,10 @@ class ClinicalOrchestrator:
                 selected_skills=selected_skills,
             )
         except Exception as exc:
-            print(f"[Orchestrator] Agentic loop failed, using fallback: {exc}")
+            logger.warning(
+                "Agentic retrieval loop failed; using fallback error_type=%s",
+                type(exc).__name__,
+            )
             agent_result = {
                 "collected_sources": [],
                 "personal_context": [],
@@ -1362,9 +1393,7 @@ class ClinicalOrchestrator:
 
         # -- Step 9: Fallback retrieval if agent returned nothing -------------
         if not collected_sources:
-            print(
-                "[Orchestrator] Agent found no sources -- falling back to direct retrieval."
-            )
+            logger.info("Agentic retrieval returned no sources; using direct fallback")
             collected_sources, personal_context, expanded_queries = (
                 self._run_fallback_retrieval(
                     retrieval_question,
@@ -2152,7 +2181,11 @@ class ClinicalOrchestrator:
                 from backend.pathways.general_triage import get_pathway_context
             return get_pathway_context(intent, role_config)
         except Exception as exc:
-            print(f"[Orchestrator] Pathway load failed ({hint}): {exc}")
+            logger.warning(
+                "Clinical pathway load failed pathway=%s error_type=%s",
+                hint,
+                type(exc).__name__,
+            )
             from backend.pathways.general_triage import get_pathway_context
 
             return get_pathway_context(intent, role_config)
@@ -2176,7 +2209,7 @@ class ClinicalOrchestrator:
             else:
                 queries.extend(self.query_expander.expand(question))
         except Exception as exc:
-            print(f"[Orchestrator] Query expansion failed: {exc}")
+            logger.warning("Query expansion failed error_type=%s", type(exc).__name__)
         for hint in graph_hints or []:
             if hint and hint not in queries:
                 queries.append(hint)
@@ -2236,11 +2269,17 @@ class ClinicalOrchestrator:
             try:
                 collected_sources = official_future.result()
             except Exception as exc:
-                print(f"[Orchestrator] Fallback NHS search failed: {exc}")
+                logger.warning(
+                    "Fallback official-guidance search failed error_type=%s",
+                    type(exc).__name__,
+                )
             try:
                 pubmed_future.result()
             except Exception as exc:
-                print(f"[Orchestrator] Fallback PubMed search failed: {exc}")
+                logger.warning(
+                    "Fallback PubMed search failed error_type=%s",
+                    type(exc).__name__,
+                )
 
         matches = self.memory.search(
             query=seed_question,
@@ -2284,7 +2323,10 @@ class ClinicalOrchestrator:
                 conditions=conditions or [],
             )
         except Exception as exc:
-            print(f"[Orchestrator] Evidence dossier build failed (non-fatal): {exc}")
+            logger.warning(
+                "Evidence dossier build failed error_type=%s",
+                type(exc).__name__,
+            )
 
         if evidence_dossier and evidence_dossier.excluded_source_ids:
             combined_sources, evidence_quality_report = self._exclude_mismatched_sources(
@@ -2331,7 +2373,10 @@ class ClinicalOrchestrator:
                 try:
                     article_batches.append((query, future.result()))
                 except Exception as exc:
-                    print(f"[Orchestrator] PubMed search failed for '{query}': {exc}")
+                    logger.warning(
+                        "PubMed search failed error_type=%s",
+                        type(exc).__name__,
+                    )
 
         article_records = [
             (query, record) for query, records in article_batches for record in records
@@ -2351,7 +2396,10 @@ class ClinicalOrchestrator:
                 try:
                     sections = future.result()
                 except Exception as exc:
-                    print(f"[Orchestrator] PubMed section fetch failed: {exc}")
+                    logger.warning(
+                        "PubMed section fetch failed error_type=%s",
+                        type(exc).__name__,
+                    )
                     sections = {}
 
                 best_name, best_text = self._select_best_pubmed_section(sections)

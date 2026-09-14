@@ -27,6 +27,9 @@ jobs:
     env:
       DATABASE_URL: postgresql+psycopg://flynnmed:flynnmed_ci@localhost:5432/flynnmed
       JWT_SECRET_KEY: ci-test-secret-not-for-production
+      OPENAI_API_KEY: ci-test-placeholder
+      SEED_DEMO_ACCOUNTS: "false"
+      MCP_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
 
@@ -47,6 +50,21 @@ jobs:
 
       - name: Run database migrations
         run: alembic upgrade head
+
+      - name: Boot production auth and storage path
+        env:
+          DATA_BACKEND: sql
+          ENVIRONMENT: production
+          LLM_PHI_PROCESSING_ALLOWED: "true"
+          LLM_APPROVED_HOSTS: api.openai.com
+          LLM_APPROVED_MODELS: gpt-5.4-mini,text-embedding-3-small,gpt-image-1,whisper-1,sora-2
+          SMTP_HOST: smtp.example.invalid
+          SMTP_PORT: "587"
+          SMTP_USER: ci@example.invalid
+          SMTP_PASSWORD: ci-placeholder
+          CLINICIAN_VERIFICATION_ADMIN_KEY: ci-admin-placeholder
+        run: |
+          python -c "from backend.api import app, readiness; assert app; assert readiness() == {'ok': True}"
 
       - name: Test
         # These three files are live-API manual smoke scripts (no assertions,

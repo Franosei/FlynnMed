@@ -909,6 +909,37 @@ label {
   font-size: 0.85rem;
 }
 
+.compact-patient-grid {
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+}
+
+.patient-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.patient-status-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font-size: 0.7rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.patient-status-badge.neutral {
+  color: var(--muted);
+  background: var(--surface-2);
+}
+
+.widget-see-all {
+  justify-self: start;
+  margin-top: 0.8rem;
+  padding: 0.4rem 0;
+}
+
 .emergency-banner,
 .safety-empty {
   display: flex;

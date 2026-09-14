@@ -30,6 +30,13 @@ def test_us_government_guidance_domains_are_trusted():
         assert score == 1.0
 
 
+def test_trusted_guidance_url_rejects_hostname_substring_spoofing_and_http():
+    assert EvidenceRanker._is_trusted_guidance_url("https://www.nhs.uk/conditions/asthma") is True
+    assert EvidenceRanker._is_trusted_guidance_url("https://nhs.uk.attacker.example/conditions/asthma") is False
+    assert EvidenceRanker._is_trusted_guidance_url("https://attacker.example/path/nhs.uk/guidance") is False
+    assert EvidenceRanker._is_trusted_guidance_url("http://www.nhs.uk/conditions/asthma") is False
+
+
 def test_us_source_provenance_survives_ranking():
     source = {
         "title": "CDC influenza guidance",

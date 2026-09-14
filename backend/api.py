@@ -14,16 +14,17 @@ from pathlib import Path
 from typing import Dict, Generator, List, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
 from backend.clinical_notes import generate_previsit_chart_summary, generate_soap_note
+from backend.clinical_llm_gateway import validate_clinical_llm_configuration
 from backend.care_plan_agent import CarePlanAgent
 from backend.care_plan_store import CarePlanStore
 from backend.clinician_access import (
@@ -38,8 +39,8 @@ from backend.clinician_access import (
 from backend.clinician_chat_data import load_patient_data_bundle
 from backend.medication_proposal import (
     generate_medication_proposal,
-    has_unresolved_safety_flags,
     recheck_candidate_safety,
+    safety_release_tier,
 )
 from backend.models.account import Account, AccountKind
 from backend.models.audit import AuditAction, AuditLogEntry, AuditOutcome
@@ -55,22 +56,44 @@ from backend.conversation_context import build_conversation_context
 from backend.query_expander import QueryExpander
 from backend.relationship_engine import derive_relationships, merge_relationships
 from backend.auth.dependencies import current_account
-from backend.auth.jwt import create_access_token
-from backend.config import DatabaseConfigurationError
+from backend.auth.sessions import (
+    SessionError,
+    issue_session,
+    revoke_all_account_sessions,
+    rotate_refresh_session,
+)
+from backend.config import (
+    DatabaseConfigurationError,
+    is_production,
+    jwt_secret_key,
+    mcp_auth_mode,
+    mcp_enabled,
+)
 from backend.db import get_db, get_session_factory
-from backend.email_service import send_clinical_note_email, send_urgent_care_alert
+from backend.email_service import send_clinical_note_email, send_urgent_care_alert, validate_email_configuration
+from backend.identity_verification import (
+    VerificationError,
+    create_email_challenge,
+    deliver_email_challenge,
+    require_clinician_admin_key,
+    review_clinician_registration,
+    submit_clinician_registration,
+    verify_email_code,
+)
+from backend.models.security import ClinicianRegistration
+from backend.rate_limit import DistributedRateLimitMiddleware
 from backend.feedback_store import save_feedback
 from backend.fhir.stub_client import fhir_integration_status
 from backend.document_analysis_agent import (
     DocumentAnalysisError,
-    MAX_DOCUMENT_BYTES,
     SUPPORTED_DOCUMENT_MIME_TYPES,
+    normalize_document_upload,
     normalize_document_mime_type,
 )
 from backend.image_analysis_agent import (
     ImageAnalysisError,
-    MAX_IMAGE_BYTES,
     SUPPORTED_IMAGE_MIME_TYPES,
+    normalize_image_upload,
     normalize_image_mime_type,
 )
 from backend.intent_risk_classifier import IntentRiskClassifier
@@ -131,6 +154,7 @@ async def _app_lifespan(_: FastAPI):
 
 
 app = FastAPI(title=f"{PRODUCT_NAME} API", lifespan=_app_lifespan)
+app.add_middleware(DistributedRateLimitMiddleware)
 
 
 @app.exception_handler(DatabaseConfigurationError)
@@ -199,6 +223,8 @@ def current_username(account: Account = Depends(current_account)) -> str:
     unchanged. Replaces the legacy hand-rolled HMAC token
     (_token_secret/_create_token/_read_token/current_user) that could fall
     back to a hardcoded default secret."""
+    if not account.email_verified:
+        raise HTTPException(status_code=403, detail="Verify your email address to continue.")
     return account.username
 
 
@@ -219,11 +245,22 @@ def _safe_filename(filename: str) -> str:
     return cleaned or "upload.pdf"
 
 
-def _public_profile(username: str) -> Dict:
+def _public_profile(username: str, db: Session | None = None) -> Dict:
     profile = UserStore.get_user_profile(username)
+    account = None
+    registration = None
+    if db is not None:
+        account = db.execute(select(Account).where(Account.username == username)).scalar_one_or_none()
+        if account is not None:
+            registration = db.execute(
+                select(ClinicianRegistration).where(ClinicianRegistration.account_id == account.id)
+            ).scalar_one_or_none()
     return {
         "username": username,
         **profile,
+        "email_verified": bool(account.email_verified) if account else UserStore.is_email_verified(username),
+        "account_kind": account.account_kind.value if account else "patient",
+        "clinician_status": registration.status if registration else "not_applied",
     }
 
 
@@ -384,10 +421,28 @@ class SignupPayload(BaseModel):
     password: str
     confirm_password: str
     organization: str = ""
+    professional_registration_number: str = ""
+    registration_country: str = ""
     date_of_birth: str = ""
     biological_sex: str = ""
     accept_role_terms: bool = False
     accept_privacy: bool = False
+
+
+class EmailVerificationPayload(BaseModel):
+    code: str
+
+
+class ClinicianRegistrationPayload(BaseModel):
+    requested_role: str
+    organization: str
+    registration_number: str
+    registration_country: str
+
+
+class ClinicianRegistrationDecisionPayload(BaseModel):
+    approve: bool
+    note: str = ""
 
 
 class ProfilePayload(BaseModel):
@@ -531,11 +586,52 @@ class MedicationProposalReleasePayload(BaseModel):
     rationale_text: str
     citations: List[Dict] = []
     override_reason: str = ""
+    confirm_patient_specific_review: bool = False
 
 
 @app.get("/api/health")
 def health() -> Dict:
     return {"ok": True, "product": PRODUCT_NAME}
+
+
+@app.get("/livez")
+def liveness() -> Dict:
+    """Process liveness only; no dependency calls belong on this endpoint."""
+    return {"ok": True}
+
+
+def _expected_schema_revision() -> str:
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    root = Path(__file__).resolve().parents[1]
+    return str(ScriptDirectory.from_config(Config(str(root / "alembic.ini"))).get_current_head() or "")
+
+
+@app.get("/readyz")
+def readiness() -> Dict:
+    """Verify local dependencies and security invariants required for traffic."""
+    try:
+        if is_production():
+            jwt_secret_key()
+            validate_clinical_llm_configuration()
+            validate_email_configuration()
+            if not os.getenv("CLINICIAN_VERIFICATION_ADMIN_KEY", "").strip():
+                raise RuntimeError("Clinician verification administrator key is missing.")
+            if os.getenv("DATA_BACKEND", "").strip().lower() != "sql":
+                raise RuntimeError("Unsupported production data backend.")
+        if mcp_enabled():
+            mcp_auth_mode()
+
+        with get_session_factory()() as session:
+            session.execute(text("SELECT 1"))
+            revision = session.execute(text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
+        if revision != _expected_schema_revision():
+            raise RuntimeError("Database schema is not current.")
+    except Exception as exc:
+        logger.warning("Readiness check failed error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Service is not ready.") from exc
+    return {"ok": True}
 
 
 @app.get("/api/integrations/fhir/status")
@@ -561,20 +657,63 @@ def config() -> Dict:
     }
 
 
-def _mint_token_for(db: Session, username: str) -> str:
-    """Look up the SQL Account backing `username` (every account has one --
-    DATA_BACKEND=sql is required in production) and issue a real JWT bound
-    to its account id/kind, replacing the legacy _create_token(username)."""
+_REFRESH_COOKIE = "flynnmed_refresh"
+
+
+def _request_ip(request: Request) -> str:
+    return request.client.host if request.client else ""
+
+
+def _set_refresh_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        _REFRESH_COOKIE,
+        token,
+        max_age=30 * 24 * 60 * 60,
+        httponly=True,
+        secure=is_production(),
+        samesite="strict",
+        path="/api/auth",
+    )
+
+
+def _auth_session_for(db: Session, username: str, request: Request, response: Response) -> tuple[Account, str]:
     account = db.execute(
         select(Account).where(Account.username == username.strip().lower())
     ).scalar_one_or_none()
     if account is None:
         raise HTTPException(status_code=401, detail="We could not open your account.")
-    return create_access_token(str(account.id), account.account_kind.value)
+    tokens = issue_session(
+        db,
+        account,
+        request_ip=_request_ip(request),
+        user_agent=request.headers.get("user-agent", ""),
+    )
+    _set_refresh_cookie(response, tokens.refresh_token)
+    return account, tokens.access_token
+
+
+def _mint_token_for(db: Session, username: str) -> str:
+    """Compatibility helper for internal callers; still creates a revocable session."""
+    account = db.execute(
+        select(Account).where(Account.username == username.strip().lower())
+    ).scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status_code=401, detail="We could not open your account.")
+    return issue_session(db, account).access_token
+
+
+def _auth_payload(account: Account, token: str, db: Session) -> Dict:
+    verified = bool(account.email_verified)
+    return {
+        "token": token,
+        "profile": _public_profile(account.username, db),
+        "snapshot": _snapshot(account.username) if verified else None,
+        "verification_required": not verified,
+    }
 
 
 @app.post("/api/auth/login")
-def login(payload: LoginPayload, db: Session = Depends(get_db)) -> Dict:
+def login(payload: LoginPayload, request: Request, response: Response, db: Session = Depends(get_db)) -> Dict:
     identifier = payload.identifier.strip().lower()
     if not identifier or not payload.password:
         raise HTTPException(status_code=400, detail="Enter your email or username and password.")
@@ -584,15 +723,12 @@ def login(payload: LoginPayload, db: Session = Depends(get_db)) -> Dict:
     if not username:
         raise HTTPException(status_code=401, detail="We could not open your account.")
     UserStore.update_last_login(username)
-    return {
-        "token": _mint_token_for(db, username),
-        "profile": _public_profile(username),
-        "snapshot": _snapshot(username),
-    }
+    account, token = _auth_session_for(db, username, request, response)
+    return _auth_payload(account, token, db)
 
 
 @app.post("/api/auth/signup")
-def signup(payload: SignupPayload, db: Session = Depends(get_db)) -> Dict:
+def signup(payload: SignupPayload, request: Request, response: Response, db: Session = Depends(get_db)) -> Dict:
     full_name = payload.full_name.strip()
     username = payload.username.strip().lower()
     email = payload.email.strip().lower()
@@ -612,6 +748,15 @@ def signup(payload: SignupPayload, db: Session = Depends(get_db)) -> Dict:
         raise HTTPException(status_code=400, detail="Choose a valid account role.")
     if not payload.accept_role_terms or not payload.accept_privacy:
         raise HTTPException(status_code=400, detail="Accept the role terms and privacy notice before creating the account.")
+    if is_clinician_role(payload.role) and (
+        not payload.organization.strip()
+        or not payload.professional_registration_number.strip()
+        or not payload.registration_country.strip()
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Clinician applications require an organization, registration number, and registration country.",
+        )
     if UserStore.resolve_login_username(username):
         raise HTTPException(status_code=409, detail="That username is already taken.")
     if UserStore.resolve_login_username(email):
@@ -642,11 +787,158 @@ def signup(payload: SignupPayload, db: Session = Depends(get_db)) -> Dict:
         raise HTTPException(status_code=400, detail="Account creation failed. Try another username or email.")
 
     UserStore.update_last_login(username)
+    account, token = _auth_session_for(db, username, request, response)
+    if is_clinician_role(payload.role):
+        submit_clinician_registration(
+            db,
+            account,
+            requested_role=payload.role,
+            organization=payload.organization,
+            registration_number=payload.professional_registration_number,
+            registration_country=payload.registration_country,
+            require_verified_email=False,
+        )
+    code = create_email_challenge(db, account)
+    # Persist the code before SMTP so a transient delivery failure can be
+    # recovered safely through the authenticated resend endpoint.
+    db.commit()
+    delivery = "sent"
+    try:
+        deliver_email_challenge(account, code)
+    except ValueError:
+        logger.warning("Verification email delivery failed account_id=%s", account.id)
+        delivery = "failed"
+    result = _auth_payload(account, token, db)
+    result["verification_delivery"] = delivery
+    return result
+
+
+@app.post("/api/auth/refresh")
+def refresh_auth_session(
+    request: Request,
+    response: Response,
+    refresh_token: str | None = Cookie(default=None, alias=_REFRESH_COOKIE),
+    db: Session = Depends(get_db),
+) -> Dict:
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Sign in again to continue.")
+    try:
+        account, tokens = rotate_refresh_session(
+            db,
+            refresh_token,
+            request_ip=_request_ip(request),
+            user_agent=request.headers.get("user-agent", ""),
+        )
+    except SessionError as exc:
+        response.delete_cookie(_REFRESH_COOKIE, path="/api/auth")
+        raise HTTPException(status_code=401, detail="Sign in again to continue.") from exc
+    _set_refresh_cookie(response, tokens.refresh_token)
+    return _auth_payload(account, tokens.access_token, db)
+
+
+@app.post("/api/auth/logout", status_code=204)
+def logout(
+    response: Response,
+    account: Account = Depends(current_account),
+    db: Session = Depends(get_db),
+) -> Response:
+    revoke_all_account_sessions(db, account.id)
+    response.delete_cookie(_REFRESH_COOKIE, path="/api/auth")
+    response.status_code = 204
+    return response
+
+
+@app.post("/api/auth/verify-email")
+def verify_email(
+    payload: EmailVerificationPayload,
+    account: Account = Depends(current_account),
+    db: Session = Depends(get_db),
+) -> Dict:
+    try:
+        verify_email_code(db, account, payload.code)
+    except VerificationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
     return {
-        "token": _mint_token_for(db, username),
-        "profile": _public_profile(username),
-        "snapshot": _snapshot(username),
+        "profile": _public_profile(account.username, db),
+        "snapshot": _snapshot(account.username),
+        "verification_required": False,
     }
+
+
+@app.post("/api/auth/resend-verification")
+def resend_email_verification(
+    account: Account = Depends(current_account),
+    db: Session = Depends(get_db),
+) -> Dict:
+    if account.email_verified:
+        return {"sent": False, "already_verified": True}
+    code = create_email_challenge(db, account)
+    db.commit()
+    try:
+        deliver_email_challenge(account, code)
+    except ValueError as exc:
+        logger.warning("Verification email delivery failed account_id=%s", account.id)
+        raise HTTPException(status_code=503, detail="Verification email could not be delivered.") from exc
+    return {"sent": True, "already_verified": False}
+
+
+def _registration_dict(row: ClinicianRegistration) -> Dict:
+    return {
+        "registration_id": str(row.id),
+        "status": row.status,
+        "requested_role": row.requested_role,
+        "organization": row.organization,
+        "registration_country": row.registration_country,
+        "review_note": row.review_note,
+        "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else "",
+    }
+
+
+@app.post("/api/clinician-registration")
+def apply_for_clinician_access(
+    payload: ClinicianRegistrationPayload,
+    account: Account = Depends(current_account),
+    db: Session = Depends(get_db),
+) -> Dict:
+    try:
+        row = submit_clinician_registration(db, account, **payload.model_dump())
+    except VerificationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _registration_dict(row)
+
+
+@app.get("/api/clinician-registration")
+def clinician_registration_status(
+    account: Account = Depends(current_account),
+    db: Session = Depends(get_db),
+) -> Dict:
+    row = db.execute(
+        select(ClinicianRegistration).where(ClinicianRegistration.account_id == account.id)
+    ).scalar_one_or_none()
+    return _registration_dict(row) if row else {"status": "not_applied"}
+
+
+@app.post("/api/admin/clinician-registrations/{registration_id}/decision")
+def decide_clinician_registration(
+    registration_id: uuid.UUID,
+    payload: ClinicianRegistrationDecisionPayload,
+    x_clinician_admin_key: str = Header(default="", alias="X-Clinician-Admin-Key"),
+    db: Session = Depends(get_db),
+) -> Dict:
+    try:
+        require_clinician_admin_key(x_clinician_admin_key)
+        row = review_clinician_registration(
+            db,
+            registration_id,
+            approve=payload.approve,
+            note=payload.note,
+            reviewer="clinician-verification-admin",
+        )
+    except VerificationError as exc:
+        status = 401 if "credentials" in str(exc).lower() else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    return _registration_dict(row)
 
 
 # ---------------------------------------------------------------------------
@@ -1556,12 +1848,24 @@ def release_medication_proposal(
     candidate_name = payload.candidate_medication_name.strip()
     safety_check = recheck_candidate_safety(db, patient, candidate_name)
     override_reason = payload.override_reason.strip()
-    if has_unresolved_safety_flags(safety_check) and not override_reason:
+    release_tier = safety_release_tier(safety_check)
+    safety_check["release_tier"] = release_tier
+    if release_tier == "hard_block":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Release is blocked because the candidate has an allergy conflict, a high-severity "
+                "interaction, or an unresolved medication. Choose another candidate or reconcile the record."
+            ),
+        )
+    if release_tier == "elevated_override" and (
+        len(override_reason) < 20 or not payload.confirm_patient_specific_review
+    ):
         raise HTTPException(
             status_code=400,
             detail=(
-                "This candidate has an unresolved allergy or interaction flag. "
-                "Enter an override reason to release it anyway."
+                "A monitor-level interaction requires a patient-specific review confirmation "
+                "and an override reason of at least 20 characters."
             ),
         )
 
@@ -1676,10 +1980,34 @@ def list_my_previsit_summaries(
 
 
 @app.put("/api/profile")
-def update_profile(payload: ProfilePayload, username: str = Depends(current_username)) -> Dict:
+def update_profile(
+    payload: ProfilePayload,
+    account: Account = Depends(current_account),
+    db: Session = Depends(get_db),
+) -> Dict:
+    if not account.email_verified:
+        raise HTTPException(status_code=403, detail="Verify your email address to continue.")
+    username = account.username
+    old_email = account.email
     updates = {key: value for key, value in payload.dict().items() if value is not None}
     if not UserStore.update_profile(username, updates):
         raise HTTPException(status_code=400, detail="Profile update failed.")
+    requested_email = (payload.email or old_email).strip().lower()
+    if requested_email != old_email:
+        db.expire_all()
+        refreshed = db.get(Account, account.id)
+        if refreshed is None:
+            raise HTTPException(status_code=400, detail="Profile update failed.")
+        code = create_email_challenge(db, refreshed)
+        db.commit()
+        try:
+            deliver_email_challenge(refreshed, code)
+        except ValueError as exc:
+            logger.warning("Verification email delivery failed account_id=%s", refreshed.id)
+            raise HTTPException(
+                status_code=503,
+                detail="Email changed, but verification could not be delivered. Use resend verification.",
+            ) from exc
     _get_rag_engine().restore_user_context(username)
     return _snapshot(username)
 
@@ -1813,12 +2141,10 @@ async def stream_document_chat(
     if mime_type not in SUPPORTED_DOCUMENT_MIME_TYPES:
         raise HTTPException(status_code=400, detail="Upload a PDF document.")
 
-    document_bytes = await document.read()
-    if not document_bytes:
-        raise HTTPException(status_code=400, detail="The uploaded document was empty.")
-    if len(document_bytes) > MAX_DOCUMENT_BYTES:
-        max_mb = max(1, MAX_DOCUMENT_BYTES // (1024 * 1024))
-        raise HTTPException(status_code=400, detail=f"Document uploads must be {max_mb} MB or smaller.")
+    try:
+        document_bytes, mime_type = normalize_document_upload(await document.read(), mime_type, filename)
+    except DocumentAnalysisError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     display_message = user_note or f"Please analyse uploaded document: {filename}"
 
@@ -1944,12 +2270,10 @@ async def stream_image_chat(
     if mime_type not in SUPPORTED_IMAGE_MIME_TYPES:
         raise HTTPException(status_code=400, detail="Upload a JPG, PNG, or WebP medical image.")
 
-    image_bytes = await image.read()
-    if not image_bytes:
-        raise HTTPException(status_code=400, detail="The uploaded image was empty.")
-    if len(image_bytes) > MAX_IMAGE_BYTES:
-        max_mb = max(1, MAX_IMAGE_BYTES // (1024 * 1024))
-        raise HTTPException(status_code=400, detail=f"Image uploads must be {max_mb} MB or smaller.")
+    try:
+        image_bytes, mime_type = normalize_image_upload(await image.read(), mime_type, filename)
+    except ImageAnalysisError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     display_message = user_note or f"Please analyse uploaded image: {filename}"
 
@@ -2223,7 +2547,13 @@ async def upload_documents(
             )
             continue
 
-        content = await upload.read()
+        try:
+            content, _ = normalize_document_upload(await upload.read(), upload.content_type or "", filename)
+        except DocumentAnalysisError as exc:
+            pending.append(
+                {"file": filename, "status": "unsafe", "message": str(exc), "detected_names": []}
+            )
+            continue
         content_hash = hashlib.sha256(content).hexdigest()
         prior = existing_hashes.get(content_hash)
         if prior:
@@ -2670,7 +3000,7 @@ def send_urgent_alert(
 # ── MCP server (streamable HTTP -- works locally and on Railway) ───────────────
 # Mounted at /mcp so Claude Desktop / remote agents can connect to:
 #   https://<your-railway-app>.railway.app/mcp
-# Set MCP_API_KEY in Railway environment variables to restrict access.
+# Set MCP_ENABLED=true to opt in; actor-bound JWT authentication is mandatory.
 #
 # Two things are required for this to actually work, not just import cleanly:
 #   1. FastMCP's own internal route defaults to "/mcp", so mounting its ASGI
@@ -2683,27 +3013,15 @@ def send_urgent_alert(
 #      this app's startup/shutdown, every request 500s with "Task group is
 #      not initialized." Confirmed live: mounting alone is not sufficient.
 
-_MCP_KEY = os.getenv("MCP_API_KEY", "")
-
-try:
+if mcp_enabled():
+    # Validate before importing/building the server. A global key cannot
+    # identify the patient/clinician actor or express consent.
+    mcp_auth_mode()
+    from backend.mcp_auth import MCPAuthenticationMiddleware  # noqa: E402
     from backend.mcp_server import mcp as _mcp_server  # noqa: E402
 
     _mcp_server.settings.streamable_http_path = "/"
-    _mcp_asgi = _mcp_server.streamable_http_app()
-
-    if _MCP_KEY:
-        # Wrap the ASGI app with a Bearer token gate
-        _unguarded = _mcp_asgi
-
-        async def _mcp_asgi(scope, receive, send):  # type: ignore[no-redef]
-            if scope.get("type") in ("http", "websocket"):
-                raw_headers = dict(scope.get("headers", []))
-                auth_header = raw_headers.get(b"authorization", b"").decode()
-                if auth_header != f"Bearer {_MCP_KEY}":
-                    from starlette.responses import Response as _R
-                    await _R("Unauthorized", status_code=401)(scope, receive, send)
-                    return
-            await _unguarded(scope, receive, send)
+    _mcp_asgi = MCPAuthenticationMiddleware(_mcp_server.streamable_http_app())
 
     # Starlette's Mount only matches "/mcp/..." (something after the prefix),
     # not the bare "/mcp" that every client is told to connect to. Without
@@ -2716,9 +3034,9 @@ try:
     app.mount("/mcp", _mcp_asgi)
     _mcp_lifespan_server = _mcp_server
 
-    print("[API] MCP server mounted at /mcp")
-except Exception as _mcp_err:
-    print(f"[API] MCP server not mounted (non-fatal): {_mcp_err}")
+    logger.info("MCP server mounted at /mcp with actor-bound JWT authentication")
+else:
+    logger.info("MCP server disabled (set MCP_ENABLED=true to enable it)")
 
 
 # ── Frontend static files ─────────────────────────────────────────────────────

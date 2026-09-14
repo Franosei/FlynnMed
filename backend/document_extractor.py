@@ -24,6 +24,7 @@ from typing import Dict, List
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from backend.clinical_llm_gateway import guard_clinical_client
 from backend.model_config import configured_openai_model
 
 load_dotenv()
@@ -271,7 +272,7 @@ def extract_health_data_from_document(text: str, filename: str = "") -> Dict[str
 
     payloads = []
     errors = []
-    client = OpenAI(api_key=api_key)
+    client = guard_clinical_client(OpenAI(api_key=api_key), purpose="document-structured-extraction")
     for index, chunk in enumerate(chunks, start=1):
         try:
             response = client.chat.completions.create(
@@ -328,7 +329,7 @@ def extract_health_data_from_images(images: List[bytes], filename: str = "") -> 
         return empty
 
     model = os.getenv("OPENAI_VISION_MODEL", "").strip() or configured_openai_model()
-    client = OpenAI(api_key=api_key)
+    client = guard_clinical_client(OpenAI(api_key=api_key), purpose="document-vision-extraction")
     payloads = []
     errors = []
 

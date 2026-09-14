@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from urllib.parse import urlparse
 
 import numpy as np
 
@@ -572,25 +573,27 @@ class EvidenceRanker:
 
     @staticmethod
     def _is_trusted_guidance_url(url: str) -> bool:
-        lower = (url or "").lower()
-        return any(
-            host in lower
-            for host in (
-                "nhs.uk",
-                "nice.org.uk",
-                "gov.uk",
-                "medlineplus.gov",
-                "bnf.nice.org.uk",
-                "cdc.gov",
-                "odphp.health.gov",
-                # healthquality.va.gov intentionally excluded: TLS fetches to
-                # this host currently fail verification, so any source from
-                # it reflects a failed fetch, not verified content -- don't
-                # auto-trust it. See official_guidance.py's disabled
-                # _search_va_dod for the retrieval-side fix.
-                "fda.gov",
-            )
+        try:
+            parsed = urlparse(url or "")
+            hostname = (parsed.hostname or "").rstrip(".").lower()
+        except ValueError:
+            return False
+        if parsed.scheme.lower() != "https" or not hostname:
+            return False
+        trusted_hosts = (
+            "nhs.uk",
+            "nice.org.uk",
+            "gov.uk",
+            "medlineplus.gov",
+            "bnf.nice.org.uk",
+            "cdc.gov",
+            "odphp.health.gov",
+            # healthquality.va.gov intentionally excluded: TLS fetches to
+            # this host currently fail verification, so any source from
+            # it reflects a failed fetch, not verified content.
+            "fda.gov",
         )
+        return any(hostname == host or hostname.endswith(f".{host}") for host in trusted_hosts)
 
     @staticmethod
     def _assess_currency(source: Dict, evidence_tier: int) -> Tuple[str, float, str]:

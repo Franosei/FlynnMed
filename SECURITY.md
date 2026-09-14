@@ -23,7 +23,7 @@ Instead, report it privately using one of these channels, in order of
 preference:
 
 1. **GitHub Security Advisories** (preferred): open a
-   [private security advisory](https://github.com/Franosei/my_health_chatbot/security/advisories/new)
+   [private security advisory](https://github.com/Franosei/FlynnMed/security/advisories/new)
    for this repository. This lets us discuss and fix the issue with you before
    it's public.
 2. **Email**: send details to **oseifrancis633@gmail.com** with the subject
@@ -51,8 +51,8 @@ Please include as much of the following as you can:
 
 Security reports are welcome for:
 
-- Authentication/authorization bypass (`backend/api.py` token handling,
-  `current_user` dependency, role-based access)
+- Authentication/authorization bypass (`backend/auth/`, account JWTs,
+  consent checks, or the optional MCP actor boundary)
 - Injection issues (prompt injection into clinical output, path traversal in
   document uploads, SQL/command injection)
 - Data exposure across accounts (one user's records, uploads, or chat history
@@ -77,8 +77,28 @@ Security reports are welcome for:
 
 ## Local Data Handling
 
-By default this project stores accounts and health data in a local
-`users.json` file and a local `data/` directory (see `.gitignore` -- these are
-never committed). If you are running your own instance, treat those files and
-your `.env` (API keys, `APP_SECRET`) as sensitive and do not commit or share
-them.
+The supported application path stores accounts and health data in PostgreSQL.
+The former legacy stores exist only for offline migration and isolated test or
+evaluation workflows. Treat database backups, local migration inputs, and
+`.env` (API keys and `JWT_SECRET_KEY`) as sensitive and do not commit or share
+them. Do not log raw patient prompts, patient records, or integration tool
+arguments.
+
+## Deployed Security Controls
+
+- Access JWTs are short lived and bound to server-side sessions. Refresh
+  tokens are held in `HttpOnly`, `SameSite=Strict` cookies, rotate on every
+  use, and token reuse revokes the whole session family.
+- New accounts cannot use patient-data routes until a short-lived email code
+  is verified. Self-declared clinical roles remain patient accounts until an
+  out-of-band administrator reviews their professional registration.
+- Sensitive endpoints use Postgres-backed limits shared across all web
+  processes. Production fails closed if the limiter database is unavailable.
+- Clinical model calls pass through the PHI policy gateway. Production must
+  explicitly approve the processor host and models and enable PHI processing;
+  direct identifiers are redacted and logs contain request metadata only.
+- PDF and image uploads are parsed and rewritten before analysis or storage;
+  active PDF content, attachments, metadata, image EXIF, trailing bytes, and
+  oversized page/pixel payloads are rejected or removed.
+- Run `scripts/release.sh` once before deployment to apply migrations. Normal
+  application startup never migrates, imports legacy users, or seeds accounts.

@@ -65,10 +65,13 @@ import {
   getStoredToken,
   listCarePlans,
   login,
+  logout,
   rateResponse,
   releaseMedicationProposal,
   releasePrevisitSummary,
   requestPatientAccess,
+  refreshSession,
+  resendVerification,
   revokePatientAccess,
   saveMedicationProposalDraft,
   savePrevisitSummaryDraft,
@@ -81,12 +84,13 @@ import {
   streamPrevisitChat,
   toggleCarePlanTask,
   transcribeAudio,
+  verifyEmail,
   decidePatientAccess,
   updateNote,
   updateSafetyReview,
   uploadDocuments
 } from "./api";
-import type { AccessOverview, AuthResponse, CarePlan, CarePlanTask, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, Dict, EscalationThreshold, EvidenceTrace, FeedbackRating, LabReminder, MedReminder, Message, MissedCareItem, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, ProposedMedication, SafetyReview, Snapshot, TrialSearchResult } from "./types";
+import type { AccessGrant, AccessOverview, AuthResponse, CarePlan, CarePlanTask, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, Dict, EscalationThreshold, EvidenceTrace, FeedbackRating, LabReminder, MedReminder, Message, MissedCareItem, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, Profile, ProposedMedication, SafetyReview, Snapshot, TrialSearchResult } from "./types";
 import type { ClarifyOption, UploadExtracted } from "./api";
 import {
   buildSeries,
@@ -187,6 +191,7 @@ function App() {
   const [view, setView] = useState<View>("workspace");
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
+  const [pendingProfile, setPendingProfile] = useState<Profile | null>(null);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -208,11 +213,15 @@ function App() {
           return;
         }
         setConfig(loadedConfig);
-        if (getStoredToken()) {
-          const loadedSnapshot = await fetchSnapshot();
+        try {
+          const restored = await refreshSession();
           if (mounted) {
-            setSnapshot(loadedSnapshot);
+            setStoredToken(restored.token);
+            setSnapshot(restored.snapshot);
+            setPendingProfile(restored.verification_required ? restored.profile : null);
           }
+        } catch {
+          setStoredToken("");
         }
       } catch (error) {
         setNotice(error instanceof Error ? error.message : "Could not load the app.");
@@ -232,13 +241,16 @@ function App() {
   const handleAuth = (response: AuthResponse) => {
     setStoredToken(response.token);
     setSnapshot(response.snapshot);
+    setPendingProfile(response.verification_required ? response.profile : null);
     setView("workspace");
     setNotice("");
   };
 
   const signOut = () => {
+    void logout().catch(() => undefined);
     setStoredToken("");
     setSnapshot(null);
+    setPendingProfile(null);
     setView("workspace");
   };
 
@@ -260,6 +272,8 @@ function App() {
       <AuthScreen
         config={config}
         onSuccess={handleAuth}
+        pendingProfile={pendingProfile}
+        onVerified={(verifiedSnapshot) => { setSnapshot(verifiedSnapshot); setPendingProfile(null); }}
         themePreference={themePreference}
         setThemePreference={setThemePreference}
       />
@@ -267,7 +281,9 @@ function App() {
   }
 
   const role = snapshot.profile.clinical_role || snapshot.profile.role;
-  const clinician = isClinicianRole(role);
+  const clinician = snapshot.profile.account_kind
+    ? snapshot.profile.account_kind === "clinician"
+    : isClinicianRole(role);
 
   return (
     <ErrorBoundary>
@@ -343,11 +359,15 @@ function ThemeControl({
 function AuthScreen({
   config,
   onSuccess,
+  pendingProfile,
+  onVerified,
   themePreference,
   setThemePreference,
 }: {
   config: ProductConfig;
   onSuccess: (response: AuthResponse) => void;
+  pendingProfile: Profile | null;
+  onVerified: (snapshot: Snapshot) => void;
   themePreference: ThemePreference;
   setThemePreference: (theme: ThemePreference) => void;
 }) {
@@ -361,6 +381,8 @@ function AuthScreen({
     email: "",
     username: "",
     organization: "",
+    professional_registration_number: "",
+    registration_country: "",
     date_of_birth: "",
     biological_sex: "",
     password: "",
@@ -368,6 +390,7 @@ function AuthScreen({
     accept_role_terms: false,
     accept_privacy: false
   });
+  const [verificationCode, setVerificationCode] = useState("");
 
   const terms = config.role_terms[role] ?? config.role_terms[config.role_options[0]];
   const isClinician = role !== "Patient" && role !== "Individual";
@@ -385,6 +408,9 @@ function AuthScreen({
     if (f.password !== f.confirm_password) return "Passwords do not match.";
     if (!f.accept_role_terms) return "You must accept the role terms to continue.";
     if (!f.accept_privacy) return "You must accept the privacy notice to continue.";
+    if (isClinician && (!f.organization.trim() || !f.professional_registration_number.trim() || !f.registration_country.trim())) {
+      return "Clinician applications require an organisation, registration number, and registration country.";
+    }
     return "";
   }
 
@@ -419,6 +445,44 @@ function AuthScreen({
     } finally {
       setBusy(false);
     }
+  }
+
+  async function submitVerification(event: FormEvent) {
+    event.preventDefault();
+    if (!/^\d{6}$/.test(verificationCode.trim())) {
+      setError("Enter the 6-digit code from your email.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const result = await verifyEmail(verificationCode.trim());
+      onVerified(result.snapshot);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Verification failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (pendingProfile) {
+    return (
+      <main className="auth-page">
+        <section className="auth-panel" aria-label="Email verification">
+          <img src="/logo.png" alt={config.product_name} className="auth-panel-logo" />
+          <h2>Verify your email</h2>
+          <p>Enter the 6-digit code sent to {pendingProfile.email || "your email address"}.</p>
+          {error && <div className="notice error">{error}</div>}
+          <form onSubmit={submitVerification} className="stack">
+            <label>Verification code <Req />
+              <input value={verificationCode} onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" />
+            </label>
+            <button className="primary full" disabled={busy} type="submit">{busy ? "Verifying..." : "Verify email"}</button>
+            <button type="button" disabled={busy} onClick={() => { setError(""); void resendVerification().catch((caught) => setError(caught instanceof Error ? caught.message : "Could not resend code.")); }}>Resend code</button>
+          </form>
+        </section>
+      </main>
+    );
   }
 
   return (
@@ -527,13 +591,25 @@ function AuthScreen({
                 />
               </label>
               <label>
-                {isClinician ? "Organisation" : "Organisation"} <span className="optional-tag">Optional</span>
+                Organisation {isClinician ? <Req /> : <span className="optional-tag">Optional</span>}
                 <input
                   value={signupForm.organization}
                   onChange={(event) => setSignupForm({ ...signupForm, organization: event.target.value })}
                   placeholder={isClinician ? "Hospital or clinic name" : "Optional"}
                 />
               </label>
+              {isClinician && (
+                <>
+                  <label>
+                    Professional registration number <Req />
+                    <input value={signupForm.professional_registration_number} onChange={(event) => setSignupForm({ ...signupForm, professional_registration_number: event.target.value })} autoComplete="off" />
+                  </label>
+                  <label>
+                    Registration country <Req />
+                    <input value={signupForm.registration_country} onChange={(event) => setSignupForm({ ...signupForm, registration_country: event.target.value })} placeholder="United Kingdom" />
+                  </label>
+                </>
+              )}
               <label>
                 Date of birth <span className="optional-tag">Optional</span>
                 <input
@@ -624,7 +700,9 @@ function Shell({
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const role = snapshot.profile.clinical_role || snapshot.profile.role;
-  const clinician = isClinicianRole(role);
+  const clinician = snapshot.profile.account_kind
+    ? snapshot.profile.account_kind === "clinician"
+    : isClinicianRole(role);
   const nav: Array<{ id: View; label: string; short: string; icon: LucideIcon; section?: string }> = clinician
     ? [
         { id: "workspace", label: "Clinical Home", short: "Home", icon: Home },
@@ -1081,19 +1159,29 @@ function ClinicianWorkspace({
   setNotice: (notice: string) => void;
 }) {
   const [access, setAccess] = useState<AccessOverview | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchAccessOverview()
       .then(setAccess)
-      .catch((error) => setNotice(error instanceof Error ? error.message : "Could not load patient access."));
+      .catch((error) => setNotice(error instanceof Error ? error.message : "Could not load patient access."))
+      .finally(() => setLoading(false));
   }, [setNotice]);
+
+  const active = access?.requests.filter((item) => item.status === "active") ?? [];
+  const pending = access?.requests.filter((item) => item.status === "pending") ?? [];
+  const needsReview = active.filter((item) => {
+    const level = item.patient_status?.urgency_level;
+    return level === "urgent" || level === "crisis" || level === "high";
+  }).length;
+  const firstName = clean(snapshot.profile.display_name, "").split(" ")[0];
 
   return (
     <div className="view-stack clinician-dashboard">
       <section className="workspace-band clinician-band">
         <div>
           <span className="eyebrow">Clinical workspace</span>
-          <h2>Welcome, {clean(snapshot.profile.display_name, "clinician")}</h2>
+          <h2>{firstName ? `Welcome back, ${firstName}.` : "Welcome back."}</h2>
           <p>
             Review consented patient records and use evidence support within your professional scope.
             Patient data is never opened without an active access grant.
@@ -1117,10 +1205,20 @@ function ClinicianWorkspace({
           <span>Pending requests</span>
         </div>
         <div className="metric-card">
+          <AlertTriangle size={20} />
+          <strong>{needsReview}</strong>
+          <span>Need review</span>
+        </div>
+        <div className="metric-card">
           <ShieldCheck size={20} />
           <strong>Scoped</strong>
           <span>Consent-controlled access</span>
         </div>
+      </section>
+
+      <section className="dashboard-widgets">
+        <ClinicianRosterWidget patients={active} loading={loading} setView={setView} />
+        <ClinicianPendingWidget pending={pending} setView={setView} />
       </section>
 
       <section className="action-grid clinician-actions">
@@ -1150,6 +1248,108 @@ function ClinicianWorkspace({
         </div>
       </section>
     </div>
+  );
+}
+
+const CLINICIAN_URGENCY_LABEL: Record<string, string> = {
+  routine: "Routine",
+  elevated: "Elevated",
+  high: "High risk",
+  urgent: "Urgent",
+  crisis: "Crisis"
+};
+
+function PatientStatusBadge({ status }: { status?: AccessGrant["patient_status"] }) {
+  if (!status || !status.urgency_level) {
+    return <span className="patient-status-badge neutral">No recent triage</span>;
+  }
+  const tone = PATIENT_URGENCY[status.urgency_level];
+  const label = CLINICIAN_URGENCY_LABEL[status.urgency_level] ?? status.urgency_level;
+  return (
+    <span
+      className="patient-status-badge"
+      style={tone ? { color: tone.color, background: tone.bg } : undefined}
+    >
+      {label}
+    </span>
+  );
+}
+
+function ClinicianRosterWidget({
+  patients,
+  loading,
+  setView
+}: {
+  patients: AccessGrant[];
+  loading: boolean;
+  setView: (view: View) => void;
+}) {
+  const ROSTER_PREVIEW_LIMIT = 6;
+  const preview = patients.slice(0, ROSTER_PREVIEW_LIMIT);
+  const remaining = patients.length - preview.length;
+
+  return (
+    <article className="surface-card dashboard-widget clinician-roster-widget">
+      <div className="widget-head">
+        <h3><Users size={18} /> My patients</h3>
+        <button className="ghost" onClick={() => setView("patients")}>Open list</button>
+      </div>
+      {loading ? (
+        <p className="muted">Loading your patients...</p>
+      ) : preview.length === 0 ? (
+        <p className="muted">No patient has approved access yet. Request access by MRN from the patient list.</p>
+      ) : (
+        <>
+          <div className="patient-grid compact-patient-grid">
+            {preview.map((item) => (
+              <button className="patient-card" key={item.grant_id} onClick={() => setView("patients")}>
+                <div className="patient-card-head">
+                  <UserCheck size={20} />
+                  <PatientStatusBadge status={item.patient_status} />
+                </div>
+                <strong>{item.patient_name}</strong>
+                <span>{item.patient_id}</span>
+                <small>Access until {formatDate(item.expires_at)}</small>
+              </button>
+            ))}
+          </div>
+          {remaining > 0 && (
+            <button className="ghost widget-see-all" onClick={() => setView("patients")}>
+              See {remaining} more patient{remaining === 1 ? "" : "s"}
+            </button>
+          )}
+        </>
+      )}
+    </article>
+  );
+}
+
+function ClinicianPendingWidget({
+  pending,
+  setView
+}: {
+  pending: AccessGrant[];
+  setView: (view: View) => void;
+}) {
+  return (
+    <article className="surface-card dashboard-widget">
+      <div className="widget-head">
+        <h3><CalendarClock size={18} /> Awaiting patient approval</h3>
+        <button className="ghost" onClick={() => setView("patients")}>Request access</button>
+      </div>
+      {pending.length === 0 ? (
+        <p className="muted">No requests are waiting on a patient's approval.</p>
+      ) : (
+        <ul className="widget-trial-list">
+          {pending.map((item) => (
+            <li key={item.grant_id}>
+              <strong>{item.patient_id}</strong>
+              <span>Requested {formatDate(item.requested_at)} &middot; {item.request_reason || "No reason supplied."}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </article>
   );
 }
 
@@ -1783,6 +1983,15 @@ function medicationProposalHasFlags(proposal: Pick<ProposedMedication, "safety_c
   );
 }
 
+function medicationProposalRiskTier(proposal: Pick<ProposedMedication, "safety_check">): "clear" | "elevated_override" | "hard_block" {
+  const check = proposal.safety_check;
+  if (!check) return "clear";
+  if (check.allergy_flags?.length || check.unresolved_medications?.length) return "hard_block";
+  const severities = new Set((check.interaction_flags ?? []).map((flag) => flag.severity));
+  if (severities.has("high")) return "hard_block";
+  return severities.has("monitor") ? "elevated_override" : "clear";
+}
+
 /**
  * Clinician-only medication-proposal workspace: describe a clinical
  * situation, get a real evidence-grounded candidate drug + dose back
@@ -1807,6 +2016,7 @@ function MedicationProposalWorkspace({
   const [doseFrequency, setDoseFrequency] = useState(latestDraft?.candidate_dose_frequency ?? "");
   const [rationale, setRationale] = useState(latestDraft?.rationale_text ?? "");
   const [overrideReason, setOverrideReason] = useState("");
+  const [patientReviewConfirmed, setPatientReviewConfirmed] = useState(false);
   const [generateBusy, setGenerateBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
   const [releaseBusy, setReleaseBusy] = useState(false);
@@ -1815,6 +2025,7 @@ function MedicationProposalWorkspace({
 
   const activeDraft = proposals.find((p) => p.status === "draft") ?? null;
   const hasFlags = activeDraft ? medicationProposalHasFlags(activeDraft) : false;
+  const releaseTier = activeDraft ? medicationProposalRiskTier(activeDraft) : "clear";
 
   async function handleGenerate() {
     if (!situation.trim()) {
@@ -1864,8 +2075,12 @@ function MedicationProposalWorkspace({
       setNotice("Enter a candidate medication and dose/frequency before releasing.");
       return;
     }
-    if (hasFlags && !overrideReason.trim()) {
-      setNotice("This candidate has an unresolved allergy or interaction flag -- enter an override reason to release it anyway.");
+    if (releaseTier === "hard_block") {
+      setNotice("This candidate cannot be released until allergy, high-severity interaction, or unresolved medication risks are reconciled.");
+      return;
+    }
+    if (releaseTier === "elevated_override" && (overrideReason.trim().length < 20 || !patientReviewConfirmed)) {
+      setNotice("A monitor-level interaction requires confirmation and an override reason of at least 20 characters.");
       return;
     }
     const confirmed = window.confirm(
@@ -1882,10 +2097,12 @@ function MedicationProposalWorkspace({
         candidate_dose_frequency: doseFrequency.trim(),
         rationale_text: rationale,
         citations: activeDraft.citations,
-        override_reason: overrideReason.trim()
+        override_reason: overrideReason.trim(),
+        confirm_patient_specific_review: patientReviewConfirmed
       });
       setProposals((current) => [result, ...current]);
       setOverrideReason("");
+      setPatientReviewConfirmed(false);
       setNotice("Medication proposal released to the patient's portal.");
     } catch (err) {
       setNotice(err instanceof Error ? err.message : "Could not release the medication proposal.");
@@ -1954,15 +2171,19 @@ function MedicationProposalWorkspace({
             <p className="notice success">No allergy or interaction conflicts detected against this patient's recorded records.</p>
           )}
 
-          {hasFlags && (
+          {releaseTier === "elevated_override" && (
             <>
-              <label className="col-label">Override reason (required to release with flags present)</label>
+              <label className="col-label">Override reason (minimum 20 characters)</label>
               <textarea
                 rows={2}
                 value={overrideReason}
                 onChange={(event) => setOverrideReason(event.target.value)}
                 placeholder="Document why this proposal is appropriate despite the flag above."
               />
+              <label>
+                <input type="checkbox" checked={patientReviewConfirmed} onChange={(event) => setPatientReviewConfirmed(event.target.checked)} />
+                I reviewed this interaction against the patient's current record.
+              </label>
             </>
           )}
 
@@ -1973,7 +2194,7 @@ function MedicationProposalWorkspace({
             <button className="ghost" onClick={handleSaveDraft} disabled={saveBusy || !medicationName.trim()}>
               Save draft
             </button>
-            <button className="primary" onClick={handleRelease} disabled={releaseBusy || !medicationName.trim()}>
+            <button className="primary" onClick={handleRelease} disabled={releaseBusy || !medicationName.trim() || releaseTier === "hard_block"}>
               <ShieldCheck size={16} /> {releaseBusy ? "Releasing..." : "Release to patient"}
             </button>
           </div>

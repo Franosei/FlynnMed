@@ -1,10 +1,4 @@
-"""JWT session tokens for the new SQL-backed auth path.
-
-Replaces backend/api.py's hand-rolled HMAC token (`_create_token`/
-`_read_token`, api.py:100-136) once PR6 flips AUTH_BACKEND to "jwt". The two
-are not wire-compatible -- deploying this is a hard cutover, every existing
-session is invalidated at once (see PR6 in the implementation plan).
-"""
+"""Short-lived JWT access tokens for the SQL-backed authentication path."""
 
 from __future__ import annotations
 
@@ -17,7 +11,9 @@ import jwt as _pyjwt
 from backend.config import jwt_secret_key
 
 ALGORITHM = "HS256"
-_DEFAULT_TTL_SECONDS = 7 * 24 * 3600  # matches the legacy token's 7-day TTL
+ISSUER = "flynnmed"
+AUDIENCE = "flynnmed-api"
+_DEFAULT_TTL_SECONDS = 15 * 60
 
 
 class TokenError(Exception):
@@ -33,9 +29,16 @@ class TokenPayload:
     jti: str
     issued_at: int
     expires_at: int
+    session_id: str
 
 
-def create_access_token(account_id: str, account_kind: str, ttl_seconds: int = _DEFAULT_TTL_SECONDS) -> str:
+def create_access_token(
+    account_id: str,
+    account_kind: str,
+    *,
+    session_id: str,
+    ttl_seconds: int = _DEFAULT_TTL_SECONDS,
+) -> str:
     now = int(time.time())
     claims = {
         "sub": account_id,
@@ -43,13 +46,23 @@ def create_access_token(account_id: str, account_kind: str, ttl_seconds: int = _
         "iat": now,
         "exp": now + ttl_seconds,
         "jti": uuid.uuid4().hex,
+        "iss": ISSUER,
+        "aud": AUDIENCE,
+        "sid": session_id,
     }
     return _pyjwt.encode(claims, jwt_secret_key(), algorithm=ALGORITHM)
 
 
 def decode_access_token(token: str) -> TokenPayload:
     try:
-        claims = _pyjwt.decode(token, jwt_secret_key(), algorithms=[ALGORITHM])
+        claims = _pyjwt.decode(
+            token,
+            jwt_secret_key(),
+            algorithms=[ALGORITHM],
+            issuer=ISSUER,
+            audience=AUDIENCE,
+            options={"require": ["sub", "kind", "iat", "exp", "jti", "iss", "aud", "sid"]},
+        )
     except _pyjwt.PyJWTError as exc:
         raise TokenError(str(exc)) from exc
 
@@ -64,4 +77,5 @@ def decode_access_token(token: str) -> TokenPayload:
         jti=str(claims.get("jti", "")),
         issued_at=int(claims.get("iat", 0)),
         expires_at=int(claims.get("exp", 0)),
+        session_id=str(claims.get("sid", "")),
     )

@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from dotenv import load_dotenv
 from openai import OpenAI
+from backend.clinical_llm_gateway import guard_clinical_client
 
 load_dotenv()
 
@@ -23,7 +24,7 @@ class MemoryStore:
         if base_url:
             client_kwargs["base_url"] = base_url
 
-        self.client = OpenAI(**client_kwargs)
+        self.client = guard_clinical_client(OpenAI(**client_kwargs), purpose="clinical-memory-embedding")
         self.embedding_model = embedding_model or os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
         self.entries: List[Dict] = []
         self.entry_keys: set[str] = set()

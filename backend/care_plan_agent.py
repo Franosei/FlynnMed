@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import Callable, Dict, List, Optional
 
 import openai
+from backend.clinical_llm_gateway import guard_clinical_client
 
 from backend.evidence_extractor import _extract_one_article
 from backend.conversation_context import render_verbatim
@@ -240,10 +241,10 @@ class CarePlanAgent:
     MAX_ITERATIONS = 7
 
     def __init__(self) -> None:
-        self._client = openai.OpenAI(
+        self._client = guard_clinical_client(openai.OpenAI(
             api_key=os.getenv("OPENAI_API_KEY", ""),
             base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-        )
+        ), purpose="care-plan-generation")
         self._model = configured_openai_model()
         self._guidance = OfficialGuidanceEngine()
         self._pubmed = PubMedCentralSearcher()

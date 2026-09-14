@@ -25,6 +25,12 @@ from backend.models.evidence import EvidenceClaim, EvidencePassage, SourceArtifa
 from backend.models.evidence_contradiction import EvidenceContradiction
 from backend.models.patient_fact import PatientFact
 from backend.models.answer_claim import AnswerClaim
+from backend.models.security import (
+    AuthSession,
+    ClinicianRegistration,
+    EmailVerificationChallenge,
+    RateLimitBucket,
+)
 
 __all__ = [
     "Base",
@@ -60,4 +66,8 @@ __all__ = [
     "EvidenceContradiction",
     "PatientFact",
     "AnswerClaim",
+    "AuthSession",
+    "EmailVerificationChallenge",
+    "ClinicianRegistration",
+    "RateLimitBucket",
 ]

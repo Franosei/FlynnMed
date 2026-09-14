@@ -86,6 +86,27 @@ def has_unresolved_safety_flags(safety_check: Dict) -> bool:
     )
 
 
+def safety_release_tier(safety_check: Dict) -> str:
+    """Classify server-recomputed findings into clear, override, or hard-block.
+
+    Recorded allergy conflicts, high-severity interactions, and medications
+    that could not be resolved are never safely overridable in this workflow.
+    Monitor-level interactions may be released only with an explicit,
+    documented patient-specific review.
+    """
+    if safety_check.get("allergy_flags") or safety_check.get("unresolved_medications"):
+        return "hard_block"
+    severities = {
+        str(flag.get("severity") or "").strip().lower()
+        for flag in safety_check.get("interaction_flags", [])
+    }
+    if "high" in severities:
+        return "hard_block"
+    if "monitor" in severities:
+        return "elevated_override"
+    return "clear"
+
+
 def recheck_candidate_safety(db, patient, candidate_medication_name: str) -> Dict:
     """
     Re-runs the deterministic safety checks against the patient's current

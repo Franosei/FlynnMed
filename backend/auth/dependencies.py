@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.auth.jwt import TokenError, decode_access_token
+from backend.auth.sessions import SessionError, validate_access_session
 from backend.db import get_db
 from backend.models.account import Account, AccountKind
 from backend.models.audit import AuditAction, AuditLogEntry, AuditOutcome
@@ -45,12 +46,18 @@ def current_account(authorization: str = Header(default=""), db: Session = Depen
         raise HTTPException(status_code=401, detail="Sign in again to continue.") from exc
 
     account = db.get(Account, account_id)
-    if account is None or not account.is_active:
+    if account is None or not account.is_active or account.account_kind.value != payload.account_kind:
         raise HTTPException(status_code=401, detail="Sign in again to continue.")
+    try:
+        validate_access_session(db, payload.session_id, account.id)
+    except SessionError as exc:
+        raise HTTPException(status_code=401, detail="Sign in again to continue.") from exc
     return account
 
 
 def require_patient(account: Account = Depends(current_account), db: Session = Depends(get_db)) -> Patient:
+    if not account.email_verified:
+        raise HTTPException(status_code=403, detail="Verify your email address to continue.")
     if account.account_kind != AccountKind.patient:
         raise HTTPException(status_code=403, detail="Patient account required.")
     patient = db.execute(select(Patient).where(Patient.account_id == account.id)).scalar_one_or_none()
@@ -60,6 +67,8 @@ def require_patient(account: Account = Depends(current_account), db: Session = D
 
 
 def require_clinician(account: Account = Depends(current_account)) -> Account:
+    if not account.email_verified:
+        raise HTTPException(status_code=403, detail="Verify your email address to continue.")
     if account.account_kind != AccountKind.clinician:
         raise HTTPException(status_code=403, detail="Clinician account required.")
     return account

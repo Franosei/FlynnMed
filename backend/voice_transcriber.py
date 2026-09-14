@@ -21,7 +21,8 @@ class VoiceTranscriber:
         if not api_key:
             raise ValueError("OPENAI_API_KEY not found in environment variables.")
         from openai import OpenAI
-        self.client = OpenAI(api_key=api_key)
+        from backend.clinical_llm_gateway import guard_clinical_client
+        self.client = guard_clinical_client(OpenAI(api_key=api_key), purpose="clinical-voice-transcription")
 
     def transcribe(self, audio_bytes: bytes, filename: str = "recording.webm") -> str:
         """

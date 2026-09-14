@@ -15,11 +15,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN groupadd --system flynnmed \
+    && useradd --system --gid flynnmed --home-dir /app --no-create-home flynnmed
+
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
-COPY --from=frontend-builder /build/frontend/dist ./frontend/dist
+COPY --chown=flynnmed:flynnmed . .
+COPY --chown=flynnmed:flynnmed --from=frontend-builder /build/frontend/dist ./frontend/dist
 
 EXPOSE 8000
+USER flynnmed
 CMD ["sh", "/app/scripts/start.sh"]

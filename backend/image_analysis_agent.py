@@ -3,7 +3,10 @@ from __future__ import annotations
 import base64
 import json
 import os
+from io import BytesIO
 from typing import Dict, List, Optional
+
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from backend.user_store import compute_current_age
 from backend.model_config import configured_openai_model
@@ -11,6 +14,8 @@ from backend.model_config import configured_openai_model
 
 SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_BYTES = int(os.getenv("IMAGE_ANALYSIS_MAX_BYTES", str(5 * 1024 * 1024)))
+MAX_IMAGE_PIXELS = int(os.getenv("IMAGE_ANALYSIS_MAX_PIXELS", "40000000"))
+MAX_IMAGE_DIMENSION = int(os.getenv("IMAGE_ANALYSIS_MAX_DIMENSION", "10000"))
 
 
 class ImageAnalysisError(ValueError):
@@ -45,6 +50,40 @@ def validate_image_upload(image_bytes: bytes, mime_type: str, filename: str = ""
     return normalized_mime
 
 
+def normalize_image_upload(image_bytes: bytes, mime_type: str, filename: str = "") -> tuple[bytes, str]:
+    """Fully decode then re-encode an image, stripping EXIF and trailing payloads."""
+    declared_mime = validate_image_upload(image_bytes, mime_type, filename)
+    try:
+        with Image.open(BytesIO(image_bytes)) as source:
+            width, height = source.size
+            if width < 1 or height < 1 or width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION:
+                raise ImageAnalysisError("Image dimensions are outside the supported range.")
+            if width * height > MAX_IMAGE_PIXELS:
+                raise ImageAnalysisError("The image contains too many pixels to process safely.")
+            source.load()
+            detected = (source.format or "").upper()
+            expected = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"}.get(detected)
+            if expected is None or expected != declared_mime:
+                raise ImageAnalysisError("The image content does not match its declared file type.")
+            image = ImageOps.exif_transpose(source)
+            output = BytesIO()
+            if expected == "image/jpeg":
+                image.convert("RGB").save(output, format="JPEG", quality=90, optimize=True)
+                normalized_mime = "image/jpeg"
+            else:
+                mode = "RGBA" if "A" in image.getbands() else "RGB"
+                image.convert(mode).save(output, format="PNG", optimize=True)
+                normalized_mime = "image/png"
+            normalized = output.getvalue()
+    except ImageAnalysisError:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise ImageAnalysisError("The uploaded image is malformed or unsafe.") from exc
+    if len(normalized) > MAX_IMAGE_BYTES:
+        raise ImageAnalysisError("The normalized image exceeds the upload limit.")
+    return normalized, normalized_mime
+
+
 class ImageAnalysisAgent:
     """
     Vision intake layer for uploaded clinical images.
@@ -70,7 +109,7 @@ class ImageAnalysisAgent:
         user_profile: Optional[Dict] = None,
         filename: str = "",
     ) -> Dict:
-        normalized_mime = validate_image_upload(image_bytes, mime_type, filename)
+        image_bytes, normalized_mime = normalize_image_upload(image_bytes, mime_type, filename)
         data_url = self._to_data_url(image_bytes, normalized_mime)
         profile_text = self._profile_summary(user_profile or {})
 

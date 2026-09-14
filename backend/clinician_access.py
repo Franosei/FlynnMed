@@ -145,18 +145,46 @@ def access_overview(db: Session, username: str) -> dict:
         .order_by(ConsentGrant.requested_at.desc())
     ).scalars()
     items = []
+    active_items_by_patient_id: dict = {}
     for grant in grants:
         _expire_if_needed(grant)
         patient = db.get(Patient, grant.patient_id)
         if patient is not None:
-            items.append(
-                _grant_dict(
-                    grant,
-                    patient,
-                    account,
-                    disclose_patient_name=grant.status == ConsentStatus.active,
-                )
+            item = _grant_dict(
+                grant,
+                patient,
+                account,
+                disclose_patient_name=grant.status == ConsentStatus.active,
             )
+            # Only an active (consented) grant justifies exposing any clinical
+            # signal -- a pending request must never carry patient status.
+            if grant.status == ConsentStatus.active:
+                item["patient_status"] = None
+                active_items_by_patient_id[patient.id] = item
+            items.append(item)
+
+    if active_items_by_patient_id:
+        # One batched query for the whole roster's latest triage record,
+        # instead of a per-patient chart fetch from the client -- avoids an
+        # N+1 request storm and doesn't log a "chart accessed" audit event
+        # for every patient just to render this overview.
+        latest_by_patient: dict = {}
+        triage_rows = db.execute(
+            select(TriageSummary)
+            .where(TriageSummary.patient_id.in_(list(active_items_by_patient_id.keys())))
+            .order_by(TriageSummary.patient_id, TriageSummary.created_at.desc())
+        ).scalars()
+        for row in triage_rows:
+            latest_by_patient.setdefault(row.patient_id, row)
+
+        for patient_id, item in active_items_by_patient_id.items():
+            latest = latest_by_patient.get(patient_id)
+            if latest is not None:
+                item["patient_status"] = {
+                    "urgency_level": latest.urgency_level,
+                    "recorded_at": latest.created_at.isoformat(),
+                }
+
     return {
         "account_kind": "clinician",
         "requests": items,

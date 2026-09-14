@@ -5,6 +5,7 @@ from typing import Generator, Optional, TYPE_CHECKING
 
 from dotenv import load_dotenv
 from openai import OpenAI
+from backend.clinical_llm_gateway import guard_clinical_client
 
 from backend.product_config import PRODUCT_NAME
 from backend.user_store import compute_current_age
@@ -32,11 +33,11 @@ class LLMHelper:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY not set in .env")
-        self.client = OpenAI(
+        self.client = guard_clinical_client(OpenAI(
             api_key=api_key,
             timeout=self.REQUEST_TIMEOUT_SECONDS,
             max_retries=0,
-        )
+        ), purpose="clinical-summarization")
 
     def answer_question(
         self,

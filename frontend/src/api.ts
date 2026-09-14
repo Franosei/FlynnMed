@@ -1,22 +1,23 @@
 import type { AccessGrant, AccessOverview, AuthResponse, CarePlan, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, EvidenceTrace, FeedbackRating, FeedbackResponse, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, ProposedMedication, SafetyReview, Snapshot } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
-const TOKEN_KEY = "flynnmed_token";
+let accessToken = "";
+let refreshInFlight: Promise<AuthResponse> | null = null;
 
 export function getStoredToken(): string {
-  return localStorage.getItem(TOKEN_KEY) ?? "";
+  return accessToken;
 }
 
 export function setStoredToken(token: string): void {
-  if (token) {
-    localStorage.setItem(TOKEN_KEY, token);
-  } else {
-    localStorage.removeItem(TOKEN_KEY);
-  }
+  // Access tokens deliberately remain in module memory. Persisting a bearer
+  // credential in localStorage exposes it to every script running on the
+  // origin and lets a single XSS survive browser restarts.
+  accessToken = token;
 }
 
 type RequestOptions = RequestInit & {
   auth?: boolean;
+  _retry?: boolean;
 };
 
 async function readError(response: Response): Promise<string> {
@@ -32,6 +33,7 @@ async function readError(response: Response): Promise<string> {
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const { auth: _auth, _retry: _wasRetried, ...fetchOptions } = options;
   const headers = new Headers(options.headers);
   const hasFormData = options.body instanceof FormData;
   if (!hasFormData && options.body && !headers.has("Content-Type")) {
@@ -45,9 +47,20 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   }
 
   const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers
+    ...fetchOptions,
+    headers,
+    credentials: "include"
   });
+
+  if (response.status === 401 && options.auth !== false && !options._retry && path !== "/api/auth/refresh") {
+    try {
+      const refreshed = await refreshSession();
+      setStoredToken(refreshed.token);
+      return apiRequest<T>(path, { ...options, _retry: true });
+    } catch {
+      setStoredToken("");
+    }
+  }
 
   if (!response.ok) {
     throw new Error(await readError(response));
@@ -77,6 +90,43 @@ export function signup(payload: Record<string, unknown>): Promise<AuthResponse> 
     method: "POST",
     body: JSON.stringify(payload)
   });
+}
+
+export function refreshSession(): Promise<AuthResponse> {
+  if (!refreshInFlight) {
+    refreshInFlight = apiRequest<AuthResponse>("/api/auth/refresh", {
+      auth: false,
+      method: "POST"
+    }).finally(() => { refreshInFlight = null; });
+  }
+  return refreshInFlight;
+}
+
+export function logout(): Promise<void> {
+  return apiRequest<void>("/api/auth/logout", { method: "POST" });
+}
+
+export function verifyEmail(code: string): Promise<{ profile: AuthResponse["profile"]; snapshot: Snapshot; verification_required: false }> {
+  return apiRequest("/api/auth/verify-email", { method: "POST", body: JSON.stringify({ code }) });
+}
+
+export function resendVerification(): Promise<{ sent: boolean; already_verified: boolean }> {
+  return apiRequest("/api/auth/resend-verification", { method: "POST" });
+}
+
+async function authenticatedFetch(path: string, init: RequestInit): Promise<Response> {
+  const perform = () => {
+    const headers = new Headers(init.headers);
+    headers.set("Authorization", `Bearer ${getStoredToken()}`);
+    return fetch(`${API_BASE}${path}`, { ...init, headers, credentials: "include" });
+  };
+  let response = await perform();
+  if (response.status === 401) {
+    const refreshed = await refreshSession();
+    setStoredToken(refreshed.token);
+    response = await perform();
+  }
+  return response;
 }
 
 export function fetchSnapshot(): Promise<Snapshot> {
@@ -175,14 +225,12 @@ export async function streamPrevisitChat(
   message: string,
   onEvent: (event: PrevisitChatStreamEvent) => void
 ): Promise<void> {
-  const token = getStoredToken();
-  const response = await fetch(
-    `${API_BASE}/api/clinician/patients/${encodeURIComponent(patientId)}/chat`,
+  const response = await authenticatedFetch(
+    `/api/clinician/patients/${encodeURIComponent(patientId)}/chat`,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`
       },
       body: JSON.stringify({ message })
     }
@@ -231,6 +279,7 @@ export function releaseMedicationProposal(
     rationale_text: string;
     citations: unknown[];
     override_reason: string;
+    confirm_patient_specific_review: boolean;
   }
 ): Promise<ProposedMedication> {
   return apiRequest<ProposedMedication>(
@@ -244,12 +293,11 @@ export function fetchMyMedicationProposals(): Promise<{ proposals: ProposedMedic
 }
 
 /**
- * Shared ndjson stream consumer -- one JSON event per line, tolerant of
- * partial flushes/heartbeats (unparseable lines are dropped rather than
- * thrown). Used by every streaming endpoint in this file so the buffering
- * logic lives in exactly one place.
+ * Shared NDJSON stream consumer. Partial chunks are buffered, but malformed
+ * non-empty protocol records and streams without a terminal event fail
+ * visibly; a truncated clinical response must never look successful.
  */
-async function consumeNdjsonStream<TEvent>(
+export async function consumeNdjsonStream<TEvent>(
   response: Response,
   onEvent: (event: TEvent) => void
 ): Promise<void> {
@@ -260,15 +308,22 @@ async function consumeNdjsonStream<TEvent>(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let sawTerminalEvent = false;
 
   const processLine = (line: string) => {
     const trimmed = line.trim();
-    if (!trimmed) return;
+    if (!trimmed || trimmed === ":heartbeat") return;
+    let event: { type?: unknown };
     try {
-      onEvent(JSON.parse(trimmed) as TEvent);
+      event = JSON.parse(trimmed) as { type?: unknown };
     } catch {
-      // Ignore unparseable lines (partial flushes, heartbeats)
+      throw new Error("Malformed clinical stream record.");
     }
+    if (!event || typeof event !== "object" || typeof event.type !== "string") {
+      throw new Error("Clinical stream record is missing its event type.");
+    }
+    if (event.type === "done" || event.type === "error") sawTerminalEvent = true;
+    onEvent(event as TEvent);
   };
 
   try {
@@ -280,11 +335,15 @@ async function consumeNdjsonStream<TEvent>(
       buffer = lines.pop() ?? "";
       for (const line of lines) processLine(line);
     }
+    buffer += decoder.decode();
     if (buffer.trim()) processLine(buffer);
+    if (!sawTerminalEvent) {
+      throw new Error("Clinical stream ended before its completion event.");
+    }
   } catch (err) {
-    // The connection dropped mid-stream -- surface a clean error event
     const message = err instanceof Error ? err.message : "The connection was interrupted.";
     onEvent({ type: "error", message: `Stream interrupted: ${message}` } as TEvent);
+    throw err;
   }
 }
 
@@ -292,12 +351,10 @@ export async function streamChat(
   message: string,
   onEvent: (event: ChatStreamEvent) => void
 ): Promise<void> {
-  const token = getStoredToken();
-  const response = await fetch(`${API_BASE}/api/chat/stream`, {
+  const response = await authenticatedFetch("/api/chat/stream", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`
+      "Content-Type": "application/json"
     },
     body: JSON.stringify({ message })
   });
@@ -309,16 +366,12 @@ export async function streamImageAnalysis(
   image: File,
   onEvent: (event: ChatStreamEvent) => void
 ): Promise<void> {
-  const token = getStoredToken();
   const form = new FormData();
   form.append("message", message);
   form.append("image", image);
 
-  const response = await fetch(`${API_BASE}/api/chat/image/stream`, {
+  const response = await authenticatedFetch("/api/chat/image/stream", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`
-    },
     body: form
   });
   return consumeNdjsonStream<ChatStreamEvent>(response, onEvent);
@@ -329,16 +382,12 @@ export async function streamDocumentAnalysis(
   document: File,
   onEvent: (event: ChatStreamEvent) => void
 ): Promise<void> {
-  const token = getStoredToken();
   const form = new FormData();
   form.append("message", message);
   form.append("document", document);
 
-  const response = await fetch(`${API_BASE}/api/chat/document/stream`, {
+  const response = await authenticatedFetch("/api/chat/document/stream", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`
-    },
     body: form
   });
   return consumeNdjsonStream<ChatStreamEvent>(response, onEvent);
@@ -422,12 +471,7 @@ export function sendUrgentAlert(reason: string, urgencyLevel: string): Promise<{
 }
 
 export async function downloadProtectedFile(path: string, filename: string): Promise<void> {
-  const token = getStoredToken();
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      Authorization: `Bearer ${token}`
-    }
-  });
+  const response = await authenticatedFetch(path, {});
   if (!response.ok) {
     throw new Error(await readError(response));
   }
@@ -486,12 +530,10 @@ export async function generateCarePlan(
   onClarify?: (question: string, options: ClarifyOption[]) => void,
   clarification?: { question: string; answer: string }
 ): Promise<CarePlan | null> {
-  const token = getStoredToken();
-  const response = await fetch(`${API_BASE}/api/care-plans/generate`, {
+  const response = await authenticatedFetch("/api/care-plans/generate", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`
+      "Content-Type": "application/json"
     },
     body: JSON.stringify({
       condition,
@@ -524,7 +566,7 @@ export async function generateCarePlan(
       try {
         event = JSON.parse(trimmed);
       } catch {
-        continue; // malformed/incomplete line -- skip, don't let it mask real events
+        throw new Error("Malformed care-plan stream record.");
       }
       if (event.type === "progress") onProgress(event.message as string);
       else if (event.type === "done") finalPlan = event.plan as CarePlan;

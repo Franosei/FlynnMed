@@ -1,10 +1,12 @@
 import json
 
+import fitz
 import pytest
 
 from backend.document_analysis_agent import (
     DocumentAnalysisAgent,
     DocumentAnalysisError,
+    normalize_document_upload,
     validate_document_upload,
 )
 
@@ -59,6 +61,23 @@ def test_validate_document_upload_rejects_non_pdf():
 def test_validate_document_upload_rejects_empty_bytes():
     with pytest.raises(DocumentAnalysisError):
         validate_document_upload(b"", "application/pdf", "report.pdf")
+
+
+def test_normalize_document_rewrites_and_scrubs_metadata_and_attachments():
+    document = fitz.open()
+    document.new_page().insert_text((72, 72), "Clinical report")
+    document.set_metadata({"author": "Patient Name"})
+    document.embfile_add("payload.txt", b"not retained")
+    original = document.tobytes()
+    document.close()
+
+    normalized, mime = normalize_document_upload(original, "application/pdf", "report.pdf")
+
+    with fitz.open(stream=normalized, filetype="pdf") as checked:
+        assert mime == "application/pdf"
+        assert checked.page_count == 1
+        assert not checked.embfile_names()
+        assert not checked.metadata.get("author")
 
 
 def test_document_agent_accepts_medical_document_and_builds_evidence_question():

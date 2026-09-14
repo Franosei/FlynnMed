@@ -22,7 +22,7 @@ from backend.auth.dependencies import (
     require_clinician,
     require_patient,
 )
-from backend.auth.jwt import create_access_token
+from backend.auth.sessions import issue_session
 from backend.db import get_session_factory
 from backend.models.account import Account, AccountKind
 from backend.models.audit import AuditAction, AuditLogEntry, AuditOutcome
@@ -65,6 +65,7 @@ def _make_account(db_session, kind: AccountKind, username: str) -> Account:
         password_hash="x",
         password_algo="argon2id",
         account_kind=kind,
+        email_verified=True,
         is_active=True,
     )
     db_session.add(account)
@@ -81,13 +82,13 @@ def _make_patient(db_session, account: Account) -> Patient:
     return patient
 
 
-def _bearer(account: Account) -> str:
-    return f"Bearer {create_access_token(str(account.id), account.account_kind.value)}"
+def _bearer_for_db(db_session, account: Account) -> str:
+    return f"Bearer {issue_session(db_session, account).access_token}"
 
 
 def test_current_account_happy_path(db_session):
     account = _make_account(db_session, AccountKind.patient, "cad-happy")
-    resolved = current_account(authorization=_bearer(account), db=db_session)
+    resolved = current_account(authorization=_bearer_for_db(db_session, account), db=db_session)
     assert resolved.id == account.id
 
 
@@ -102,7 +103,7 @@ def test_current_account_rejects_inactive_account(db_session):
     account.is_active = False
     db_session.flush()
     with pytest.raises(HTTPException) as exc:
-        current_account(authorization=_bearer(account), db=db_session)
+        current_account(authorization=_bearer_for_db(db_session, account), db=db_session)
     assert exc.value.status_code == 401
 
 

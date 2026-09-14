@@ -1,10 +1,13 @@
 import json
+from io import BytesIO
 
 import pytest
+from PIL import Image
 
 from backend.image_analysis_agent import (
     ImageAnalysisAgent,
     ImageAnalysisError,
+    normalize_image_upload,
     validate_image_upload,
 )
 
@@ -51,9 +54,25 @@ class _FakeLLM:
         self.client = _FakeClient(payload)
 
 
+def _image_bytes(image_format: str) -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (4, 4), "red").save(output, format=image_format)
+    return output.getvalue()
+
+
 def test_validate_image_upload_rejects_non_images():
     with pytest.raises(ImageAnalysisError):
         validate_image_upload(b"not really an image", "application/pdf", "report.pdf")
+
+
+def test_normalize_image_rejects_declared_type_mismatch_and_strips_trailing_bytes():
+    original = _image_bytes("PNG")
+    with pytest.raises(ImageAnalysisError):
+        normalize_image_upload(original, "image/jpeg", "wrong.jpg")
+
+    normalized, mime = normalize_image_upload(original + b"hidden trailing payload", "image/png", "ok.png")
+    assert mime == "image/png"
+    assert b"hidden trailing payload" not in normalized
 
 
 def test_image_agent_accepts_medical_image_and_builds_evidence_question():
@@ -71,7 +90,7 @@ def test_image_agent_accepts_medical_image_and_builds_evidence_question():
     agent = ImageAnalysisAgent(_FakeLLM(payload))
 
     result = agent.inspect(
-        image_bytes=b"fake-image-bytes",
+        image_bytes=_image_bytes("PNG"),
         mime_type="image/png",
         user_note="This rash changed colour today.",
         user_profile={"date_of_birth": "1980-01-01", "biological_sex": "Female"},
@@ -101,7 +120,7 @@ def test_image_agent_rejects_non_medical_visual_result():
     agent = ImageAnalysisAgent(_FakeLLM(payload))
 
     result = agent.inspect(
-        image_bytes=b"fake-image-bytes",
+        image_bytes=_image_bytes("JPEG"),
         mime_type="image/jpeg",
         filename="holiday.jpg",
     )

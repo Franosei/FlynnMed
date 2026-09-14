@@ -34,6 +34,16 @@ _EMERGENCY_SYMPTOMS = {
 }
 _WARFARIN_NAMES = {"warfarin"}
 _NSAID_NAMES = {"ibuprofen", "naproxen", "diclofenac", "aspirin"}
+_POTASSIUM_UNIT_ALIASES = {
+    "mmol l",
+    "mmol litre",
+    "mmol liter",
+    "millimol l",
+    "millimole l",
+    # Potassium is monovalent, so mEq/L and mmol/L are numerically equivalent.
+    "meq l",
+    "milliequivalent l",
+}
 
 
 def _normalise(value: object) -> str:
@@ -48,6 +58,61 @@ def _number(value: object) -> Optional[float]:
         return float(match.group(0))
     except ValueError:
         return None
+
+
+def _potassium_unit(item: Dict) -> Optional[str]:
+    """Return a normalized compatible unit, never an assumed one.
+
+    Some imports put the unit in the value text instead of the dedicated unit
+    field. An explicit but unsupported unit wins over embedded text so
+    contradictory source fields are routed to verification rather than having
+    one silently ignored.
+    """
+    explicit = _normalise(item.get("unit"))
+    if explicit:
+        return "mmol/L" if explicit in _POTASSIUM_UNIT_ALIASES else None
+
+    value_text = str(item.get("value") or "")
+    match = re.search(
+        r"\b(?:mmol|millimoles?|meq|milliequivalents?)\s*(?:/|per)\s*(?:l|lit(?:er|re)s?)\b",
+        value_text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return "mmol/L" if _normalise(match.group(0)) in _POTASSIUM_UNIT_ALIASES else None
+
+
+def _potassium_unit_review(latest: Dict) -> Dict:
+    raw_unit = str(latest.get("unit") or "").strip()
+    raw_value = str(latest.get("value") or "").strip()
+    display = " ".join(part for part in (raw_value, raw_unit) if part).strip() or "an unreadable value"
+    facts = [_fact("result", latest, "Latest potassium result", display)]
+    return _base_review(
+        rule="potassium-unit-unverified",
+        priority="review",
+        category="Result needs verification",
+        what_changed=f"A potassium result was recorded as {display}, but its unit could not be verified.",
+        why_it_matters=(
+            "Potassium thresholds are unit-specific. FlynnMed cannot safely label this result "
+            "normal, moderate, or severe until the original unit is confirmed."
+        ),
+        proposed_action=(
+            "Check the unit and result against the original laboratory report or ask a pharmacist "
+            "or clinician to verify them. If you feel acutely unwell, seek urgent medical advice."
+        ),
+        uncertainty=(
+            "No compatible mmol/L or mEq/L unit was available, so no numeric severity threshold "
+            "has been applied."
+        ),
+        facts=facts,
+        evidence=[{
+            "claim": "The cited potassium thresholds are expressed in mmol/L",
+            "source_title": "NICE: Patiromer for treating hyperkalaemia, committee discussion",
+            "source_url": NICE_HYPERKALAEMIA_URL,
+            "passage": "Moderate and severe potassium thresholds in this guidance are stated in mmol/litre.",
+        }],
+    )
 
 
 def _active_term(text: str, term: str) -> bool:
@@ -148,13 +213,17 @@ def _potassium_reviews(vitals: List[Dict]) -> List[Dict]:
     candidates.sort(key=lambda item: (str(item.get("recorded_on", "")), str(item.get("created_at", ""))), reverse=True)
     latest = candidates[0]
     value = _number(latest.get("value"))
+    unit = _potassium_unit(latest)
+    if unit is None:
+        return [_potassium_unit_review(latest)]
     if value is None or value < 6.0:
         return []
-    unit = str(latest.get("unit") or "mmol/L")
     facts = [_fact("result", latest, "Latest potassium result", f"{latest.get('value')} {unit}".strip())]
     if len(candidates) > 1:
         previous = candidates[1]
-        facts.append(_fact("result", previous, "Previous potassium result", f"{previous.get('value')} {previous.get('unit') or unit}".strip()))
+        previous_unit = _potassium_unit(previous)
+        if previous_unit:
+            facts.append(_fact("result", previous, "Previous potassium result", f"{previous.get('value')} {previous_unit}".strip()))
     severe = value >= 6.5
     return [_base_review(
         rule="potassium-severe" if severe else "potassium-moderate",
@@ -162,7 +231,11 @@ def _potassium_reviews(vitals: List[Dict]) -> List[Dict]:
         category="Abnormal result",
         what_changed=(
             f"The latest potassium result is {latest.get('value')} {unit}."
-            + (f" The previous recorded result was {candidates[1].get('value')} {candidates[1].get('unit') or unit}." if len(candidates) > 1 else "")
+            + (
+                f" The previous recorded result was {candidates[1].get('value')} {_potassium_unit(candidates[1])}."
+                if len(candidates) > 1 and _potassium_unit(candidates[1])
+                else ""
+            )
         ),
         why_it_matters=(
             "NICE describes potassium at or above 6.5 mmol/L as severe and says life-threatening acute hyperkalaemia needs emergency hospital treatment."

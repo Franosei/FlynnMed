@@ -4,6 +4,8 @@ import json
 import os
 from typing import Dict, List, Optional
 
+import fitz
+
 from backend.user_store import compute_current_age
 from backend.model_config import DEFAULT_OPENAI_MODEL
 
@@ -16,6 +18,8 @@ MAX_DOCUMENT_BYTES = int(os.getenv("DOCUMENT_ANALYSIS_MAX_BYTES", str(15 * 1024 
 # truncation idiom used elsewhere in this codebase for document text (see
 # backend/document_relevance_agent.py's _MAX_INPUT_CHARS).
 MAX_DOCUMENT_TEXT_CHARS = 6000
+MAX_DOCUMENT_PAGES = int(os.getenv("DOCUMENT_ANALYSIS_MAX_PAGES", "100"))
+MAX_DOCUMENT_EXPANDED_TEXT_CHARS = int(os.getenv("DOCUMENT_ANALYSIS_MAX_TEXT_CHARS", "2000000"))
 
 
 class DocumentAnalysisError(ValueError):
@@ -41,6 +45,47 @@ def validate_document_upload(document_bytes: bytes, mime_type: str, filename: st
         max_mb = max(1, MAX_DOCUMENT_BYTES // (1024 * 1024))
         raise DocumentAnalysisError(f"Document uploads must be {max_mb} MB or smaller.")
     return normalized_mime
+
+
+def normalize_document_upload(document_bytes: bytes, mime_type: str, filename: str = "") -> tuple[bytes, str]:
+    """Parse and rewrite a PDF, dropping active content, attachments, and metadata."""
+    normalized_mime = validate_document_upload(document_bytes, mime_type, filename)
+    if not document_bytes.startswith(b"%PDF-"):
+        raise DocumentAnalysisError("The uploaded file is not a valid PDF.")
+    try:
+        with fitz.open(stream=document_bytes, filetype="pdf") as document:
+            if document.needs_pass:
+                raise DocumentAnalysisError("Password-protected PDFs are not supported.")
+            if document.page_count < 1 or document.page_count > MAX_DOCUMENT_PAGES:
+                raise DocumentAnalysisError(f"PDFs must contain between 1 and {MAX_DOCUMENT_PAGES} pages.")
+            # MuPDF reparses every page before the rewrite; malformed files fail here.
+            extracted_chars = 0
+            for page in document:
+                extracted_chars += len(page.get_text("text"))
+                if extracted_chars > MAX_DOCUMENT_EXPANDED_TEXT_CHARS:
+                    raise DocumentAnalysisError("The PDF expands to too much text to process safely.")
+            document.scrub(
+                attached_files=True,
+                clean_pages=True,
+                embedded_files=True,
+                hidden_text=False,
+                javascript=True,
+                metadata=True,
+                redactions=False,
+                remove_links=False,
+                reset_fields=True,
+                reset_responses=True,
+                thumbnails=True,
+                xml_metadata=True,
+            )
+            normalized = document.tobytes(garbage=4, clean=True, deflate=True)
+    except DocumentAnalysisError:
+        raise
+    except Exception as exc:
+        raise DocumentAnalysisError("The uploaded PDF is malformed or unsafe.") from exc
+    if not normalized or len(normalized) > MAX_DOCUMENT_BYTES:
+        raise DocumentAnalysisError("The normalized PDF exceeds the upload limit.")
+    return normalized, normalized_mime
 
 
 class DocumentAnalysisAgent:

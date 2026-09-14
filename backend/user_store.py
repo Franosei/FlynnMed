@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from backend.config import psycopg_database_url
+from backend.config import is_production, psycopg_database_url
 from backend.relationship_engine import RELATION_CLASS
 
 load_dotenv()
@@ -700,6 +700,9 @@ class UserStore:
         profile["created_at"] = user.get("created_at")
         profile["last_login"] = user.get("last_login")
         profile["active_conversation_id"] = user.get("active_conversation_id")
+        profile["email_verified"] = UserStore.is_email_verified(username)
+        profile.setdefault("account_kind", "patient")
+        profile.setdefault("clinician_status", "not_applied")
         return profile
 
     @staticmethod
@@ -730,7 +733,9 @@ class UserStore:
                     existing_owner = _get_backend().find_username_by_email(normalized_email) if normalized_email else None
                     if existing_owner and existing_owner != key:
                         return False
-                    profile[field] = normalized_email
+                    if normalized_email != profile.get("email", ""):
+                        profile[field] = normalized_email
+                        user["email_verified"] = False
                 else:
                     profile[field] = (value or "").strip()
                 applied_updates[field] = profile[field]
@@ -1693,7 +1698,20 @@ class UserStore:
 
 
 def _use_sql_backend() -> bool:
-    return os.getenv("DATA_BACKEND", "legacy").strip().lower() == "sql"
+    use_sql = os.getenv("DATA_BACKEND", "legacy").strip().lower() == "sql"
+    if not use_sql and is_production():
+        # backend/auth/dependencies.py's current_account (wired into every
+        # route in backend/api.py since the C-01 auth cutover) requires a
+        # matching SQL Account row for every request. A production deploy
+        # silently left on the legacy JSON backend would boot fine and then
+        # break every login/signup with a confusing 401 -- fail loudly here
+        # instead, at the exact point the dispatch decision is made.
+        raise RuntimeError(
+            "DATA_BACKEND=sql is required in production -- the legacy JSON "
+            "backend cannot back real authentication (backend/auth/dependencies.py "
+            "requires a matching SQL Account row for every request)."
+        )
+    return use_sql
 
 
 def _install_sql_dispatch(legacy_cls: type, sql_cls_path: str) -> None:

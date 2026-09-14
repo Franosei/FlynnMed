@@ -32,6 +32,9 @@ export type Profile = {
   biological_sex?: string;
   created_at?: string;
   last_login?: string;
+  email_verified?: boolean;
+  account_kind?: "patient" | "clinician";
+  clinician_status?: "not_applied" | "pending" | "approved" | "rejected";
 };
 
 export type Message = {
@@ -220,7 +223,9 @@ export type SafetyReview = {
 export type AuthResponse = {
   token: string;
   profile: Profile;
-  snapshot: Snapshot;
+  snapshot: Snapshot | null;
+  verification_required: boolean;
+  verification_delivery?: "sent" | "failed";
 };
 
 export type AccessGrant = {
@@ -236,6 +241,9 @@ export type AccessGrant = {
   requested_at: string;
   decided_at: string;
   expires_at: string;
+  // Only ever present for an active grant on the clinician's own roster --
+  // null/absent for a pending request or when no triage record exists yet.
+  patient_status?: { urgency_level: string; recorded_at: string } | null;
 };
 
 export type AccessOverview = {
@@ -327,6 +335,7 @@ export type MedicationSafetyCheck = {
   interaction_flags: MedicationSafetyFlag[];
   unresolved_medications: string[];
   checked_at: string;
+  release_tier?: "clear" | "elevated_override" | "hard_block";
 };
 
 export type ProposedMedication = {

@@ -38,6 +38,7 @@ from typing import Dict, Iterable, List, Optional, TYPE_CHECKING
 import requests
 from dotenv import load_dotenv
 from openai import OpenAI
+from backend.clinical_llm_gateway import guard_clinical_client
 
 from backend.model_config import configured_openai_model
 
@@ -221,7 +222,7 @@ def _llm_extract_search_terms(raw_context: str) -> Dict[str, List[str]]:
         return {"conditions": [], "medications": []}
 
     try:
-        client = OpenAI(api_key=api_key)
+        client = guard_clinical_client(OpenAI(api_key=api_key), purpose="clinical-trial-query-extraction")
         prompt = (
             "You are a clinical research coordinator preparing a multi-term ClinicalTrials.gov search.\n\n"
             "Read the patient data and extract every distinct medical condition, symptom, sign, or "
@@ -483,7 +484,7 @@ def _llm_batch_condition_match(
     )
 
     try:
-        client = OpenAI(api_key=api_key)
+        client = guard_clinical_client(OpenAI(api_key=api_key), purpose="clinical-trial-eligibility")
         resp = client.chat.completions.create(
             model=configured_openai_model(),
             messages=[{"role": "user", "content": prompt}],

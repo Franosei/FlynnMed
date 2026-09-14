@@ -43,6 +43,7 @@ from backend.models.patient import (
     Upload,
     VitalsEntry,
 )
+from backend.models.security import ClinicianRegistration
 from backend.mrn import generate_mrn
 from backend.product_config import is_clinician_role
 from backend.relationship_engine import RELATION_CLASS
@@ -379,6 +380,9 @@ class SqlUserStore:
             if account is None:
                 return {}
             patient = _get_patient(db, username)
+            registration = db.execute(
+                select(ClinicianRegistration).where(ClinicianRegistration.account_id == account.id)
+            ).scalar_one_or_none()
             return {
                 "display_name": account.display_name,
                 "email": account.email,
@@ -399,6 +403,9 @@ class SqlUserStore:
                 "last_login": _iso(account.last_login_at),
                 "active_conversation_id": None,
                 "patient_record_id": str(patient.id) if patient else "",
+                "email_verified": account.email_verified,
+                "account_kind": account.account_kind.value,
+                "clinician_status": registration.status if registration else "not_applied",
             }
 
     @staticmethod
@@ -421,7 +428,9 @@ class SqlUserStore:
                     existing_owner = db.execute(select(Account).where(Account.email == normalized_email)).scalar_one_or_none()
                     if existing_owner and existing_owner.id != account.id:
                         return False
-                    account.email = normalized_email
+                    if normalized_email != account.email:
+                        account.email = normalized_email
+                        account.email_verified = False
                     applied["email"] = normalized_email
                 elif field in allowed_account_keys:
                     setattr(account, field, (value or "").strip())

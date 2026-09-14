@@ -4,14 +4,14 @@ FlynnMed MCP Server.
 Exposes clinical tools via the Model Context Protocol.
 
 Deployed (Railway):
-  The FastAPI app mounts this at /mcp automatically via streamable HTTP.
-  Set MCP_API_KEY in Railway environment variables to restrict access.
+  Set MCP_ENABLED=true and MCP_AUTH_MODE=jwt. The FastAPI app then mounts
+  this at /mcp with actor-bound authentication and patient-consent checks.
   Claude Desktop config:
     {
       "mcpServers": {
         "flynnmed": {
           "url": "https://<your-app>.railway.app/mcp",
-          "headers": { "Authorization": "Bearer <MCP_API_KEY>" }
+          "headers": { "Authorization": "Bearer <FLYNNMED_ACCOUNT_JWT>" }
         }
       }
     }
@@ -32,6 +32,7 @@ Tools:
 from __future__ import annotations
 
 import json
+import logging
 
 from dotenv import load_dotenv
 
@@ -57,12 +58,28 @@ from backend.clinical_context_guard import (  # noqa: E402
     validate_generated_answer,
 )  # noqa: E402
 from backend.email_service import send_clinical_note_email, send_urgent_care_alert  # noqa: E402
+from backend.mcp_auth import (  # noqa: E402
+    CLINICAL_NOTE_GENERATE,
+    EVIDENCE_EXTRACT,
+    PATIENT_EMAIL_SEND,
+    PATIENT_NOTE_WRITE,
+    PATIENT_READ,
+    TRIALS_SEARCH,
+    authorize_patient,
+    current_actor,
+    require_scopes,
+)
 from backend.product_config import PRODUCT_NAME  # noqa: E402
 from backend.summarizer import LLMHelper  # noqa: E402
 from backend.user_store import UserStore  # noqa: E402
 
-mcp = FastMCP(f"{PRODUCT_NAME} Clinical Tools")
+# Stateless transport ensures each tool invocation executes in the actor
+# context established for that HTTP request. It also prevents an MCP session
+# identifier created by one account from being replayed with another account's
+# otherwise-valid JWT.
+mcp = FastMCP(f"{PRODUCT_NAME} Clinical Tools", stateless_http=True)
 _llm = LLMHelper()
+logger = logging.getLogger(__name__)
 
 
 # ─── Tool: get_patient_context ────────────────────────────────────────────────
@@ -82,6 +99,7 @@ def get_patient_context(username: str) -> str:
     - latest triage summary
     - longitudinal clinical memory
     """
+    username = authorize_patient(username, PATIENT_READ)
     profile = UserStore.get_user_profile(username)
     if not profile:
         return json.dumps({"error": f"User '{username}' not found"})
@@ -126,6 +144,7 @@ def scrutinize_patient_context(username: str, question: str = "", requested_topi
     confirmed specialty/meaning, direct facts used, blocked interpretations,
     and whether a clarification is required. It never makes a diagnosis.
     """
+    username = authorize_patient(username, PATIENT_READ)
     profile = UserStore.get_user_profile(username)
     if not profile:
         return json.dumps({"error": f"User '{username}' not found"})
@@ -209,6 +228,7 @@ def extract_article_evidence(
     - patient_relevant_summary: concise patient-specific summary
     - alignment_confidence: 0-1 quality score
     """
+    require_scopes([EVIDENCE_EXTRACT])
     from backend.evidence_extractor import _extract_one_article
 
     source = {
@@ -256,6 +276,11 @@ def generate_clinical_note(
     Note fields: note_id, subjective, objective, assessment, plan,
                  urgency_level, requires_gp_visit, gp_visit_reason.
     """
+    username = authorize_patient(
+        username,
+        CLINICAL_NOTE_GENERATE,
+        PATIENT_NOTE_WRITE,
+    )
     triage = (
         {"urgency_level": urgency_level, "next_step": next_step}
         if urgency_level != "routine"
@@ -292,6 +317,13 @@ def send_health_email(
 
     Returns {"ok": true, "sent_to": "email"} or {"error": "message"}.
     """
+    # Email is a patient-controlled side effect. Clinician consent to read a
+    # chart does not silently grant authority to send messages as that patient.
+    username = authorize_patient(
+        username,
+        PATIENT_EMAIL_SEND,
+        allow_clinician=False,
+    )
     profile = UserStore.get_user_profile(username)
     if not profile:
         return json.dumps({"error": f"User '{username}' not found"})
@@ -320,8 +352,12 @@ def send_health_email(
 
         return json.dumps({"error": f"Unknown email_type '{email_type}'. Use 'clinical_note' or 'urgent_alert'"})
 
-    except Exception as exc:
-        return json.dumps({"error": str(exc)})
+    except Exception:
+        logger.exception(
+            "MCP health email failed actor_account_id=%s",
+            current_actor().account_id,
+        )
+        return json.dumps({"error": "Email delivery failed", "code": "email_delivery_failed"})
 
 
 # ─── Tool: search_trials_for_patient ─────────────────────────────────────────
@@ -338,6 +374,7 @@ def search_trials_for_patient(
 
     Returns JSON array of ranked trial results.
     """
+    username = authorize_patient(username, TRIALS_SEARCH)
     from backend.clinical_trials import build_trial_search_profile, find_matching_trials
 
     profile = UserStore.get_user_profile(username)
@@ -364,11 +401,18 @@ def search_trials_for_patient(
             search_profile, location_query=location, max_results=max_results
         )
         return json.dumps(results, default=str, indent=2)
-    except Exception as exc:
-        return json.dumps({"error": str(exc)})
+    except Exception:
+        logger.exception(
+            "MCP trial search failed actor_account_id=%s",
+            current_actor().account_id,
+        )
+        return json.dumps({"error": "Trial search failed", "code": "trial_search_failed"})
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    mcp.run()
+    raise SystemExit(
+        "Direct stdio MCP is disabled because it has no authenticated actor. "
+        "Run the FastAPI application with MCP_ENABLED=true and use /mcp."
+    )

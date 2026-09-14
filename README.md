@@ -190,8 +190,8 @@ OPENAI_API_KEY=your_openai_api_key
 DATABASE_URL=postgresql+psycopg://flynnmed:flynnmed_dev_only@localhost:5432/flynnmed
 DATA_BACKEND=sql
 ENVIRONMENT=development
-APP_SECRET=replace_with_a_long_random_value
-JWT_SECRET_KEY=replace_with_a_different_long_random_value
+JWT_SECRET_KEY=replace_with_a_long_random_value
+RATE_LIMITING_ENABLED=false
 ```
 
 Do not commit `.env` or real patient data.
@@ -201,6 +201,20 @@ Do not commit `.env` or real patient data.
 ```powershell
 docker compose up -d db
 py -m alembic upgrade head
+```
+
+In deployments, run `sh scripts/release.sh` once as the release/pre-deploy
+command. It owns schema migration and the opt-in legacy import; normal web
+process startup (`scripts/start.sh`) never changes schema or imports/seeds data.
+
+Production also requires explicit PHI processor governance:
+
+```env
+LLM_PHI_PROCESSING_ALLOWED=true
+LLM_APPROVED_HOSTS=api.openai.com
+LLM_APPROVED_MODELS=gpt-5.4-mini,text-embedding-3-small,gpt-image-1,whisper-1,sora-2
+RATE_LIMITING_ENABLED=true
+CLINICIAN_VERIFICATION_ADMIN_KEY=replace-with-a-random-admin-secret
 ```
 
 ### 4. Start the backend
@@ -248,13 +262,13 @@ The main environment variables are listed below. Evaluation-specific variables a
 | `OPENAI_EMBEDDING_MODEL` | Embedding model, defaulting to `text-embedding-3-small` |
 | `DATABASE_URL` | PostgreSQL connection string for relational accounts, patient records, consent and audit workflows |
 | `DATA_BACKEND` | Set to `sql` for the relational application store. `legacy` remains for migration and isolated evaluation use |
-| `SEED_DEMO_ACCOUNTS` | Seeds the fictional Jane Whitfield patient chart and Dr. Omar Farouk clinician consent on startup (defaults to `true` in `scripts/start.sh`; set to `false` for any non-demo deployment) |
-| `APP_SECRET` or `SECRET_KEY` | Signs the session tokens currently issued by `backend/api.py`. Set a strong value outside local development |
-| `JWT_SECRET_KEY` | Secret used by the SQL-backed JWT utilities. Set a strong value for deployed environments |
+| `SEED_DEMO_ACCOUNTS` | Seeds fictional demo charts and consent grants. Defaults to `false`; enable only for an isolated demo database |
+| `JWT_SECRET_KEY` | Signs short-lived account access JWTs used by the API and optional MCP transport. Required in production |
 | `ENVIRONMENT` | Runtime mode, normally `development` or `production` |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` | Optional SMTP delivery for notes and urgent alerts |
 | `EMAIL_FROM` | Optional sender name and address |
-| `MCP_API_KEY` | Optional bearer token protecting the HTTP MCP endpoint. Set it before exposing `/mcp` |
+| `MCP_ENABLED` | Explicitly enables the privileged HTTP MCP endpoint. Defaults to `false` |
+| `MCP_AUTH_MODE` | MCP authentication mode. The supported value is `jwt` |
 | `EHR_PROVIDER` | EHR provider selection. Only `none` is implemented at present |
 | `VITE_API_BASE_URL` | Optional frontend API base URL |
 | `VITE_DEV_PROXY_TARGET` | Optional Vite development proxy target |
@@ -338,19 +352,24 @@ For Railway or another container platform:
 
 1. provision PostgreSQL and set `DATABASE_URL`;
 2. set `DATA_BACKEND=sql`, the OpenAI credentials and strong application secrets;
-3. configure SMTP only if email delivery is required;
-4. set `MCP_API_KEY` if the MCP endpoint will be exposed; and
-5. deploy using the repository Dockerfile.
+3. configure SMTP (required for new-account verification), the PHI processor
+   allowlist, distributed rate limiting, and a clinician-review admin key;
+4. configure `sh scripts/release.sh` as the one-off release/pre-deploy command;
+5. leave MCP disabled, or set `MCP_ENABLED=true` and provide clients with their FlynnMed account JWT; and
+6. deploy using the repository Dockerfile.
 
-The startup script applies Alembic migrations before starting Uvicorn. It also performs an idempotent import from the former Railway legacy PostgreSQL store when that data is present.
+`scripts/start.sh` only starts Uvicorn. To perform the one-time legacy Railway
+import during a controlled release, temporarily set
+`MIGRATE_LEGACY_ACCOUNTS=true`; leave it false for every later release.
 
 ## Model Context Protocol
 
 The optional MCP server exposes selected clinical tools, including patient context retrieval, context checking, clinical output validation, note generation, trial search and email delivery.
 
-- HTTP transport is mounted at `/mcp` by the FastAPI application.
-- Local standard input/output transport runs with `python -m backend.mcp_server`.
-- `MCP_API_KEY` protects the HTTP route with a bearer token.
+- HTTP transport is absent by default. `MCP_ENABLED=true` mounts it at `/mcp`.
+- Every HTTP request requires a FlynnMed account JWT.
+- Patient tools enforce self-access; clinician access requires an active consent grant.
+- Direct standard-input/output transport is disabled because it has no authenticated actor.
 
 Because these tools can access sensitive records and trigger email, do not expose the endpoint without authentication and appropriate operational controls. See [`agents/commands/mcp-server.md`](agents/commands/mcp-server.md) for client configuration examples.
 

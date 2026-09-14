@@ -1,6 +1,6 @@
 # MCP Server
 
-FlynnMed exposes clinical tools via MCP -- works both locally and on Railway.
+FlynnMed exposes authenticated clinical tools via its optional HTTP MCP endpoint.
 
 ## Tools exposed
 
@@ -37,35 +37,24 @@ Add to `claude_desktop_config.json`:
     "flynnmed": {
       "url": "https://<your-app>.railway.app/mcp",
       "headers": {
-        "Authorization": "Bearer <MCP_API_KEY>"
+          "Authorization": "Bearer <FLYNNMED_ACCOUNT_JWT>"
       }
     }
   }
 }
 ```
 
-Set `MCP_API_KEY` in Railway environment variables to restrict access.
+Set `MCP_ENABLED=true` and `MCP_AUTH_MODE=jwt` in Railway. The token must belong
+to an active FlynnMed account. Patient accounts may select only themselves;
+clinician accounts need an active patient consent grant.
 
-### Local (stdio -- dev only)
-```bash
-pip install mcp
-python -m backend.mcp_server
-```
-```json
-{
-  "mcpServers": {
-    "flynnmed": {
-      "command": "python",
-      "args": ["-m", "backend.mcp_server"],
-      "cwd": "/path/to/my_health_chatbot"
-    }
-  }
-}
-```
+Direct stdio mode is disabled because it cannot establish an authenticated
+patient or clinician actor. Use the FastAPI HTTP endpoint locally as well.
 
 ## Railway environment variables
 ```
-MCP_API_KEY=some-secret-key   # protects the /mcp endpoint
+MCP_ENABLED=true
+MCP_AUTH_MODE=jwt
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your@email.com

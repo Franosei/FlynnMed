@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List
 
 import openai
+from backend.clinical_llm_gateway import guard_clinical_client
 from dotenv import load_dotenv
 
 from backend.model_config import configured_openai_model
@@ -28,7 +29,7 @@ class QueryExpander:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY not found in environment variables.")
-        self.client = openai.OpenAI(api_key=api_key)
+        self.client = guard_clinical_client(openai.OpenAI(api_key=api_key), purpose="clinical-query-expansion")
         self.model = model or configured_openai_model()
         self.cache: dict[str, List[str]] = {}
         self.hyde_cache: Dict[str, HydeExpansion] = {}

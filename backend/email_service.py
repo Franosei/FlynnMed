@@ -35,6 +35,12 @@ def _smtp_config() -> tuple[str, int, str, str]:
     return host, port, user, password
 
 
+def validate_email_configuration() -> None:
+    host, port, user, password = _smtp_config()
+    if not host or not user or not password or port < 1 or port > 65535:
+        raise RuntimeError("SMTP_HOST, SMTP_PORT, SMTP_USER, and SMTP_PASSWORD are required.")
+
+
 def _send(to_address: str, subject: str, html: str, text: str) -> None:
     host, port, user, password = _smtp_config()
     if not host or not user or not password:
