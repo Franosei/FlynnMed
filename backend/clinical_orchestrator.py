@@ -1061,7 +1061,10 @@ class ClinicalOrchestrator:
             )
         except Exception as exc:
             print(f"[Orchestrator] Intent classification failed: {exc}")
-            intent = IntentClassification()
+            # Reuse the classifier's own conservative fallback (marks
+            # classification_failed=True) rather than bare IntentClassification()
+            # defaults, which look like a confident routine/non-urgent result.
+            intent = self.intent_classifier._safe_default()
 
         selected_skills = select_skills(intent.intent_category, question)
 
@@ -1167,6 +1170,14 @@ class ClinicalOrchestrator:
             and policy_decision.crisis_response
         ):
             return self._build_crisis_bundle(question, normalized_user, role_config)
+
+        if (
+            policy_decision.action == "escalate_only"
+            and policy_decision.classification_failed_response
+        ):
+            return self._build_classification_unavailable_bundle(
+                question, normalized_user, role_config, policy_decision.classification_failed_response
+            )
 
         # -- Step 6b: Ambiguity gate -- ask before answering when a term has
         # multiple clinically distinct meanings and patient context doesn't
@@ -1710,6 +1721,40 @@ class ClinicalOrchestrator:
                     "risk_level": "crisis",
                     "escalation_triggered": True,
                     "crisis_detected": True,
+                },
+            },
+        }
+
+    def _build_classification_unavailable_bundle(
+        self,
+        question: str,
+        normalized_user: Optional[str],
+        role_config: RoleConfig,
+        classification_failed_response: str,
+    ) -> Dict:
+        return {
+            "kind": "final",
+            "payload": {
+                "answer_markdown": classification_failed_response,
+                "answer_text": classification_failed_response,
+                "sources": [],
+                "personal_context": [],
+                "trace": {
+                    "trace_id": "trace-classification-unavailable",
+                    "created_at": _utc_now(),
+                    "question": question,
+                    "answer_preview": classification_failed_response[:280],
+                    "sources": [],
+                    "retrieval_mode": "classification_unavailable",
+                    "role_key": role_config.role_key,
+                    "intent_category": "unknown",
+                    "risk_level": "unknown",
+                    "escalation_triggered": True,
+                    # Deliberately not a crisis event -- this is an unknown-risk
+                    # state, not a confirmed emergency, and must not pollute
+                    # crisis metrics/audit trail.
+                    "crisis_detected": False,
+                    "classification_failed": True,
                 },
             },
         }

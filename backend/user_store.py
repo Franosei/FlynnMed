@@ -573,6 +573,10 @@ class UserStore:
         privacy_accepted_at: str = "",
         date_of_birth: str = "",
         biological_sex: str = "",
+        account_kind: Optional[object] = None,  # noqa: ARG001 -- accepted for
+        # signature parity with SqlUserStore.create_user; the legacy JSON
+        # store has no account_kind/privilege concept (see AccountKind's
+        # docstring in backend/models/account.py), so this is a no-op here.
     ) -> bool:
         key = username.strip().lower()
         normalized_email = _normalize_email(email)

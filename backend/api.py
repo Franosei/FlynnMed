@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import hmac
 import json
 import logging
 import os
 import re
 import sys
-import time
 import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
@@ -16,7 +14,7 @@ from pathlib import Path
 from typing import Dict, Generator, List, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -56,6 +54,8 @@ from backend.clinical_trials import build_trial_search_profile, find_matching_tr
 from backend.conversation_context import build_conversation_context
 from backend.query_expander import QueryExpander
 from backend.relationship_engine import derive_relationships, merge_relationships
+from backend.auth.dependencies import current_account
+from backend.auth.jwt import create_access_token
 from backend.config import DatabaseConfigurationError
 from backend.db import get_db, get_session_factory
 from backend.email_service import send_clinical_note_email, send_urgent_care_alert
@@ -184,64 +184,22 @@ app.add_middleware(
 )
 
 _RAG_ENGINE: Optional[RAGEngine] = None
-_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _token_secret() -> bytes:
-    secret = os.getenv("APP_SECRET") or os.getenv("SECRET_KEY") or "flynnmed-local-dev-secret"
-    return secret.encode("utf-8")
-
-
-def _b64_encode(raw: bytes) -> str:
-    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-
-
-def _b64_decode(value: str) -> bytes:
-    padding = "=" * (-len(value) % 4)
-    return base64.urlsafe_b64decode((value + padding).encode("ascii"))
-
-
-def _create_token(username: str) -> str:
-    payload = {
-        "sub": username.strip().lower(),
-        "exp": int(time.time()) + _TOKEN_TTL_SECONDS,
-    }
-    payload_part = _b64_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
-    signature = hmac.new(_token_secret(), payload_part.encode("ascii"), hashlib.sha256).digest()
-    return f"{payload_part}.{_b64_encode(signature)}"
-
-
-def _read_token(token: str) -> str:
-    try:
-        payload_part, signature_part = token.split(".", 1)
-        expected_signature = hmac.new(
-            _token_secret(),
-            payload_part.encode("ascii"),
-            hashlib.sha256,
-        ).digest()
-        actual_signature = _b64_decode(signature_part)
-        if not hmac.compare_digest(expected_signature, actual_signature):
-            raise ValueError("bad signature")
-        payload = json.loads(_b64_decode(payload_part))
-        if int(payload.get("exp", 0)) < int(time.time()):
-            raise ValueError("expired")
-        username = str(payload.get("sub", "")).strip().lower()
-        if not username or not UserStore.get_user_profile(username):
-            raise ValueError("unknown user")
-        return username
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="Sign in again to continue.") from exc
-
-
-def current_user(authorization: str = Header(default="")) -> str:
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        raise HTTPException(status_code=401, detail="Missing access token.")
-    return _read_token(token)
+def current_username(account: Account = Depends(current_account)) -> str:
+    """Auth entry point for every route below. Delegates real token
+    verification to backend/auth/dependencies.current_account (real JWT,
+    real SQL Account.is_active check -- no hardcoded fallback secret), then
+    hands back the plain username string every handler below already
+    expects, so route bodies and UserStore.*(username, ...) call sites are
+    unchanged. Replaces the legacy hand-rolled HMAC token
+    (_token_secret/_create_token/_read_token/current_user) that could fall
+    back to a hardcoded default secret."""
+    return account.username
 
 
 def _get_rag_engine() -> RAGEngine:
@@ -603,8 +561,20 @@ def config() -> Dict:
     }
 
 
+def _mint_token_for(db: Session, username: str) -> str:
+    """Look up the SQL Account backing `username` (every account has one --
+    DATA_BACKEND=sql is required in production) and issue a real JWT bound
+    to its account id/kind, replacing the legacy _create_token(username)."""
+    account = db.execute(
+        select(Account).where(Account.username == username.strip().lower())
+    ).scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status_code=401, detail="We could not open your account.")
+    return create_access_token(str(account.id), account.account_kind.value)
+
+
 @app.post("/api/auth/login")
-def login(payload: LoginPayload) -> Dict:
+def login(payload: LoginPayload, db: Session = Depends(get_db)) -> Dict:
     identifier = payload.identifier.strip().lower()
     if not identifier or not payload.password:
         raise HTTPException(status_code=400, detail="Enter your email or username and password.")
@@ -615,14 +585,14 @@ def login(payload: LoginPayload) -> Dict:
         raise HTTPException(status_code=401, detail="We could not open your account.")
     UserStore.update_last_login(username)
     return {
-        "token": _create_token(username),
+        "token": _mint_token_for(db, username),
         "profile": _public_profile(username),
         "snapshot": _snapshot(username),
     }
 
 
 @app.post("/api/auth/signup")
-def signup(payload: SignupPayload) -> Dict:
+def signup(payload: SignupPayload, db: Session = Depends(get_db)) -> Dict:
     full_name = payload.full_name.strip()
     username = payload.username.strip().lower()
     email = payload.email.strip().lower()
@@ -663,13 +633,17 @@ def signup(payload: SignupPayload) -> Dict:
         privacy_accepted_at=accepted_at,
         date_of_birth=payload.date_of_birth,
         biological_sex=payload.biological_sex,
+        # Public self-registration must never grant clinician privilege --
+        # `role` above is only ever cosmetic display/terms metadata. See
+        # AccountKind's docstring in backend/models/account.py.
+        account_kind=AccountKind.patient,
     )
     if not created:
         raise HTTPException(status_code=400, detail="Account creation failed. Try another username or email.")
 
     UserStore.update_last_login(username)
     return {
-        "token": _create_token(username),
+        "token": _mint_token_for(db, username),
         "profile": _public_profile(username),
         "snapshot": _snapshot(username),
     }
@@ -698,7 +672,7 @@ class AfterVisitPayload(BaseModel):
 
 
 @app.get("/api/care-plans")
-def list_care_plans(username: str = Depends(current_user)) -> List[Dict]:
+def list_care_plans(username: str = Depends(current_username)) -> List[Dict]:
     return _reconcile_care_plans(username)
 
 
@@ -736,7 +710,7 @@ def _reconcile_care_plans(username: str) -> List[Dict]:
 @app.post("/api/care-plans/generate")
 def generate_care_plan(
     payload: GeneratePlanPayload,
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
 ) -> StreamingResponse:
     """Streams NDJSON progress events, then emits either a 'clarify' event (ambiguous
     patient history -- generation withheld pending clarification) or a final 'done'
@@ -873,7 +847,7 @@ def generate_care_plan(
 
 
 @app.get("/api/care-plans/{plan_id}")
-def get_care_plan(plan_id: str, username: str = Depends(current_user)) -> Dict:
+def get_care_plan(plan_id: str, username: str = Depends(current_username)) -> Dict:
     plan = next((item for item in _reconcile_care_plans(username) if item.get("id") == plan_id), None)
     if not plan:
         raise HTTPException(status_code=404, detail="Care plan not found.")
@@ -881,7 +855,7 @@ def get_care_plan(plan_id: str, username: str = Depends(current_user)) -> Dict:
 
 
 @app.delete("/api/care-plans/{plan_id}")
-def delete_care_plan(plan_id: str, username: str = Depends(current_user)) -> Dict:
+def delete_care_plan(plan_id: str, username: str = Depends(current_username)) -> Dict:
     if not CarePlanStore.delete_plan(username, plan_id):
         raise HTTPException(status_code=404, detail="Care plan not found.")
     return {"ok": True}
@@ -892,7 +866,7 @@ def toggle_task(
     plan_id: str,
     task_id: str,
     payload: TaskTogglePayload,
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
 ) -> Dict:
     plan = CarePlanStore.toggle_task(username, plan_id, task_id, payload.done)
     if not plan:
@@ -904,7 +878,7 @@ def toggle_task(
 def after_visit_note(
     plan_id: str,
     payload: AfterVisitPayload,
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
 ) -> Dict:
     plan = CarePlanStore.add_after_visit_note(username, plan_id, payload.note)
     if not plan:
@@ -913,7 +887,7 @@ def after_visit_note(
 
 
 @app.post("/api/care-plans/{plan_id}/gp-prep")
-def gp_prep(plan_id: str, username: str = Depends(current_user)) -> Dict:
+def gp_prep(plan_id: str, username: str = Depends(current_username)) -> Dict:
     plan = next((item for item in _reconcile_care_plans(username) if item.get("id") == plan_id), None)
     if not plan:
         raise HTTPException(status_code=404, detail="Care plan not found.")
@@ -946,12 +920,12 @@ def gp_prep(plan_id: str, username: str = Depends(current_user)) -> Dict:
 
 
 @app.get("/api/me")
-def me(username: str = Depends(current_user)) -> Dict:
+def me(username: str = Depends(current_username)) -> Dict:
     return {"profile": _public_profile(username), "snapshot": _snapshot(username)}
 
 
 @app.get("/api/snapshot")
-def snapshot(username: str = Depends(current_user)) -> Dict:
+def snapshot(username: str = Depends(current_username)) -> Dict:
     return _snapshot(username)
 
 
@@ -959,7 +933,7 @@ def snapshot(username: str = Depends(current_user)) -> Dict:
 def update_safety_review(
     review_id: str,
     payload: SafetyReviewUpdatePayload,
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
 ) -> Dict:
     reviews = {item["review_id"]: item for item in _snapshot(username)["safety_reviews"]}
     if review_id not in reviews:
@@ -993,7 +967,7 @@ def _access_error(db: Session, exc: AccessWorkflowError) -> HTTPException:
 
 @app.get("/api/access")
 def get_access_overview(
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
     db: Session = Depends(get_db),
 ) -> Dict:
     try:
@@ -1005,7 +979,7 @@ def get_access_overview(
 @app.post("/api/access/requests")
 def create_access_request(
     payload: AccessRequestPayload,
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
     db: Session = Depends(get_db),
 ) -> Dict:
     try:
@@ -1024,7 +998,7 @@ def create_access_request(
 def decide_access(
     grant_id: str,
     payload: AccessDecisionPayload,
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
     db: Session = Depends(get_db),
 ) -> Dict:
     try:
@@ -1042,7 +1016,7 @@ def decide_access(
 @app.delete("/api/access/requests/{grant_id}")
 def delete_access(
     grant_id: str,
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
     db: Session = Depends(get_db),
 ) -> Dict:
     try:
@@ -1054,7 +1028,7 @@ def delete_access(
 @app.get("/api/clinician/patients/{patient_id}")
 def clinician_patient_summary(
     patient_id: str,
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
     db: Session = Depends(get_db),
 ) -> Dict:
     try:
@@ -1103,7 +1077,7 @@ def _clinician_role_label(clinician: Account) -> str:
 @app.post("/api/clinician/patients/{patient_id}/summary")
 def generate_previsit_summary(
     patient_id: str,
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
     db: Session = Depends(get_db),
 ) -> Dict:
     """Generates or regenerates the AI-suggested pre-visit summary draft.
@@ -1167,7 +1141,7 @@ def generate_previsit_summary(
 def save_previsit_summary_draft(
     patient_id: str,
     payload: PrevisitSummaryDraftPayload,
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
     db: Session = Depends(get_db),
 ) -> Dict:
     """Persists the clinician's hand-edited draft as a new append-only row.
@@ -1207,7 +1181,7 @@ def save_previsit_summary_draft(
 def release_previsit_summary(
     patient_id: str,
     payload: PrevisitSummaryDraftPayload,
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
     db: Session = Depends(get_db),
 ) -> Dict:
     """The only code path anywhere that writes a status="released" row --
@@ -1252,7 +1226,7 @@ def release_previsit_summary(
 @app.get("/api/clinician/patients/{patient_id}/chat")
 def get_previsit_chat(
     patient_id: str,
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
     db: Session = Depends(get_db),
 ) -> Dict:
     try:
@@ -1312,7 +1286,7 @@ def _save_previsit_chat_message(
 def previsit_chat(
     patient_id: str,
     payload: PrevisitChatPayload,
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
     db: Session = Depends(get_db),
 ) -> StreamingResponse:
     """
@@ -1449,7 +1423,7 @@ def _proposed_medication_dict(row: ProposedMedication) -> Dict:
 def generate_medication_proposal_endpoint(
     patient_id: str,
     payload: MedicationProposalGeneratePayload,
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
     db: Session = Depends(get_db),
 ) -> Dict:
     """
@@ -1515,7 +1489,7 @@ def generate_medication_proposal_endpoint(
 def save_medication_proposal_draft(
     patient_id: str,
     payload: MedicationProposalDraftPayload,
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
     db: Session = Depends(get_db),
 ) -> Dict:
     """
@@ -1561,7 +1535,7 @@ def save_medication_proposal_draft(
 def release_medication_proposal(
     patient_id: str,
     payload: MedicationProposalReleasePayload,
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
     db: Session = Depends(get_db),
 ) -> Dict:
     """
@@ -1622,7 +1596,7 @@ def release_medication_proposal(
 
 @app.get("/api/my-medication-proposals")
 def list_my_medication_proposals(
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
     db: Session = Depends(get_db),
 ) -> Dict:
     """Patient-side read -- only ever returns status="released" rows for the
@@ -1661,7 +1635,7 @@ def list_my_medication_proposals(
 
 @app.get("/api/previsit-summaries")
 def list_my_previsit_summaries(
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
     db: Session = Depends(get_db),
 ) -> Dict:
     """Patient-side read -- only ever returns status="released" rows for the
@@ -1702,7 +1676,7 @@ def list_my_previsit_summaries(
 
 
 @app.put("/api/profile")
-def update_profile(payload: ProfilePayload, username: str = Depends(current_user)) -> Dict:
+def update_profile(payload: ProfilePayload, username: str = Depends(current_username)) -> Dict:
     updates = {key: value for key, value in payload.dict().items() if value is not None}
     if not UserStore.update_profile(username, updates):
         raise HTTPException(status_code=400, detail="Profile update failed.")
@@ -1711,13 +1685,13 @@ def update_profile(payload: ProfilePayload, username: str = Depends(current_user
 
 
 @app.delete("/api/chat")
-def clear_chat(username: str = Depends(current_user)) -> Dict:
+def clear_chat(username: str = Depends(current_username)) -> Dict:
     UserStore.clear_chat_history(username)
     return _snapshot(username)
 
 
 @app.post("/api/chat/stream")
-def stream_chat(payload: ChatPayload, username: str = Depends(current_user)) -> StreamingResponse:
+def stream_chat(payload: ChatPayload, username: str = Depends(current_username)) -> StreamingResponse:
     question = payload.message.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Enter a message before sending.")
@@ -1831,7 +1805,7 @@ def stream_chat(payload: ChatPayload, username: str = Depends(current_user)) -> 
 async def stream_document_chat(
     message: str = Form(""),
     document: UploadFile = File(...),
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
 ) -> StreamingResponse:
     user_note = message.strip()
     filename = _safe_filename(document.filename or "document.pdf")
@@ -1962,7 +1936,7 @@ async def stream_document_chat(
 async def stream_image_chat(
     message: str = Form(""),
     image: UploadFile = File(...),
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
 ) -> StreamingResponse:
     user_note = message.strip()
     filename = _safe_filename(image.filename or "medical-image")
@@ -2095,7 +2069,7 @@ async def stream_image_chat(
 
 
 @app.post("/api/feedback")
-def submit_feedback(payload: FeedbackPayload, username: str = Depends(current_user)) -> Dict:
+def submit_feedback(payload: FeedbackPayload, username: str = Depends(current_username)) -> Dict:
     trace_id = payload.trace_id.strip()
     rating = payload.rating.strip().lower()
     if rating not in {"thumbs_up", "thumbs_down"}:
@@ -2145,7 +2119,7 @@ def submit_feedback(payload: FeedbackPayload, username: str = Depends(current_us
 
 
 @app.get("/api/evidence/trace/{trace_id}")
-def get_evidence_trace(trace_id: str, username: str = Depends(current_user)) -> Dict:
+def get_evidence_trace(trace_id: str, username: str = Depends(current_username)) -> Dict:
     """Evidence Ledger v2, #11: the answer -> claim -> passage -> source /
     patient-fact lineage for one answer, previously written on every Health
     Chat turn (see backend/answer_claim_ledger.py) but never exposed.
@@ -2216,7 +2190,7 @@ def _can_view_patient_traces(username: str, patient_ids: set) -> bool:
 async def upload_documents(
     files: List[UploadFile] = File(...),
     process_unverified: bool = Form(False),
-    username: str = Depends(current_user),
+    username: str = Depends(current_username),
 ) -> Dict:
     profile = UserStore.get_user_profile(username)
     expected_name = profile.get("display_name", username)
@@ -2311,7 +2285,7 @@ async def upload_documents(
 
 
 @app.post("/api/voice/transcribe")
-async def transcribe_voice(audio: UploadFile = File(...), username: str = Depends(current_user)) -> Dict:
+async def transcribe_voice(audio: UploadFile = File(...), username: str = Depends(current_username)) -> Dict:
     del username
     data = await audio.read()
     try:
@@ -2322,7 +2296,7 @@ async def transcribe_voice(audio: UploadFile = File(...), username: str = Depend
 
 
 @app.post("/api/symptoms")
-def add_symptom(payload: SymptomPayload, username: str = Depends(current_user)) -> Dict:
+def add_symptom(payload: SymptomPayload, username: str = Depends(current_username)) -> Dict:
     saved = UserStore.add_symptom_log(
         username,
         symptom=payload.symptom,
@@ -2342,7 +2316,7 @@ def add_symptom(payload: SymptomPayload, username: str = Depends(current_user)) 
 
 
 @app.delete("/api/symptoms/{log_id}")
-def delete_symptom(log_id: str, username: str = Depends(current_user)) -> Dict:
+def delete_symptom(log_id: str, username: str = Depends(current_username)) -> Dict:
     record = next(
         (
             item for item in UserStore.get_symptom_logs(username, limit=None)
@@ -2360,7 +2334,7 @@ def delete_symptom(log_id: str, username: str = Depends(current_user)) -> Dict:
 
 
 @app.post("/api/conditions")
-def save_condition(payload: ConditionPayload, username: str = Depends(current_user)) -> Dict:
+def save_condition(payload: ConditionPayload, username: str = Depends(current_username)) -> Dict:
     saved = UserStore.save_condition(username, payload.dict(exclude_none=True))
     if not saved:
         raise HTTPException(status_code=400, detail="Enter a condition name.")
@@ -2373,7 +2347,7 @@ def save_condition(payload: ConditionPayload, username: str = Depends(current_us
 
 
 @app.delete("/api/conditions/{condition_id}")
-def delete_condition(condition_id: str, username: str = Depends(current_user)) -> Dict:
+def delete_condition(condition_id: str, username: str = Depends(current_username)) -> Dict:
     record = next(
         (
             item for item in UserStore.get_conditions(username)
@@ -2391,7 +2365,7 @@ def delete_condition(condition_id: str, username: str = Depends(current_user)) -
 
 
 @app.post("/api/medications")
-def save_medication(payload: MedicationPayload, username: str = Depends(current_user)) -> Dict:
+def save_medication(payload: MedicationPayload, username: str = Depends(current_username)) -> Dict:
     saved = UserStore.save_medication(username, payload.dict(exclude_none=True))
     if not saved:
         raise HTTPException(status_code=400, detail="Enter a medication name.")
@@ -2404,7 +2378,7 @@ def save_medication(payload: MedicationPayload, username: str = Depends(current_
 
 
 @app.delete("/api/medications/{medication_id}")
-def delete_medication(medication_id: str, username: str = Depends(current_user)) -> Dict:
+def delete_medication(medication_id: str, username: str = Depends(current_username)) -> Dict:
     record = next(
         (
             item for item in UserStore.get_medications(username)
@@ -2422,7 +2396,7 @@ def delete_medication(medication_id: str, username: str = Depends(current_user))
 
 
 @app.post("/api/allergies")
-def save_allergy(payload: AllergyPayload, username: str = Depends(current_user)) -> Dict:
+def save_allergy(payload: AllergyPayload, username: str = Depends(current_username)) -> Dict:
     saved = UserStore.save_allergy(username, payload.dict(exclude_none=True))
     if not saved:
         raise HTTPException(status_code=400, detail="Enter an allergy name.")
@@ -2435,7 +2409,7 @@ def save_allergy(payload: AllergyPayload, username: str = Depends(current_user))
 
 
 @app.delete("/api/allergies/{allergy_id}")
-def delete_allergy(allergy_id: str, username: str = Depends(current_user)) -> Dict:
+def delete_allergy(allergy_id: str, username: str = Depends(current_username)) -> Dict:
     record = next(
         (
             item for item in UserStore.get_allergies(username)
@@ -2454,14 +2428,14 @@ def delete_allergy(allergy_id: str, username: str = Depends(current_user)) -> Di
 
 @app.delete("/api/relationships/{relationship_id}")
 def delete_clinical_relationship(
-    relationship_id: str, username: str = Depends(current_user)
+    relationship_id: str, username: str = Depends(current_username)
 ) -> Dict:
     UserStore.delete_clinical_relationship(username, relationship_id)
     return _snapshot(username)
 
 
 @app.post("/api/vitals")
-def save_vitals(payload: VitalsPayload, username: str = Depends(current_user)) -> Dict:
+def save_vitals(payload: VitalsPayload, username: str = Depends(current_username)) -> Dict:
     saved = UserStore.save_vitals_entry(username, payload.dict(exclude_none=True))
     if not saved:
         raise HTTPException(status_code=400, detail="Enter a measurement type and value.")
@@ -2474,7 +2448,7 @@ def save_vitals(payload: VitalsPayload, username: str = Depends(current_user)) -
 
 
 @app.delete("/api/vitals/{vitals_id}")
-def delete_vitals(vitals_id: str, username: str = Depends(current_user)) -> Dict:
+def delete_vitals(vitals_id: str, username: str = Depends(current_username)) -> Dict:
     record = next(
         (
             item for item in UserStore.get_vitals(username, limit=None)
@@ -2492,12 +2466,12 @@ def delete_vitals(vitals_id: str, username: str = Depends(current_user)) -> Dict
 
 
 @app.get("/api/export/account")
-def export_account(username: str = Depends(current_user)) -> JSONResponse:
+def export_account(username: str = Depends(current_username)) -> JSONResponse:
     return JSONResponse(UserStore.export_user_snapshot(username))
 
 
 @app.get("/api/export/summary.pdf")
-def export_summary(username: str = Depends(current_user)) -> Response:
+def export_summary(username: str = Depends(current_username)) -> Response:
     UserStore.add_audit(username, "summary_generated", "Health summary generated")
     pdf = _get_rag_engine().build_summary_pdf_for_user(username)
     return Response(
@@ -2513,7 +2487,7 @@ def terms_for_role(role_label: str) -> Dict:
 
 
 @app.post("/api/trials/search")
-def search_trials(payload: TrialSearchPayload, username: str = Depends(current_user)) -> Dict:
+def search_trials(payload: TrialSearchPayload, username: str = Depends(current_username)) -> Dict:
     profile = UserStore.get_user_profile(username)
     snap = _snapshot(username)
     conversation_context = build_conversation_context(
@@ -2560,19 +2534,19 @@ def search_trials(payload: TrialSearchPayload, username: str = Depends(current_u
 
 
 @app.get("/api/trials/result")
-def trial_result(username: str = Depends(current_user)) -> Dict:
+def trial_result(username: str = Depends(current_username)) -> Dict:
     return {"result": UserStore.get_trial_search_result(username)}
 
 
 # ── Clinical notes ─────────────────────────────────────────────────────────────
 
 @app.get("/api/notes")
-def list_notes(username: str = Depends(current_user)) -> Dict:
+def list_notes(username: str = Depends(current_username)) -> Dict:
     return {"notes": UserStore.get_clinical_notes(username)}
 
 
 @app.post("/api/notes")
-def create_note(payload: NoteGeneratePayload, username: str = Depends(current_user)) -> Dict:
+def create_note(payload: NoteGeneratePayload, username: str = Depends(current_username)) -> Dict:
     """Generate a SOAP note from the current conversation context."""
     llm = _get_rag_engine().llm
     chat_history = UserStore.get_chat_history(username)
@@ -2611,7 +2585,7 @@ def create_note(payload: NoteGeneratePayload, username: str = Depends(current_us
 
 
 @app.get("/api/notes/{note_id}")
-def get_note(note_id: str, username: str = Depends(current_user)) -> Dict:
+def get_note(note_id: str, username: str = Depends(current_username)) -> Dict:
     notes = UserStore.get_clinical_notes(username)
     note = next((n for n in notes if n["note_id"] == note_id), None)
     if not note:
@@ -2621,7 +2595,7 @@ def get_note(note_id: str, username: str = Depends(current_user)) -> Dict:
 
 @app.put("/api/notes/{note_id}")
 def update_note(
-    note_id: str, payload: NoteUpdatePayload, username: str = Depends(current_user)
+    note_id: str, payload: NoteUpdatePayload, username: str = Depends(current_username)
 ) -> Dict:
     updates = {k: v for k, v in payload.model_dump().items() if v is not None}
     note = UserStore.update_clinical_note(username, note_id, updates)
@@ -2631,14 +2605,14 @@ def update_note(
 
 
 @app.delete("/api/notes/{note_id}", status_code=204)
-def delete_note(note_id: str, username: str = Depends(current_user)) -> None:
+def delete_note(note_id: str, username: str = Depends(current_username)) -> None:
     if not UserStore.delete_clinical_note(username, note_id):
         raise HTTPException(status_code=404, detail="Note not found.")
 
 
 @app.post("/api/notes/{note_id}/email")
 def email_note(
-    note_id: str, username: str = Depends(current_user)
+    note_id: str, username: str = Depends(current_username)
 ) -> Dict:
     """Send a SOAP note to the user's registered email address."""
     profile = UserStore.get_user_profile(username)
@@ -2670,7 +2644,7 @@ def email_note(
 
 @app.post("/api/email/urgent")
 def send_urgent_alert(
-    payload: UrgentAlertPayload, username: str = Depends(current_user)
+    payload: UrgentAlertPayload, username: str = Depends(current_username)
 ) -> Dict:
     """Send an urgent care alert email to the user."""
     profile = UserStore.get_user_profile(username)

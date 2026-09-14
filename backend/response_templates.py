@@ -47,6 +47,30 @@ This describes an active maternity emergency presentation.
 - Use verified point-of-care guidance rather than waiting for an educational evidence review.
 """
 
+CLASSIFICATION_UNAVAILABLE_RESPONSE = f"""\
+## We Could Not Safely Process This Question
+
+{PRODUCT_NAME} was unable to reliably assess the risk level of your question right now, \
+so it cannot give a personalized answer this time.
+
+**What to do:**
+- If your symptoms are severe, sudden, or getting worse, treat this as an emergency and call your local emergency number now.
+- Otherwise, please contact your GP, pharmacist, or local health advice line (such as NHS 111 in the UK) to discuss your question directly.
+- You are welcome to try asking again -- this may be a temporary issue.
+
+This is not a diagnosis, and no assessment of your symptoms has been made.
+"""
+
+CLINICAL_CLASSIFICATION_UNAVAILABLE_RESPONSE = """\
+## Automated Risk Classification Unavailable
+
+The automated intent/risk classification for this question could not be completed reliably.
+
+- Do not rely on an automated risk assessment for this query.
+- Apply your own clinical judgement and follow your local escalation pathway as you normally would.
+- You may retry the question, or proceed using standard reference sources directly.
+"""
+
 TIER_LABELS = {
     1: "Tier 1 - Formal Guidance",
     2: "Tier 2 - Review Evidence",
@@ -72,6 +96,17 @@ def build_crisis_response(role_key: str = "patient") -> str:
     if role_key in ("doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"):
         return CLINICAL_CRISIS_RESPONSE
     return CRISIS_RESPONSE
+
+
+def build_classification_unavailable_response(role_key: str = "patient") -> str:
+    """Return restricted, role-appropriate safe guidance for when intent/risk
+    classification itself is unreliable (LLM failure or malformed output) --
+    deliberately generic, never inventing a diagnosis or personalized plan.
+    This is a distinct state from a confirmed crisis and must not reuse
+    crisis wording (build_crisis_response)."""
+    if role_key in ("doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"):
+        return CLINICAL_CLASSIFICATION_UNAVAILABLE_RESPONSE
+    return CLASSIFICATION_UNAVAILABLE_RESPONSE
 
 
 def get_tier_description(tier: int) -> str:

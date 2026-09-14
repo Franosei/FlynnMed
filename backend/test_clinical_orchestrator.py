@@ -1087,3 +1087,71 @@ def test_follow_up_outage_response_keeps_known_context_and_asks_only_missing_fac
     assert "whether you have started it" in answer
     assert "tell me where the problem is" not in answer
     assert "include its exact name" not in answer
+
+
+# ── Fail-closed on classification failure (C-04) ────────────────────────────
+
+def test_classifier_exception_falls_back_to_restricted_response(monkeypatch):
+    """The orchestrator's own except-block around classify() must produce the
+    same fail-closed classification_failed state as a handled LLM failure,
+    not a bare IntentClassification() that looks like a confident routine
+    result."""
+    orchestrator = _build_orchestrator(monkeypatch)
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("simulated classifier crash")
+
+    orchestrator.intent_classifier.classify = _raise
+
+    def _fail_if_called(self, *a, **kw):
+        raise AssertionError("retrieval should not run when classification failed")
+
+    monkeypatch.setattr(AgenticRetrievalLoop, "run", _fail_if_called)
+
+    bundle = orchestrator.prepare_bundle(
+        question="What is my peak flow level and what does it mean?",
+        user="patient1",
+        user_profile={},
+        longitudinal_memory_summary="",
+    )
+
+    assert bundle["kind"] == "final"
+    payload = bundle["payload"]
+    assert payload["trace"]["retrieval_mode"] == "classification_unavailable"
+    assert payload["trace"]["classification_failed"] is True
+    # Must never be recorded as an actual crisis event.
+    assert payload["trace"]["crisis_detected"] is False
+
+
+def test_classification_failed_intent_short_circuits_before_retrieval(monkeypatch):
+    """Even when classify() returns normally with classification_failed=True
+    (e.g. an out-of-vocabulary risk_level), the policy engine must escalate
+    to the restricted response instead of proceeding to personalized
+    generation."""
+    orchestrator = _build_orchestrator(monkeypatch)
+    failed_intent = IntentClassification(
+        intent_category="symptom_triage",
+        risk_level="elevated",
+        escalation_required=False,
+        confidence=0.3,
+        classification_failed=True,
+    )
+    orchestrator.intent_classifier.classify = lambda *a, **kw: failed_intent
+
+    def _fail_if_called(self, *a, **kw):
+        raise AssertionError("retrieval should not run when classification failed")
+
+    monkeypatch.setattr(AgenticRetrievalLoop, "run", _fail_if_called)
+
+    bundle = orchestrator.prepare_bundle(
+        question="What is my peak flow level and what does it mean?",
+        user="patient1",
+        user_profile={},
+        longitudinal_memory_summary="",
+    )
+
+    assert bundle["kind"] == "final"
+    payload = bundle["payload"]
+    assert payload["trace"]["retrieval_mode"] == "classification_unavailable"
+    assert payload["trace"]["crisis_detected"] is False
+    assert "could not safely process" in payload["answer_markdown"].lower()

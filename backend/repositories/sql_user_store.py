@@ -247,6 +247,7 @@ class SqlUserStore:
         privacy_accepted_at: str = "",
         date_of_birth: str = "",
         biological_sex: str = "",
+        account_kind: Optional[AccountKind] = None,
     ) -> bool:
         key = _normalize_username(username)
         normalized_email = (email or "").strip().lower()
@@ -261,7 +262,16 @@ class SqlUserStore:
                 return False
 
             hashed = hash_password(password)
-            kind = AccountKind.clinician if is_clinician_role(role) else AccountKind.patient
+            # account_kind is the authoritative privilege signal (see AccountKind's
+            # docstring); callers that don't pass it explicitly (tests, internal
+            # tooling) keep the historical role-based inference, but public signup
+            # (backend/api.py) always passes account_kind=AccountKind.patient so a
+            # self-reported "Doctor" role can never self-grant clinician privilege.
+            kind = (
+                account_kind
+                if account_kind is not None
+                else (AccountKind.clinician if is_clinician_role(role) else AccountKind.patient)
+            )
             cleaned_dob = (date_of_birth or "").strip()[:10]
             cleaned_sex = (biological_sex or "").strip()
             if cleaned_sex not in _VALID_SEX_OPTIONS:

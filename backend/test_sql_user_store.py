@@ -18,9 +18,10 @@ import uuid
 
 import pytest
 from sqlalchemy.exc import OperationalError
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from backend.db import get_session_factory
+from backend.models.account import Account, AccountKind
 from backend.repositories.sql_care_plan_store import SqlCarePlanStore
 from backend.repositories.sql_user_store import SqlUserStore
 
@@ -66,6 +67,39 @@ def test_create_user_clinician_role_has_no_patient_scoped_data():
     # No Patient row -> patient-scoped reads behave like "not found", not an error.
     assert SqlUserStore.get_medications(username) == []
     assert SqlUserStore.get_chat_history(username) == []
+
+
+def _account_kind_for(username: str) -> AccountKind:
+    with get_session_factory()() as session:
+        account = session.execute(select(Account).where(Account.username == username)).scalar_one()
+        return account.account_kind
+
+
+def test_create_user_account_kind_defaults_from_role_when_not_given():
+    # Back-compat: callers that don't pass account_kind explicitly (internal
+    # tooling, other tests) keep today's role-based inference.
+    username = _unique_username("role-inferred")
+    ok = SqlUserStore.create_user(username, "correct horse battery staple", email=f"{username}@example.com", role="Doctor / Physician")
+    assert ok is True
+    assert _account_kind_for(username) == AccountKind.clinician
+
+
+def test_create_user_explicit_account_kind_overrides_role():
+    # This is the call shape backend/api.py's public signup endpoint uses:
+    # a self-reported clinical role must never elevate account_kind.
+    username = _unique_username("forced-patient")
+    ok = SqlUserStore.create_user(
+        username,
+        "correct horse battery staple",
+        email=f"{username}@example.com",
+        role="Doctor / Physician",
+        account_kind=AccountKind.patient,
+    )
+    assert ok is True
+    assert _account_kind_for(username) == AccountKind.patient
+    # A patient account always gets a Patient row, regardless of the
+    # cosmetic "Doctor / Physician" role label.
+    assert SqlUserStore.get_medications(username) == []
 
 
 def test_profile_round_trip():

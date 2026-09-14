@@ -47,6 +47,11 @@ class IntentClassification:
     clarifying_questions: List[str] = field(default_factory=list)
     # Up to 3 decision-specific questions required before a useful
     # personalized answer can be given.
+    classification_failed: bool = False
+    # True only when classification itself is unreliable (LLM call/parse
+    # failure, or an out-of-vocabulary risk_level) -- distinct from a
+    # genuine "routine"/"elevated" classification. The policy engine must
+    # treat this as its own fail-closed state, never as a normal result.
 
 
 # ── Fast regex crisis patterns ─────────────────────────────────────────────────
@@ -475,6 +480,12 @@ class IntentRiskClassifier:
         presentation_hint = raw_presentation if raw_presentation in valid_presentations else "none"
 
         risk_level = data.get("risk_level", "routine")
+        if risk_level not in ("routine", "elevated", "urgent", "crisis"):
+            # An out-of-vocabulary risk_level must never be trusted downstream --
+            # every `intent.risk_level in (...)` gate check would silently miss
+            # it. Raise so the caller's except-block routes to the conservative
+            # classification_failed fallback instead of guessing.
+            raise ValueError(f"Unexpected risk_level from classifier: {risk_level!r}")
         ambiguity_clarifying_question = str(data.get("ambiguity_clarifying_question", "")).strip()
         ambiguity_reply_options = [
             {"display": str(o.get("display", "")).strip(), "prompt": str(o.get("prompt", "")).strip()}
@@ -552,4 +563,5 @@ class IntentRiskClassifier:
             escalation_required=False,
             pathway_hint="general_triage",
             confidence=0.3,
+            classification_failed=True,
         )

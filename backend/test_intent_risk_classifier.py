@@ -360,3 +360,58 @@ def test_clinician_pneumonia_guideline_request_is_not_personal_triage():
         "Review the antibiotic guideline updates for pneumonia treatment.",
         role_key="doctor",
     ) is False
+
+
+# ── Fail-closed on classification failure (C-04) ────────────────────────────
+
+class _RaisingCompletions:
+    def create(self, model, messages, response_format, temperature=None):
+        raise RuntimeError("simulated model outage")
+
+
+class _RaisingClient:
+    def __init__(self):
+        self.chat = SimpleNamespace(completions=_RaisingCompletions())
+
+
+def test_safe_default_marks_classification_failed():
+    result = IntentRiskClassifier._safe_default()
+
+    assert result.classification_failed is True
+    assert result.risk_level == "elevated"
+    assert result.escalation_required is False
+
+
+def test_llm_exception_falls_back_to_classification_failed(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    classifier = IntentRiskClassifier()
+    classifier.client = _RaisingClient()
+
+    result = classifier.classify("What is my peak flow level and what does it mean?", role_key="patient")
+
+    assert result.classification_failed is True
+    assert result.risk_level == "elevated"
+
+
+def test_out_of_vocabulary_risk_level_falls_back_to_classification_failed(monkeypatch):
+    payload = dict(_AMBIGUOUS_PEAK_FLOW_PAYLOAD)
+    payload["risk_level"] = "moderate"  # not a valid risk_level value
+    classifier = _classifier_with_response(monkeypatch, payload)
+
+    result = classifier.classify("What is my peak flow level and what does it mean?", role_key="patient")
+
+    assert result.classification_failed is True
+    # The bogus value must never leak through as a trusted risk_level.
+    assert result.risk_level == "elevated"
+
+
+def test_genuine_elevated_classification_is_not_marked_failed(monkeypatch):
+    payload = dict(_AMBIGUOUS_PEAK_FLOW_PAYLOAD)
+    payload["ambiguous_term_detected"] = False
+    payload["risk_level"] = "elevated"
+    classifier = _classifier_with_response(monkeypatch, payload)
+
+    result = classifier.classify("What is my peak flow level and what does it mean?", role_key="patient")
+
+    assert result.classification_failed is False
+    assert result.risk_level == "elevated"

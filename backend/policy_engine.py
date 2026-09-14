@@ -13,6 +13,7 @@ from backend.audit_models import PolicyGateRecord
 from backend.intent_risk_classifier import IntentClassification
 from backend.role_router import RoleConfig
 from backend.response_templates import (
+    build_classification_unavailable_response,
     build_crisis_response,
     build_escalation_banner,
     build_no_diagnosis_disclaimer,
@@ -49,6 +50,7 @@ class PolicyDecision:
     vulnerability_notice: str = ""               # appended near top of answer
     disclaimer: str = ""                         # appended at bottom of answer
     crisis_response: str = ""                    # returned verbatim without LLM if non-empty
+    classification_failed_response: str = ""     # returned verbatim without LLM if non-empty
 
     def add_gate(self, gate: PolicyGateRecord) -> None:
         self.gates_applied.append(gate)
@@ -77,6 +79,13 @@ class PolicyEngine:
 
         # Apply gates in priority order
         self._gate_crisis(intent, role_config, decision)
+        if decision.action == "escalate_only":
+            return decision
+
+        # Classification failure must be caught before every other gate below,
+        # since they all trust intent.risk_level/escalation_required/etc. --
+        # values that are meaningless when classification itself failed.
+        self._gate_classification_failed(intent, role_config, decision)
         if decision.action == "escalate_only":
             return decision
 
@@ -127,6 +136,25 @@ class PolicyEngine:
         decision.add_gate(gate)
         decision.action = "escalate_only"
         decision.crisis_response = build_crisis_response(role_config.role_key)
+
+    def _gate_classification_failed(
+        self,
+        intent: IntentClassification,
+        role_config: RoleConfig,
+        decision: PolicyDecision,
+    ) -> None:
+        if not intent.classification_failed:
+            return
+
+        gate = PolicyGateRecord(
+            gate_name="classification_failed",
+            applied=True,
+            reason="Intent/risk classification was unavailable or unreliable -- "
+            "returning restricted safe guidance without personalized generation.",
+        )
+        decision.add_gate(gate)
+        decision.action = "escalate_only"
+        decision.classification_failed_response = build_classification_unavailable_response(role_config.role_key)
 
     def _gate_urgent_escalation(
         self,
