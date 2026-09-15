@@ -14,6 +14,7 @@ from backend.clinician_access import (
     AccessWorkflowError,
     access_overview,
     authorized_patient_summary,
+    clinician_dashboard,
     decide_access_request,
     request_patient_access,
     revoke_access,
@@ -138,6 +139,15 @@ def test_consent_lifecycle_controls_patient_summary_and_chat(db_session):
     assert summary["chat_history_authorized"] is True
     assert summary["chat_history"][0]["content"] == "My home BP is high."
 
+    patient.last_trial_search = {
+        "trials": [{"nct_id": "NCT123", "title": "Blood pressure study", "match_score": 88}]
+    }
+    dashboard = clinician_dashboard(db_session, clinician.username)
+    assert dashboard["metrics"]["active_patients"] == 1
+    assert dashboard["metrics"]["study_matches"] == 1
+    assert dashboard["patients"][0]["active_conditions"] == ["Hypertension"]
+    assert dashboard["studies"][0]["patient_name"] == patient_account.display_name
+
     revoked = revoke_access(db_session, patient_account.username, requested["grant_id"])
     assert revoked["status"] == "revoked"
     with pytest.raises(AccessWorkflowError, match="No active access"):
@@ -147,6 +157,8 @@ def test_consent_lifecycle_controls_patient_summary_and_chat(db_session):
 def test_patient_cannot_request_cross_patient_access(db_session):
     patient_account = _account(db_session, AccountKind.patient, "patient-request")
     patient = _patient(db_session, patient_account)
+    with pytest.raises(AccessWorkflowError, match="Clinician account required"):
+        clinician_dashboard(db_session, patient_account.username)
     with pytest.raises(AccessWorkflowError, match="Clinician account required"):
         request_patient_access(
             db_session,

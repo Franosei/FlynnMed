@@ -254,6 +254,57 @@ export type AccessOverview = {
   pending_count: number;
 };
 
+export type ClinicianDashboardPatient = {
+  patient_id: string;
+  display_name: string;
+  active_conditions: string[];
+  condition_count: number;
+  medication_count: number;
+  active_plan_count: number;
+  study_count: number;
+  review_count: number;
+  urgency: string;
+  next_step: string;
+  summary: string;
+  last_activity_at: string;
+  access_expires_at: string;
+};
+
+export type ClinicianDashboard = {
+  clinician: {
+    display_name: string;
+    clinical_role: string;
+    organization: string;
+  };
+  metrics: {
+    active_patients: number;
+    pending_requests: number;
+    needs_attention: number;
+    active_care_plans: number;
+    study_matches: number;
+    reviews_due: number;
+  };
+  patients: ClinicianDashboardPatient[];
+  studies: Array<{
+    patient_id: string;
+    patient_name: string;
+    nct_id: string;
+    title: string;
+    status: string;
+    phase: string;
+    match_score: number | null;
+    url: string;
+  }>;
+  recent_activity: Array<{
+    type: "triage" | "medication";
+    patient_id: string;
+    patient_name: string;
+    title: string;
+    detail: string;
+    created_at: string;
+  }>;
+};
+
 export type ClinicianPatientSummary = {
   patient: {
     patient_id: string;

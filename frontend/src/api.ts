@@ -1,4 +1,4 @@
-import type { AccessGrant, AccessOverview, AuthResponse, CarePlan, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, EvidenceTrace, FeedbackRating, FeedbackResponse, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, ProposedMedication, SafetyReview, Snapshot } from "./types";
+import type { AccessGrant, AccessOverview, AuthResponse, CarePlan, ChatStreamEvent, ClinicalNote, ClinicianDashboard, ClinicianPatientSummary, EvidenceTrace, FeedbackRating, FeedbackResponse, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, ProposedMedication, SafetyReview, Snapshot } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 let accessToken = "";
@@ -157,6 +157,10 @@ export function updateSafetyReview(
 
 export function fetchAccessOverview(): Promise<AccessOverview> {
   return apiRequest<AccessOverview>("/api/access");
+}
+
+export function fetchClinicianDashboard(): Promise<ClinicianDashboard> {
+  return apiRequest<ClinicianDashboard>("/api/clinician/dashboard");
 }
 
 export function requestPatientAccess(payload: {

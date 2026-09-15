@@ -5,6 +5,7 @@
 .claude
 .local_backup
 .pytest_cache
+**/.pytest_cache
 .pytest_tmp
 .pytest-*
 .test-*

@@ -193,6 +193,190 @@ def access_overview(db: Session, username: str) -> dict:
     }
 
 
+def clinician_dashboard(db: Session, username: str) -> dict:
+    """Return a compact, consent-scoped caseload view for any clinician role."""
+    clinician = _account(db, username)
+    if clinician.account_kind != AccountKind.clinician:
+        raise AccessWorkflowError("Clinician account required.")
+
+    overview = access_overview(db, username)
+    active_grants = [item for item in overview["requests"] if item["status"] == "active"]
+    patients = []
+    studies = []
+    activity = []
+    active_plan_count = 0
+    review_count = 0
+    attention_count = 0
+    urgent_levels = {"high", "urgent", "crisis", "emergency"}
+
+    for grant_item in active_grants:
+        patient = db.execute(
+            select(Patient).where(Patient.patient_id == grant_item["patient_id"])
+        ).scalar_one_or_none()
+        if patient is None:
+            continue
+        grant = db.get(ConsentGrant, uuid.UUID(grant_item["grant_id"]))
+        if grant is None:
+            continue
+
+        # Loading the dashboard is a real patient-summary read and is audited
+        # once per patient, without querying chat-history content.
+        _audit(
+            db,
+            actor=clinician,
+            patient=patient,
+            action=AuditAction.clinician_read_previsit_summary,
+            outcome=AuditOutcome.success,
+            resource_id=patient.patient_id,
+            grant=grant,
+        )
+
+        conditions = list(
+            db.execute(
+                select(Condition)
+                .where(Condition.patient_id == patient.id, Condition.status == "active")
+                .order_by(Condition.updated_at.desc())
+            ).scalars()
+        )
+        medications = list(
+            db.execute(
+                select(Medication)
+                .where(Medication.patient_id == patient.id)
+                .order_by(Medication.updated_at.desc())
+            ).scalars()
+        )
+        latest_triage = db.execute(
+            select(TriageSummary)
+            .where(TriageSummary.patient_id == patient.id)
+            .order_by(TriageSummary.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        plans = list(
+            db.execute(
+                select(CarePlan).where(CarePlan.patient_id == patient.id, CarePlan.status == "active")
+            ).scalars()
+        )
+        latest_proposal = db.execute(
+            select(ProposedMedication)
+            .where(ProposedMedication.patient_id == patient.id)
+            .order_by(ProposedMedication.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        latest_summary = db.execute(
+            select(PreVisitSummary)
+            .where(PreVisitSummary.patient_id == patient.id)
+            .order_by(PreVisitSummary.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+        patient_reviews = int(bool(latest_proposal and latest_proposal.status == "draft")) + int(
+            bool(latest_summary and latest_summary.status == "draft")
+        )
+        urgency = (latest_triage.urgency_level if latest_triage else "routine").strip().lower()
+        needs_attention = urgency in urgent_levels
+        active_plan_count += len(plans)
+        review_count += patient_reviews
+        attention_count += int(needs_attention)
+
+        patient_studies = (patient.last_trial_search or {}).get("trials", [])
+        for study in patient_studies[:2]:
+            studies.append(
+                {
+                    "patient_id": patient.patient_id,
+                    "patient_name": patient.account.display_name,
+                    "nct_id": study.get("nct_id", ""),
+                    "title": study.get("title", "Untitled study"),
+                    "status": study.get("status", "Status not listed"),
+                    "phase": study.get("phase", ""),
+                    "match_score": study.get("match_score"),
+                    "url": study.get("url", ""),
+                }
+            )
+
+        recent_dates = [
+            item
+            for item in (
+                latest_triage.created_at if latest_triage else None,
+                conditions[0].updated_at if conditions else None,
+                medications[0].updated_at if medications else None,
+                latest_proposal.created_at if latest_proposal else None,
+                latest_summary.created_at if latest_summary else None,
+            )
+            if item is not None
+        ]
+        last_activity = max(recent_dates) if recent_dates else grant.decided_at or grant.requested_at
+        memory = patient.longitudinal_memory or {}
+        patients.append(
+            {
+                "patient_id": patient.patient_id,
+                "display_name": patient.account.display_name,
+                "active_conditions": [item.name for item in conditions[:3]],
+                "condition_count": len(conditions),
+                "medication_count": len(medications),
+                "active_plan_count": len(plans),
+                "study_count": len(patient_studies),
+                "review_count": patient_reviews,
+                "urgency": urgency or "routine",
+                "next_step": latest_triage.next_step if latest_triage else "No recent triage action recorded.",
+                "summary": str(memory.get("summary") or "No longitudinal summary recorded yet.")[:280],
+                "last_activity_at": last_activity.isoformat() if last_activity else "",
+                "access_expires_at": grant_item["expires_at"],
+            }
+        )
+
+        if latest_triage:
+            activity.append(
+                {
+                    "type": "triage",
+                    "patient_id": patient.patient_id,
+                    "patient_name": patient.account.display_name,
+                    "title": f"{latest_triage.urgency_level or 'Routine'} triage update",
+                    "detail": latest_triage.next_step,
+                    "created_at": latest_triage.created_at.isoformat(),
+                }
+            )
+        if latest_proposal and latest_proposal.status == "draft":
+            activity.append(
+                {
+                    "type": "medication",
+                    "patient_id": patient.patient_id,
+                    "patient_name": patient.account.display_name,
+                    "title": "Medication proposal needs review",
+                    "detail": latest_proposal.candidate_medication_name,
+                    "created_at": latest_proposal.created_at.isoformat(),
+                }
+            )
+
+    patients.sort(key=lambda item: item["last_activity_at"], reverse=True)
+    patients.sort(key=lambda item: item["urgency"] not in urgent_levels)
+    activity.sort(key=lambda item: item["created_at"], reverse=True)
+    def _study_score(item: dict) -> float:
+        try:
+            return float(item["match_score"] or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    studies.sort(key=_study_score, reverse=True)
+    return {
+        "clinician": {
+            "display_name": clinician.display_name,
+            "clinical_role": clinician.clinical_role or clinician.role_label or "Healthcare professional",
+            "organization": clinician.organization,
+        },
+        "metrics": {
+            "active_patients": len(patients),
+            "pending_requests": overview["pending_count"],
+            "needs_attention": attention_count,
+            "active_care_plans": active_plan_count,
+            "study_matches": sum(item["study_count"] for item in patients),
+            "reviews_due": review_count,
+        },
+        "patients": patients,
+        "studies": studies[:6],
+        "recent_activity": activity[:8],
+    }
+
+
 def request_patient_access(
     db: Session,
     username: str,

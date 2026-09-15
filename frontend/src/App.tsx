@@ -50,6 +50,7 @@ import {
   downloadProtectedFile,
   emailNote,
   fetchAccessOverview,
+  fetchClinicianDashboard,
   fetchClinicianPatient,
   fetchEvidenceTrace,
   fetchMyMedicationProposals,
@@ -90,7 +91,7 @@ import {
   updateSafetyReview,
   uploadDocuments
 } from "./api";
-import type { AccessGrant, AccessOverview, AuthResponse, CarePlan, CarePlanTask, ChatStreamEvent, ClinicalNote, ClinicianPatientSummary, Dict, EscalationThreshold, EvidenceTrace, FeedbackRating, LabReminder, MedReminder, Message, MissedCareItem, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, Profile, ProposedMedication, SafetyReview, Snapshot, TrialSearchResult } from "./types";
+import type { AccessGrant, AccessOverview, AuthResponse, CarePlan, CarePlanTask, ChatStreamEvent, ClinicalNote, ClinicianDashboard, ClinicianDashboardPatient, ClinicianPatientSummary, Dict, EscalationThreshold, EvidenceTrace, FeedbackRating, LabReminder, MedReminder, Message, MissedCareItem, PreVisitChatMessage, PreVisitSummary, PrevisitChatStreamEvent, ProductConfig, Profile, ProposedMedication, SafetyReview, Snapshot, TrialSearchResult } from "./types";
 import type { ClarifyOption, UploadExtracted } from "./api";
 import {
   buildSeries,
@@ -192,6 +193,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
   const [pendingProfile, setPendingProfile] = useState<Profile | null>(null);
+  const [clinicianPatientToOpen, setClinicianPatientToOpen] = useState("");
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -298,7 +300,15 @@ function App() {
       >
         {view === "workspace" && (
           clinician
-            ? <ClinicianWorkspace snapshot={snapshot} setView={setView} setNotice={setNotice} />
+            ? <ClinicianWorkspace
+                snapshot={snapshot}
+                setView={setView}
+                setNotice={setNotice}
+                onOpenPatient={(patientId) => {
+                  setClinicianPatientToOpen(patientId);
+                  setView("patients");
+                }}
+              />
             : <WorkspaceView snapshot={snapshot} setView={setView} setSnapshot={setSnapshot} />
         )}
         {view === "chat" && <ChatView snapshot={snapshot} setSnapshot={setSnapshot} setNotice={setNotice} />}
@@ -307,7 +317,13 @@ function App() {
         {!clinician && view === "trials" && <TrialsView snapshot={snapshot} setSnapshot={setSnapshot} setNotice={setNotice} />}
         {!clinician && view === "care-plans" && <CarePlanScreen snapshot={snapshot} />}
         {!clinician && view === "access" && <PatientAccessView setNotice={setNotice} />}
-        {clinician && view === "patients" && <ClinicianPatientsView setNotice={setNotice} />}
+        {clinician && view === "patients" && (
+          <ClinicianPatientsView
+            setNotice={setNotice}
+            initialPatientId={clinicianPatientToOpen}
+            onInitialPatientHandled={() => setClinicianPatientToOpen("")}
+          />
+        )}
       </Shell>
     </ErrorBoundary>
   );
@@ -1152,203 +1168,171 @@ function SafetyReviewView({
 function ClinicianWorkspace({
   snapshot,
   setView,
-  setNotice
+  setNotice,
+  onOpenPatient
 }: {
   snapshot: Snapshot;
   setView: (view: View) => void;
   setNotice: (notice: string) => void;
+  onOpenPatient: (patientId: string) => void;
 }) {
-  const [access, setAccess] = useState<AccessOverview | null>(null);
+  const [dashboard, setDashboard] = useState<ClinicianDashboard | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    fetchAccessOverview()
-      .then(setAccess)
-      .catch((error) => setNotice(error instanceof Error ? error.message : "Could not load patient access."))
-      .finally(() => setLoading(false));
-  }, [setNotice]);
+    let mounted = true;
+    setLoading(true);
+    fetchClinicianDashboard()
+      .then((result) => { if (mounted) setDashboard(result); })
+      .catch((error) => {
+        if (mounted) setNotice(error instanceof Error ? error.message : "Could not load the clinical dashboard.");
+      })
+      .finally(() => { if (mounted) setLoading(false); });
+    return () => { mounted = false; };
+  }, [refreshKey, setNotice]);
 
-  const active = access?.requests.filter((item) => item.status === "active") ?? [];
-  const pending = access?.requests.filter((item) => item.status === "pending") ?? [];
-  const needsReview = active.filter((item) => {
-    const level = item.patient_status?.urgency_level;
-    return level === "urgent" || level === "crisis" || level === "high";
-  }).length;
-  const firstName = clean(snapshot.profile.display_name, "").split(" ")[0];
+  const metrics = dashboard?.metrics;
+  const role = clean(
+    dashboard?.clinician.clinical_role || snapshot.profile.clinical_role || snapshot.profile.role,
+    "Healthcare professional"
+  );
+  const organization = clean(
+    dashboard?.clinician.organization || snapshot.profile.organization,
+    "Independent practice"
+  );
+  const firstName = clean(
+    dashboard?.clinician.display_name || snapshot.profile.display_name,
+    "clinician"
+  ).split(" ")[0];
+  const dashboardMetrics: Array<[string, number, LucideIcon, string]> = [
+    ["Patients in my care", metrics?.active_patients ?? 0, Users, "patients"],
+    ["Needs attention", metrics?.needs_attention ?? 0, AlertTriangle, "attention"],
+    ["Reviews due", metrics?.reviews_due ?? 0, ClipboardList, "reviews"],
+    ["Active care plans", metrics?.active_care_plans ?? 0, ListChecks, "plans"],
+    ["Study matches", metrics?.study_matches ?? 0, FlaskConical, "studies"],
+    ["Awaiting consent", metrics?.pending_requests ?? 0, UserCheck, "pending"]
+  ];
 
   return (
     <div className="view-stack clinician-dashboard">
-      <section className="workspace-band clinician-band">
+      <section className="workspace-band clinician-band clinician-home-hero">
         <div>
-          <span className="eyebrow">Clinical workspace</span>
-          <h2>{firstName ? `Welcome back, ${firstName}.` : "Welcome back."}</h2>
-          <p>
-            Review consented patient records and use evidence support within your professional scope.
-            Patient data is never opened without an active access grant.
-          </p>
+          <span className="eyebrow">Care team overview</span>
+          <h2>Welcome back, {firstName}.</h2>
+          <p>Your patients, clinical workload and relevant study matches in one consent-controlled workspace.</p>
         </div>
-        <div className="role-badge">
-          <Stethoscope size={18} />
-          {clean(snapshot.profile.clinical_role || snapshot.profile.role, "Clinician")}
-        </div>
-      </section>
-
-      <section className="metric-grid">
-        <div className="metric-card">
-          <Users size={20} />
-          <strong>{access?.active_count ?? 0}</strong>
-          <span>Consented patients</span>
-        </div>
-        <div className="metric-card">
-          <UserCheck size={20} />
-          <strong>{access?.pending_count ?? 0}</strong>
-          <span>Pending requests</span>
-        </div>
-        <div className="metric-card">
-          <AlertTriangle size={20} />
-          <strong>{needsReview}</strong>
-          <span>Need review</span>
-        </div>
-        <div className="metric-card">
-          <ShieldCheck size={20} />
-          <strong>Scoped</strong>
-          <span>Consent-controlled access</span>
+        <div className="clinician-identity-card">
+          <div className="clinician-avatar"><Stethoscope size={22} /></div>
+          <div><strong>{role}</strong><span>{organization}</span></div>
+          <button className="icon-button" onClick={() => setRefreshKey((value) => value + 1)} aria-label="Refresh dashboard" title="Refresh dashboard">
+            <RefreshCw size={17} className={loading ? "spin" : ""} />
+          </button>
         </div>
       </section>
 
-      <section className="dashboard-widgets">
-        <ClinicianRosterWidget patients={active} loading={loading} setView={setView} />
-        <ClinicianPendingWidget pending={pending} setView={setView} />
+      <section className="metric-grid clinician-metric-grid" aria-label="Caseload summary">
+        {dashboardMetrics.map(([label, value, Icon, tone]) => (
+          <article className={`metric-card clinician-metric-card metric-${tone}`} key={label}>
+            <div className="metric-icon"><Icon size={20} /></div>
+            <strong>{loading ? "—" : value}</strong>
+            <span>{label}</span>
+          </article>
+        ))}
       </section>
 
-      <section className="action-grid clinician-actions">
-        <ActionButton
-          icon={<Users size={21} />}
-          title="Open patient list"
-          body="Request access by MRN or review records for patients who have approved access."
-          onClick={() => setView("patients")}
-        />
-        <ActionButton
-          icon={<MessageSquare size={21} />}
-          title="Clinical evidence review"
-          body="Ask a professional evidence question without treating your own clinician account as a patient record."
-          onClick={() => setView("chat")}
-        />
+      <section className="clinician-home-grid">
+        <article className="surface-card clinician-caseload-card">
+          <div className="clinician-section-head">
+            <div><span className="eyebrow">My caseload</span><h3>Patients in my care</h3></div>
+            <button className="ghost" onClick={() => setView("patients")}>View all patients</button>
+          </div>
+          {loading ? (
+            <div className="clinician-loading-list" aria-label="Loading patients">
+              {[0, 1, 2].map((item) => <div className="clinician-loading-row" key={item} />)}
+            </div>
+          ) : !dashboard?.patients.length ? (
+            <div className="clinician-empty-state">
+              <div className="empty-icon"><Users size={24} /></div>
+              <div><strong>No consented patients yet</strong><p>Request access using a patient’s MRN. Their record appears here after approval.</p></div>
+              <button className="primary" onClick={() => setView("patients")}>Request access</button>
+            </div>
+          ) : (
+            <div className="clinician-patient-list">
+              {dashboard.patients.slice(0, 5).map((patient) => (
+                <ClinicianHomePatientRow patient={patient} onOpen={() => onOpenPatient(patient.patient_id)} key={patient.patient_id} />
+              ))}
+            </div>
+          )}
+        </article>
+
+        <aside className="surface-card clinician-brief-card">
+          <div className="clinician-section-head"><div><span className="eyebrow">Today</span><h3>Clinical work queue</h3></div></div>
+          <div className="work-queue-list">
+            <button onClick={() => setView("patients")}><span className="queue-icon urgent"><AlertTriangle size={18} /></span><span><strong>{metrics?.needs_attention ?? 0} patients</strong><small>Need clinical attention</small></span></button>
+            <button onClick={() => setView("patients")}><span className="queue-icon"><ClipboardList size={18} /></span><span><strong>{metrics?.reviews_due ?? 0} reviews</strong><small>Draft summaries or medicines</small></span></button>
+            <button onClick={() => setView("patients")}><span className="queue-icon"><UserCheck size={18} /></span><span><strong>{metrics?.pending_requests ?? 0} requests</strong><small>Waiting for patient consent</small></span></button>
+          </div>
+          <div className="clinician-quick-actions">
+            <button className="primary" onClick={() => setView("patients")}><Users size={17} /> Open patient list</button>
+            <button className="ghost" onClick={() => setView("chat")}><MessageSquare size={17} /> Evidence review</button>
+          </div>
+          <div className="consent-note"><ShieldCheck size={16} /><span>Only actively consented records are included.</span></div>
+        </aside>
       </section>
 
-      <section className="surface-card boundary-card">
-        <ShieldCheck size={22} />
-        <div>
-          <h3>Professional boundary</h3>
-          <p>
-            Personal care plans, personal timelines, and patient trial matching belong to patient
-            workspaces. In the clinician workspace, those records appear only inside an approved
-            patient chart.
-          </p>
-        </div>
+      <section className="clinician-lower-grid">
+        <article className="surface-card clinician-studies-card">
+          <div className="clinician-section-head"><div><span className="eyebrow">Research opportunities</span><h3>Studies matched to your patients</h3></div><FlaskConical size={20} /></div>
+          {!loading && !dashboard?.studies.length ? <p className="muted">No saved clinical-study matches across your current caseload.</p> : (
+            <div className="clinician-study-list">
+              {(dashboard?.studies ?? []).slice(0, 4).map((study) => (
+                <article key={`${study.patient_id}-${study.nct_id || study.title}`}>
+                  <div><span>{study.patient_name} · {study.nct_id || "Study"}</span><strong>{study.title}</strong><small>{[study.status, study.phase].filter(Boolean).join(" · ")}</small></div>
+                  <div className="study-match-side">
+                    {study.match_score !== null && study.match_score !== undefined && <b>{Math.round(study.match_score)}%</b>}
+                    {study.url && <a href={study.url} target="_blank" rel="noreferrer" aria-label={`Open ${study.title}`}>Open</a>}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </article>
+        <article className="surface-card clinician-activity-card">
+          <div className="clinician-section-head"><div><span className="eyebrow">Across your caseload</span><h3>Recent activity</h3></div><Activity size={20} /></div>
+          {!loading && !dashboard?.recent_activity.length ? <p className="muted">No recent clinical activity is available.</p> : (
+            <div className="clinician-activity-list">
+              {(dashboard?.recent_activity ?? []).slice(0, 5).map((item, index) => (
+                <button onClick={() => setView("patients")} key={`${item.patient_id}-${item.created_at}-${index}`}>
+                  <span className={`activity-dot ${item.type}`} /><span><strong>{item.patient_name}</strong><small>{item.title}</small><time>{formatTimestamp(item.created_at)}</time></span>
+                </button>
+              ))}
+            </div>
+          )}
+        </article>
       </section>
     </div>
   );
 }
 
-const CLINICIAN_URGENCY_LABEL: Record<string, string> = {
-  routine: "Routine",
-  elevated: "Elevated",
-  high: "High risk",
-  urgent: "Urgent",
-  crisis: "Crisis"
-};
-
-function PatientStatusBadge({ status }: { status?: AccessGrant["patient_status"] }) {
-  if (!status || !status.urgency_level) {
-    return <span className="patient-status-badge neutral">No recent triage</span>;
-  }
-  const tone = PATIENT_URGENCY[status.urgency_level];
-  const label = CLINICIAN_URGENCY_LABEL[status.urgency_level] ?? status.urgency_level;
+function ClinicianHomePatientRow({ patient, onOpen }: { patient: ClinicianDashboardPatient; onOpen: () => void }) {
+  const attention = ["high", "urgent", "crisis", "emergency"].includes(patient.urgency);
+  const initials = patient.display_name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "PT";
   return (
-    <span
-      className="patient-status-badge"
-      style={tone ? { color: tone.color, background: tone.bg } : undefined}
-    >
-      {label}
-    </span>
-  );
-}
-
-function ClinicianRosterWidget({
-  patients,
-  loading,
-  setView
-}: {
-  patients: AccessGrant[];
-  loading: boolean;
-  setView: (view: View) => void;
-}) {
-  const ROSTER_PREVIEW_LIMIT = 6;
-  const preview = patients.slice(0, ROSTER_PREVIEW_LIMIT);
-  const remaining = patients.length - preview.length;
-
-  return (
-    <article className="surface-card dashboard-widget clinician-roster-widget">
-      <div className="widget-head">
-        <h3><Users size={18} /> My patients</h3>
-        <button className="ghost" onClick={() => setView("patients")}>Open list</button>
+    <article className={`clinician-patient-row${attention ? " needs-attention" : ""}`}>
+      <div className="patient-avatar" aria-hidden="true">{initials}</div>
+      <div className="patient-home-summary">
+        <div className="patient-home-title"><strong>{patient.display_name}</strong><span>{patient.patient_id}</span><em className={attention ? "urgent" : "stable"}>{attention ? patient.urgency : "In care"}</em></div>
+        <p>{patient.summary}</p>
+        <div className="patient-home-facts">
+          <span><Stethoscope size={14} /> {patient.active_conditions.length ? patient.active_conditions.join(", ") : "No active condition recorded"}</span>
+          <span><Pill size={14} /> {patient.medication_count} medicines</span>
+          <span><ListChecks size={14} /> {patient.active_plan_count} care plans</span>
+          <span><FlaskConical size={14} /> {patient.study_count} studies</span>
+        </div>
+        {attention && <div className="patient-next-step"><AlertTriangle size={14} /> {patient.next_step}</div>}
       </div>
-      {loading ? (
-        <p className="muted">Loading your patients...</p>
-      ) : preview.length === 0 ? (
-        <p className="muted">No patient has approved access yet. Request access by MRN from the patient list.</p>
-      ) : (
-        <>
-          <div className="patient-grid compact-patient-grid">
-            {preview.map((item) => (
-              <button className="patient-card" key={item.grant_id} onClick={() => setView("patients")}>
-                <div className="patient-card-head">
-                  <UserCheck size={20} />
-                  <PatientStatusBadge status={item.patient_status} />
-                </div>
-                <strong>{item.patient_name}</strong>
-                <span>{item.patient_id}</span>
-                <small>Access until {formatDate(item.expires_at)}</small>
-              </button>
-            ))}
-          </div>
-          {remaining > 0 && (
-            <button className="ghost widget-see-all" onClick={() => setView("patients")}>
-              See {remaining} more patient{remaining === 1 ? "" : "s"}
-            </button>
-          )}
-        </>
-      )}
-    </article>
-  );
-}
-
-function ClinicianPendingWidget({
-  pending,
-  setView
-}: {
-  pending: AccessGrant[];
-  setView: (view: View) => void;
-}) {
-  return (
-    <article className="surface-card dashboard-widget">
-      <div className="widget-head">
-        <h3><CalendarClock size={18} /> Awaiting patient approval</h3>
-        <button className="ghost" onClick={() => setView("patients")}>Request access</button>
-      </div>
-      {pending.length === 0 ? (
-        <p className="muted">No requests are waiting on a patient's approval.</p>
-      ) : (
-        <ul className="widget-trial-list">
-          {pending.map((item) => (
-            <li key={item.grant_id}>
-              <strong>{item.patient_id}</strong>
-              <span>Requested {formatDate(item.requested_at)} &middot; {item.request_reason || "No reason supplied."}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+      <div className="patient-row-action"><small>Updated {formatTimestamp(patient.last_activity_at)}</small><button className="ghost" onClick={onOpen}>Open record</button></div>
     </article>
   );
 }
@@ -1478,7 +1462,15 @@ function PatientAccessView({ setNotice }: { setNotice: (notice: string) => void 
   );
 }
 
-function ClinicianPatientsView({ setNotice }: { setNotice: (notice: string) => void }) {
+function ClinicianPatientsView({
+  setNotice,
+  initialPatientId,
+  onInitialPatientHandled
+}: {
+  setNotice: (notice: string) => void;
+  initialPatientId: string;
+  onInitialPatientHandled: () => void;
+}) {
   const [overview, setOverview] = useState<AccessOverview | null>(null);
   const [selected, setSelected] = useState<ClinicianPatientSummary | null>(null);
   const [mrn, setMrn] = useState("");
@@ -1537,6 +1529,11 @@ function ClinicianPatientsView({ setNotice }: { setNotice: (notice: string) => v
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (!initialPatientId) return;
+    void openPatient(initialPatientId).finally(onInitialPatientHandled);
+  }, [initialPatientId]);
 
   async function revoke(grantId: string) {
     setBusy(true);

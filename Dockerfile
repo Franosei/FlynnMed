@@ -23,6 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=flynnmed:flynnmed . .
 COPY --chown=flynnmed:flynnmed --from=frontend-builder /build/frontend/dist ./frontend/dist
+RUN mkdir -p /app/data && chown -R flynnmed:flynnmed /app/data
 
 EXPOSE 8000
 USER flynnmed

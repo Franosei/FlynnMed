@@ -31,6 +31,7 @@ from backend.clinician_access import (
     AccessWorkflowError,
     access_overview,
     authorized_patient_summary,
+    clinician_dashboard,
     decide_access_request,
     request_patient_access,
     require_active_previsit_access,
@@ -246,15 +247,29 @@ def _safe_filename(filename: str) -> str:
 
 
 def _public_profile(username: str, db: Session | None = None) -> Dict:
+    """account_kind (and clinician_status) must always reflect the real SQL
+    Account -- most callers go through _snapshot(username), which has no db
+    session of its own, so when one isn't passed in we open a short-lived
+    one here rather than silently defaulting every account to "patient".
+    That earlier default was a real bug: since the frontend now trusts
+    profile.account_kind as authoritative whenever it's present (over the
+    old role-string heuristic), it made every clinician appear as a patient
+    app-wide, not just here."""
     profile = UserStore.get_user_profile(username)
     account = None
     registration = None
-    if db is not None:
-        account = db.execute(select(Account).where(Account.username == username)).scalar_one_or_none()
+    owned_db = db
+    if owned_db is None:
+        owned_db = get_session_factory()()
+    try:
+        account = owned_db.execute(select(Account).where(Account.username == username)).scalar_one_or_none()
         if account is not None:
-            registration = db.execute(
+            registration = owned_db.execute(
                 select(ClinicianRegistration).where(ClinicianRegistration.account_id == account.id)
             ).scalar_one_or_none()
+    finally:
+        if db is None:
+            owned_db.close()
     return {
         "username": username,
         **profile,
@@ -1264,6 +1279,17 @@ def get_access_overview(
 ) -> Dict:
     try:
         return access_overview(db, username)
+    except AccessWorkflowError as exc:
+        raise _access_error(db, exc) from exc
+
+
+@app.get("/api/clinician/dashboard")
+def get_clinician_dashboard(
+    username: str = Depends(current_username),
+    db: Session = Depends(get_db),
+) -> Dict:
+    try:
+        return clinician_dashboard(db, username)
     except AccessWorkflowError as exc:
         raise _access_error(db, exc) from exc
 
