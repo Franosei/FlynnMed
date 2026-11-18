@@ -66,15 +66,19 @@ class LLMHelper:
         Uses the configured generation model. Inline source citations like [S1] are mandatory.
         """
         if role_config:
-            from backend.response_templates import get_persona_block
+            from backend.response_templates import get_conversation_turn_guidance, get_persona_block
 
             persona = get_persona_block(role_config.role_key)
+            conversation_guidance = get_conversation_turn_guidance(role_config.role_key)
         else:
+            from backend.response_templates import get_conversation_turn_guidance
+
             persona = (
                 f"You are {PRODUCT_NAME}, a safe and competent clinical information assistant supporting "
                 "individual health users, caregivers, and healthcare teams. "
                 "You provide decisive, evidence-grounded guidance with a clear next-step plan."
             )
+            conversation_guidance = get_conversation_turn_guidance("patient")
 
         # A clinician asking about a specific patient's chart is not the patient --
         # without an explicit instruction the model defaults to the dominant
@@ -163,6 +167,7 @@ class LLMHelper:
                 "role": "system",
                 "content": (
                     f"{persona}\n\n"
+                    f"CONVERSATION STYLE:\n{conversation_guidance}\n\n"
                     f"{operating_contract_prompt(selected_skills or ['response_validation'], current_location)}\n\n"
                     f"{task_mode.prompt_block() if task_mode else ''}\n\n"
                     f"{voice_instruction}"
@@ -302,9 +307,11 @@ class LLMHelper:
                 "doctor", "nurse", "midwife", "physiotherapist", "healthcare_professional"
             ):
                 response_instructions += (
-                    "\nFor this clinician-facing answer, use no more than three short sections. "
+                    "\nFor this clinician-facing turn, respond as a colleague continuing a dialogue, not as a form or report; "
+                    "use no more than three short sections. "
                     "The first line must contain the prioritized decision and disposition. "
-                    "Do not repeat the same escalation criteria in multiple sections or add a generic differential list."
+                    "Do not repeat the same escalation criteria in multiple sections or add a generic differential list. "
+                    "If a decision-changing fact is missing, answer the safe part first and ask one concise question at the end."
                 )
 
         policy_block = ""

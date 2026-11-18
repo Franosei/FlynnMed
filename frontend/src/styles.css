@@ -1877,6 +1877,26 @@ label {
   margin: 0.75rem 0;
 }
 
+.chat-welcome {
+  margin: 0.85rem 0 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-subtle);
+  padding: 1rem;
+}
+
+.chat-welcome > strong {
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.chat-welcome > p {
+  max-width: 720px;
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .starter-row button {
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -2205,6 +2225,13 @@ label {
   margin-top: 0.7rem;
 }
 
+.follow-up-label {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 750;
+}
+
 .interaction {
   border-left: 4px solid var(--gold);
   border-radius: 8px;
@@ -2417,10 +2444,11 @@ label {
 
 .feedback-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.45rem;
   margin-top: 0.55rem;
-  padding-top: 0.45rem;
+  padding-top: 0.6rem;
   border-top: 1px solid var(--line);
 }
 
@@ -2431,14 +2459,31 @@ label {
 }
 
 .feedback-button {
-  display: inline-grid;
-  width: 26px;
-  height: 26px;
-  place-items: center;
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: transparent;
+  padding: 0.25rem 0.55rem;
   color: var(--muted);
+}
+
+.feedback-button span {
+  color: currentColor;
+  font-size: 0.76rem;
+}
+
+.feedback-prompt {
+  margin-right: 0.15rem;
+  color: var(--ink) !important;
+}
+
+.feedback-status {
+  flex-basis: 100%;
+  color: var(--success-ink) !important;
 }
 
 .feedback-button:hover:not(:disabled),

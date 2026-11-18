@@ -9,6 +9,7 @@ import {
   firstNumber,
   formatDate,
   formatTimestamp,
+  getChatExperience,
   isClinicianRole,
   isPatientRole,
   parseBloodPressure,
@@ -58,12 +59,29 @@ describe("role routing", () => {
     expect(isClinicianRole("Midwife")).toBe(true);
     expect(isClinicianRole("Physiotherapist")).toBe(true);
     expect(isClinicianRole("Other Clinician")).toBe(true);
+    expect(isClinicianRole("doctor")).toBe(true);
+    expect(isClinicianRole("healthcare_professional")).toBe(true);
+    expect(isClinicianRole("Health Worker")).toBe(true);
   });
 
   it("keeps patient and caregiver roles in the patient workspace", () => {
     expect(isPatientRole("Patient / Individual")).toBe(true);
     expect(isPatientRole("Caregiver")).toBe(true);
     expect(isPatientRole(undefined)).toBe(true);
+  });
+
+  it("provides conversational copy and feedback prompts for every audience", () => {
+    const patient = getChatExperience("Patient / Individual");
+    const caregiver = getChatExperience("Caregiver");
+    const clinician = getChatExperience("Nurse");
+
+    expect(patient.title).toBe("Health conversation");
+    expect(patient.feedbackPrompt).toContain("help you");
+    expect(caregiver.title).toBe("Care conversation");
+    expect(caregiver.feedbackPrompt).toContain("support them");
+    expect(clinician.title).toBe("Clinical conversation");
+    expect(clinician.feedbackPrompt).toContain("clinical work");
+    expect(clinician.prompts).toHaveLength(3);
   });
 });
 

@@ -242,6 +242,27 @@ def test_patient_answer_prompt_defaults_to_conversation_not_report_headings():
     assert "do not ask for them again" in system_prompt
     assert "Prior assistant messages are conversation context" in system_prompt
     assert "Never infer the condition being treated from a medicine" in system_prompt
+    assert "CONVERSATION STYLE" in system_prompt
+    assert "one focused follow-up question" in system_prompt
+    assert "Do not ask a batch of questions" in system_prompt
+
+
+def test_clinician_answer_prompt_is_also_an_ongoing_dialogue():
+    helper, completions = _helper_with_fake_client()
+    clinician_role = RoleRouter().resolve("nurse")
+
+    helper.answer_question(
+        question="How should I prioritize this review?",
+        context="",
+        role_config=clinician_role,
+    )
+
+    system_prompt = completions.last_kwargs["messages"][0]["content"]
+    user_prompt = completions.last_kwargs["messages"][1]["content"]
+    assert "ongoing conversation" in system_prompt
+    assert "peer-to-peer colleague" in system_prompt
+    assert "continuing a dialogue" in user_prompt
+    assert "ask one concise question at the end" in user_prompt
 
 
 def test_answer_prompt_receives_five_verbatim_messages_summary_and_patient_history():

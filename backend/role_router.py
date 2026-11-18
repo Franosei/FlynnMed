@@ -113,6 +113,10 @@ _ALIAS_MAP: dict[str, str] = {
     "physiotherapist": "physiotherapist",
     "physio": "physiotherapist",
     "other clinician": "healthcare_professional",
+    "health professional": "healthcare_professional",
+    "healthcare professional": "healthcare_professional",
+    "health worker": "healthcare_professional",
+    "healthcare worker": "healthcare_professional",
 }
 
 

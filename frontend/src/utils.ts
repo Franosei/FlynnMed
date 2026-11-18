@@ -9,15 +9,74 @@ export function isClinicianRole(role: string | undefined): boolean {
   const normalized = (role ?? "").toLowerCase().trim();
   return [
     "doctor / physician",
+    "doctor",
+    "physician",
     "nurse",
     "midwife",
     "physiotherapist",
-    "other clinician"
+    "other clinician",
+    "health professional",
+    "healthcare professional",
+    "healthcare_professional",
+    "health worker",
+    "healthcare worker",
+    "clinician",
+    "clinician / care team",
+    "care team"
   ].includes(normalized);
 }
 
 export function isPatientRole(role: string | undefined): boolean {
   return !isClinicianRole(role);
+}
+
+export type ChatExperience = {
+  title: string;
+  welcome: string;
+  placeholder: string;
+  prompts: string[];
+  feedbackPrompt: string;
+};
+
+export function getChatExperience(role: string | undefined): ChatExperience {
+  const normalized = (role ?? "").toLowerCase().trim();
+  if (isClinicianRole(role)) {
+    return {
+      title: "Clinical conversation",
+      welcome: "Talk through a presentation, evidence question, or next clinical decision. I’ll respond as a colleague and ask only for details that could change the answer.",
+      placeholder: "Discuss a case, evidence question, or clinical decision…",
+      prompts: [
+        "Talk through a clinical presentation with me.",
+        "Help me compare management options and the evidence.",
+        "Let’s review a guideline or patient-safety question."
+      ],
+      feedbackPrompt: "Did this support your clinical work?"
+    };
+  }
+  if (normalized === "caregiver") {
+    return {
+      title: "Care conversation",
+      welcome: "Tell me what is happening with the person you support. We can work through it together, one useful question at a time.",
+      placeholder: "Tell me what is happening, or ask what to do next…",
+      prompts: [
+        "I’m caring for someone and want to talk through their symptoms.",
+        "Help me understand their medicine or test result.",
+        "Help me prepare what to tell their care team."
+      ],
+      feedbackPrompt: "Did this help you support them?"
+    };
+  }
+  return {
+    title: "Health conversation",
+    welcome: "Tell me what is worrying you in your own words. I’ll listen, respond to what you’ve shared, and ask only what is useful.",
+    placeholder: "Tell me what’s happening, or ask what you’d like to understand…",
+    prompts: [
+      "I have a symptom I’d like to talk through.",
+      "Help me understand a medicine or test result.",
+      "Help me prepare for a conversation with my care team."
+    ],
+    feedbackPrompt: "Did this response help you?"
+  };
 }
 
 export function formatDate(value?: unknown): string {

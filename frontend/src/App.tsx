@@ -101,6 +101,7 @@ import {
   clean,
   formatDate,
   formatTimestamp,
+  getChatExperience,
   isClinicianRole,
   isPatientRole,
   parseMemorySections,
@@ -141,12 +142,6 @@ const PATIENT_URGENCY: Record<string, { label: string; color: string; bg: string
   urgent:   { label: "Seek urgent care",    color: "var(--danger)", bg: "var(--danger-soft)" },
   crisis:   { label: "Call 999 / 911 now", color: "var(--danger)", bg: "var(--danger-soft)" },
 };
-
-const STARTER_PROMPTS = [
-  "What symptoms would make chest pain an urgent medical review issue?",
-  "Summarize the most important themes from my uploaded records in plain language.",
-  "What does the recent evidence say about hypertension treatment in older adults?"
-];
 
 const COUNTRIES = [
   "United Kingdom",
@@ -409,7 +404,7 @@ function AuthScreen({
   const [verificationCode, setVerificationCode] = useState("");
 
   const terms = config.role_terms[role] ?? config.role_terms[config.role_options[0]];
-  const isClinician = role !== "Patient" && role !== "Individual";
+  const isClinician = !isPatientRole(role);
 
   function validateSignup(): string {
     const f = signupForm;
@@ -723,7 +718,7 @@ function Shell({
     ? [
         { id: "workspace", label: "Clinical Home", short: "Home", icon: Home },
         { id: "patients", label: "My Patients", short: "Patients", icon: Users },
-        { id: "chat", label: "Evidence Review", short: "Evidence", icon: MessageSquare }
+        { id: "chat", label: "Clinical Chat", short: "Chat", icon: MessageSquare }
       ]
     : [
         { id: "workspace", label: "Home", short: "Home", icon: Home, section: "Today" },
@@ -2313,6 +2308,7 @@ function ChatView({
   const documentInputRef = useRef<HTMLInputElement>(null);
   const role = snapshot.profile.clinical_role || snapshot.profile.role;
   const patientView = isPatientRole(role);
+  const chatExperience = getChatExperience(role);
 
   useLayoutEffect(() => {
     if (listRef.current) {
@@ -2348,7 +2344,7 @@ function ChatView({
         ? "Checking image..."
         : attachment?.kind === "document"
         ? "Checking document..."
-        : "Starting evidence review..."
+        : "Thinking with you..."
     );
     setStreamText("");
     try {
@@ -2458,7 +2454,9 @@ function ChatView({
             <img src="/assistant.png" alt="" className="chat-head-avatar" />
             <div>
               <strong>FlynnMed</strong>
-              {!patientView && <span className="chat-head-role">{role}</span>}
+              <span className="chat-head-role">
+                {chatExperience.title}{!patientView && role ? ` · ${role}` : ""}
+              </span>
             </div>
           </div>
           <div className="chat-head-actions">
@@ -2481,12 +2479,16 @@ function ChatView({
         </div>
 
         {!messages.length && (
-          <div className="starter-row">
-            {STARTER_PROMPTS.map((prompt) => (
-              <button key={prompt} onClick={() => sendMessage(prompt)}>
-                {prompt}
-              </button>
-            ))}
+          <div className="chat-welcome">
+            <strong>{chatExperience.title}</strong>
+            <p>{chatExperience.welcome}</p>
+            <div className="starter-row" aria-label="Conversation starters">
+              {chatExperience.prompts.map((prompt) => (
+                <button key={prompt} onClick={() => sendMessage(prompt)}>
+                  {prompt}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -2548,7 +2550,7 @@ function ChatView({
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-            placeholder="Type a question, or attach a medical image or PDF document…"
+            placeholder={chatExperience.placeholder}
             rows={2}
           />
           <div className="composer-actions">
@@ -2731,7 +2733,8 @@ function MessageBubble({
 
         {!isUser && metadata.follow_up_questions?.length > 0 && (
           <div className="follow-ups">
-            {metadata.follow_up_questions.slice(0, 3).map((q: string | { display: string; prompt: string }, i: number) => {
+            <span className="follow-up-label">Continue the conversation</span>
+            {metadata.follow_up_questions.slice(0, 2).map((q: string | { display: string; prompt: string }, i: number) => {
               const display = typeof q === "string" ? q : q.display;
               const prompt = typeof q === "string" ? q : q.prompt;
               return (
@@ -2751,6 +2754,7 @@ function MessageBubble({
           <ResponseFeedback
             selectedRating={selectedRating}
             busy={feedbackBusy}
+            prompt={getChatExperience(role).feedbackPrompt}
             onRate={(rating) => onRate?.(message, rating)}
           />
         )}
@@ -2762,15 +2766,18 @@ function MessageBubble({
 function ResponseFeedback({
   selectedRating,
   busy,
+  prompt,
   onRate
 }: {
   selectedRating: string;
   busy: boolean;
+  prompt: string;
   onRate: (rating: FeedbackRating) => void;
 }) {
   const locked = busy || !!selectedRating;
   return (
     <div className="feedback-row" aria-label="Response rating">
+      <span className="feedback-prompt">{prompt}</span>
       <button
         className={`feedback-button ${selectedRating === "thumbs_up" ? "active" : ""}`}
         onClick={() => onRate("thumbs_up")}
@@ -2779,7 +2786,8 @@ function ResponseFeedback({
         aria-label="Rate response helpful"
         type="button"
       >
-        <ThumbsUp size={17} />
+        <ThumbsUp size={15} />
+        <span>Yes</span>
       </button>
       <button
         className={`feedback-button ${selectedRating === "thumbs_down" ? "active down" : ""}`}
@@ -2789,9 +2797,12 @@ function ResponseFeedback({
         aria-label="Rate response not helpful"
         type="button"
       >
-        <ThumbsDown size={17} />
+        <ThumbsDown size={15} />
+        <span>Not really</span>
       </button>
-      {(busy || selectedRating) && <span>{busy ? "Saving" : "Saved"}</span>}
+      {(busy || selectedRating) && (
+        <span className="feedback-status">{busy ? "Saving" : "Thanks for the feedback"}</span>
+      )}
     </div>
   );
 }

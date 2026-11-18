@@ -1,9 +1,11 @@
 from backend.response_templates import (
     DEFAULT_PERSONA_BLOCK,
     build_crisis_response,
+    get_conversation_turn_guidance,
     get_persona_block,
     get_section_headings,
 )
+from backend.role_router import RoleRouter
 
 
 def test_default_persona_is_safe_competent_and_not_senior():
@@ -59,3 +61,31 @@ def test_crisis_response_is_role_appropriate():
     maternity = build_crisis_response("midwife")
     assert "maternity" in maternity.lower()
     assert "resuscitation pathway" in maternity
+
+
+def test_every_role_gets_an_ongoing_conversation_contract():
+    roles = [
+        "patient",
+        "caregiver",
+        "doctor",
+        "nurse",
+        "midwife",
+        "physiotherapist",
+        "healthcare_professional",
+    ]
+
+    for role in roles:
+        guidance = get_conversation_turn_guidance(role).lower()
+        assert "ongoing conversation" in guidance
+        assert "one focused follow-up question" in guidance
+        assert "do not ask a batch of questions" in guidance
+
+    assert "peer-to-peer colleague" in get_conversation_turn_guidance("doctor")
+    assert "warm everyday language" in get_conversation_turn_guidance("patient")
+
+
+def test_health_worker_alias_receives_healthcare_professional_conversation():
+    role = RoleRouter().resolve("Health Worker")
+
+    assert role.role_key == "healthcare_professional"
+    assert "peer-to-peer colleague" in get_conversation_turn_guidance(role.role_key)

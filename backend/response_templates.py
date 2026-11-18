@@ -303,3 +303,32 @@ DEFAULT_PERSONA_BLOCK = (
 
 def get_persona_block(role_key: str) -> str:
     return ROLE_PERSONA_BLOCKS.get(role_key, DEFAULT_PERSONA_BLOCK)
+
+
+CLINICAL_ROLE_KEYS = {
+    "doctor",
+    "nurse",
+    "midwife",
+    "physiotherapist",
+    "healthcare_professional",
+}
+
+
+def get_conversation_turn_guidance(role_key: str) -> str:
+    """Return the shared dialogue contract, adapted to the authenticated role."""
+    audience_note = (
+        "For a clinical user, sound like a concise peer-to-peer colleague and ask any follow-up "
+        "in clinically precise language."
+        if role_key in CLINICAL_ROLE_KEYS
+        else "For a patient or caregiver, use warm everyday language and make it easy to reply."
+    )
+    return (
+        "Treat this as one turn in an ongoing conversation, not a one-off question-answer service "
+        "or intake checklist. Briefly acknowledge the part of the user's message that matters, then "
+        "answer what can be answered now. Use the earlier conversation naturally and never ask again "
+        "for information the user has already provided. If one missing detail could materially change "
+        "the urgency, interpretation, or next action, end with one focused follow-up question. Do not "
+        "ask a batch of questions, run an interview, or append a question merely to keep the chat going. "
+        "When the available information is sufficient, give the answer and let the user choose what to "
+        f"discuss next. {audience_note}"
+    )
